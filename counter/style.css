@@ -1,0 +1,238 @@
+/* ===== Reset & Base ===== */
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        'Helvetica Neue', Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 20px;
+}
+
+/* ===== Container ===== */
+.container {
+    width: 100%;
+    max-width: 420px;
+}
+
+/* ===== Card ===== */
+.counter-card {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 24px;
+    padding: 40px 32px 32px;
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.15),
+        0 0 0 1px rgba(255, 255, 255, 0.1);
+    text-align: center;
+    transition: transform 0.3s ease;
+}
+
+.counter-card:hover {
+    transform: translateY(-2px);
+}
+
+/* ===== Title ===== */
+.title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 28px;
+    letter-spacing: -0.02em;
+}
+
+/* ===== Number Display ===== */
+.display-wrapper {
+    margin-bottom: 28px;
+}
+
+.number-display {
+    font-size: 5rem;
+    font-weight: 800;
+    color: #1a1a2e;
+    line-height: 1;
+    margin-bottom: 16px;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.3s ease;
+    user-select: none;
+}
+
+/* Color states */
+.number-display.positive {
+    color: #10b981;
+}
+
+.number-display.negative {
+    color: #ef4444;
+}
+
+.number-display.zero {
+    color: #6b7280;
+}
+
+/* ===== Progress Bar ===== */
+.progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 50%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ===== Controls ===== */
+.controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 64px;
+    height: 64px;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    outline: none;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.btn:active::after {
+    opacity: 1;
+}
+
+.btn-icon {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1;
+    position: relative;
+    z-index: 1;
+}
+
+/* Decrement button */
+.btn-decrement {
+    background: #fef2f2;
+    color: #dc2626;
+    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.15);
+}
+
+.btn-decrement:hover {
+    background: #fee2e2;
+    transform: scale(1.08);
+    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.2);
+}
+
+.btn-decrement:active {
+    transform: scale(0.95);
+}
+
+/* Reset button */
+.btn-reset {
+    background: #f3f4f6;
+    color: #4b5563;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    width: 56px;
+    height: 56px;
+}
+
+.btn-reset:hover {
+    background: #e5e7eb;
+    transform: scale(1.08);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.btn-reset:active {
+    transform: scale(0.95);
+}
+
+/* Increment button */
+.btn-increment {
+    background: #ecfdf5;
+    color: #059669;
+    box-shadow: 0 4px 14px rgba(5, 150, 105, 0.15);
+}
+
+.btn-increment:hover {
+    background: #d1fae5;
+    transform: scale(1.08);
+    box-shadow: 0 6px 20px rgba(5, 150, 105, 0.2);
+}
+
+.btn-increment:active {
+    transform: scale(0.95);
+}
+
+/* ===== Info ===== */
+.info {
+    border-top: 1px solid #e5e7eb;
+    padding-top: 16px;
+}
+
+.step-hint {
+    font-size: 0.85rem;
+    color: #9ca3af;
+    line-height: 1.6;
+}
+
+.step-hint strong {
+    color: #6b7280;
+    font-weight: 600;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 480px) {
+    .counter-card {
+        padding: 28px 20px 24px;
+    }
+
+    .number-display {
+        font-size: 3.75rem;
+    }
+
+    .btn {
+        width: 56px;
+        height: 56px;
+    }
+
+    .btn-reset {
+        width: 48px;
+        height: 48px;
+    }
+
+    .btn-icon {
+        font-size: 1.5rem;
+    }
+}

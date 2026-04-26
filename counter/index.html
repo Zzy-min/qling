@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>交互式计数器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="counter-card">
+            <h1 class="title">🔢 计数器</h1>
+            <div class="display-wrapper">
+                <div class="number-display" id="counter">0</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+            <div class="controls">
+                <button class="btn btn-decrement" id="decrementBtn" aria-label="减1">
+                    <span class="btn-icon">−</span>
+                </button>
+                <button class="btn btn-reset" id="resetBtn" aria-label="归零">
+                    <span class="btn-icon">↺</span>
+                </button>
+                <button class="btn btn-increment" id="incrementBtn" aria-label="加1">
+                    <span class="btn-icon">+</span>
+                </button>
+            </div>
+            <div class="info">
+                <p class="step-hint">点击 <strong>+</strong> 或 <strong>−</strong> 调整数值</p>
+                <p class="step-hint">点击 <strong>↺</strong> 归零</p>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
