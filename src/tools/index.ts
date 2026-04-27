@@ -1,3 +1,4 @@
+
 // ============================================================
 // 轻灵 - 工具调度器
 // ============================================================
@@ -8,10 +9,14 @@ import { runRead, readTool } from "./read.js";
 import { runWrite, writeTool } from "./write.js";
 import { runTodo, todoTool } from "./todo.js";
 import { runSkill, skillTool } from "./skill.js";
+import { runSearch, searchTool } from "./search.js";
+import { runPlanner, plannerTool } from "./planner.js";
 
-export { bashTool, readTool, writeTool, todoTool, skillTool };
+export { bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool };
 
-export const ALL_TOOLS: ToolDefinition[] = [bashTool, readTool, writeTool, todoTool, skillTool];
+export const ALL_TOOLS: ToolDefinition[] = [
+  bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool,
+];
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
@@ -21,6 +26,8 @@ const handlers: Record<string, ToolHandler> = {
   write: runWrite as ToolHandler,
   todo: runTodo as ToolHandler,
   skill: runSkill as ToolHandler,
+  search: runSearch as ToolHandler,
+  planner: runPlanner as ToolHandler,
 };
 
 export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {

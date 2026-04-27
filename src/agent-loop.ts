@@ -252,6 +252,50 @@ export class AgentLoop extends AgentEventEmitter {
     this.sectionRegistry.clearCache();
   }
 
+  // --- Session Persistence ---
+
+  async saveSession(name?: string): Promise<string> {
+    const sessionName = name ?? "session-" + new Date().toISOString().replace(/[:.]/g, "-");
+    const sessionDir = path.join(QINGLING_DIR, "sessions");
+    await fs.mkdir(sessionDir, { recursive: true });
+    const sessionFile = path.join(sessionDir, sessionName + ".json");
+    const data = {
+      messages: this.messages,
+      turnCount: this.turnCount,
+      sessionTokens: this.sessionTokens,
+      savedAt: new Date().toISOString(),
+    };
+    await fs.writeFile(sessionFile, JSON.stringify(data, null, 2), "utf-8");
+    return sessionFile;
+  }
+
+  async loadSession(name: string): Promise<boolean> {
+    const sessionFile = path.join(QINGLING_DIR, "sessions", name.endsWith(".json") ? name : name + ".json");
+    try {
+      const data = await fs.readFile(sessionFile, "utf-8");
+      const parsed = JSON.parse(data);
+      this.messages = parsed.messages ?? [];
+      this.turnCount = parsed.turnCount ?? 0;
+      this.sessionTokens = parsed.sessionTokens ?? 0;
+      this.sectionRegistry.clearCache();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async listSessions(): Promise<string[]> {
+    const sessionDir = path.join(QINGLING_DIR, "sessions");
+    try {
+      await fs.mkdir(sessionDir, { recursive: true });
+      const files = await fs.readdir(sessionDir);
+      return files.filter((f) => f.endsWith(".json")).sort().reverse();
+    } catch {
+      return [];
+    }
+  }
+
+
   // --- Private Methods ---
 
   private buildSystemPrompt(): string {

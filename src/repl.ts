@@ -24,6 +24,9 @@ export class Repl {
 ║         🌬️ 轻灵 REPL 模式               ║
 ║   输入任务，回车执行。输入 q 退出。       ║
 ║   输入 !reset 重置对话。                 ║
+║   输入 !save [name] 保存会话。           ║
+║   输入 !load [name] 恢复会话。           ║
+║   输入 !sessions 查看已保存会话。         ║
 ╚══════════════════════════════════════════╝
 `);
     this.loop();
@@ -50,6 +53,39 @@ export class Repl {
         continue;
       }
 
+      if (input.trim() === "!save" || input.trim().startsWith("!save ")) {
+        const name = input.trim().replace(/^!save\s*/, "") || undefined;
+        const file = await this.agent.saveSession(name);
+        console.log(`💾 会话已保存: ${file}\n`);
+        continue;
+      }
+
+      if (input.trim() === "!load" || input.trim().startsWith("!load ")) {
+        const name = input.trim().replace(/^!load\s*/, "");
+        if (!name) {
+          const sessions = await this.agent.listSessions();
+          if (sessions.length === 0) {
+            console.log("📭 没有已保存的会话。\n");
+          } else {
+            console.log("📂 已保存的会话:\n" + sessions.map((s, i) => `  ${i + 1}. ${s}`).join("\n") + "\n");
+          }
+        } else {
+          const ok = await this.agent.loadSession(name);
+          console.log(ok ? `📂 会话已恢复: ${name}\n` : `❌ 找不到会话: ${name}\n`);
+        }
+        continue;
+      }
+
+      if (input.trim() === "!sessions" || input.trim() === "!ls") {
+        const sessions = await this.agent.listSessions();
+        if (sessions.length === 0) {
+          console.log("📭 没有已保存的会话。\n");
+        } else {
+          console.log("📂 已保存的会话:\n" + sessions.map((s, i) => `  ${i + 1}. ${s}`).join("\n") + "\n");
+        }
+        continue;
+      }
+
       if (!input.trim()) {
         continue;
       }
@@ -62,7 +98,6 @@ export class Repl {
         console.log(`\n${response}\n`);
       } catch (err) {
         console.error(`\n❌ 出错: ${err instanceof Error ? err.message : String(err)}\n`);
-        // 重置，防止坏状态影响下一轮
         this.agent.reset();
       }
     }

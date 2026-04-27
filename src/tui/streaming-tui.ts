@@ -12,7 +12,7 @@
 // appendToolStart / appendToolSuccess / appendToolError
 // appendThinking / appendCogitated
 // appendValidation / appendRepair
-// appendFinal / appendError / appendState
+// appendFinal / appendError / appendState / appendDone
 // ============================================================
 
 import * as readline from "readline";
@@ -287,6 +287,9 @@ export class StreamUI {
         } else if (seq === "\x1b[D") {
           partial = "";
           this.handleLeft();
+        } else if (seq === "\x0f") {
+          // Ctrl+O — fold toggle (reserved for future expand/collapse)
+          partial = "";
         } else if (seq.startsWith("\x1b[") && seq.length > 4) {
           partial = "";
         } else if (seq.startsWith("\x1b[")) {
@@ -500,9 +503,7 @@ export class StreamUI {
   }
 
   appendDone(durationMs: number): void {
-    process.stdout.write("\n" + DIM("└ done in " + fmtDur(durationMs)));
+    const dur = fmtDur(durationMs);
+    process.stdout.write("\n" + S.g("✓ 完成") + " " + DIM(dur));
   }
-
-  setTools(n: number): void { this.tools = n; }
-  updateState(_state: string): void { /* Header 不重绘 */ }
 }
