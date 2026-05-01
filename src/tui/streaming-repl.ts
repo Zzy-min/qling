@@ -18,9 +18,8 @@ export class StreamingREPL {
 
   constructor(agent?: AgentLoop) {
     this.agent = agent ?? new AgentLoop();
-    const cfg = this.agent["config"];
-    const model = cfg?.model ?? "deepseek-chat";
-    const toolsCount = Array.isArray(cfg?.tools) ? cfg.tools.length : 0;
+    const model = this.agent.getModel();
+    const toolsCount = this.agent.getToolCount();
     this.ui = new StreamUI(model, toolsCount);
   }
 

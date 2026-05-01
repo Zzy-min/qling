@@ -8,23 +8,33 @@ import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import { resolve, join } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { toolError, toolSuccess } from "./error-utils.js";
+import { listSkills, searchSkills, parseSkillFile } from "../skills/registry.js";
 
 // Skill 查找路径
 // 支持两种格式：
 //   name="foo"        → 搜索 skills/foo.md
 //   name="@scope/foo" → 搜索 skills/scopes/scope/foo.md
-const SKILL_DIRS = [
-  resolve(process.cwd(), "skills"),
-  resolve(process.cwd(), ".qingling/skills"),
-  join(process.env.HERMES_HOME ?? "", "skills"),
-];
+export function getSkillDirs(): string[] {
+  const dirs = [
+    resolve(process.cwd(), "skills"),
+    resolve(process.cwd(), ".qingling/skills"),
+  ];
+  const hermesHome = process.env.HERMES_HOME;
+  if (hermesHome && hermesHome.trim()) {
+    dirs.push(join(hermesHome.trim(), "skills"));
+  }
+  return dirs;
+}
 
 function resolveSkillPath(name: string): string | null {
+  const dirs = getSkillDirs();
+
   // @scope/name 格式
   const scoped = name.match(/^@([^/]+)\/(.+)$/);
   if (scoped) {
     const [, scope, base] = scoped;
-    for (const dir of SKILL_DIRS) {
+    for (const dir of dirs) {
       // scopes/scope/name.md
       const p = join(dir, "scopes", scope, `${base}.md`);
       if (existsSync(p)) return p;
@@ -36,7 +46,7 @@ function resolveSkillPath(name: string): string | null {
   }
 
   // 普通 name 格式
-  for (const dir of SKILL_DIRS) {
+  for (const dir of dirs) {
     const p = join(dir, `${name}.md`);
     if (existsSync(p)) return p;
     // name/index.md
@@ -49,10 +59,15 @@ function resolveSkillPath(name: string): string | null {
 export const skillTool: ToolDefinition = {
   name: "skill",
   description:
-    "Dynamically load a skill/knowledge file (.md). Use when encountering unfamiliar tools, APIs, or frameworks. Returns file content as context — does not modify system prompt.",
+    "Dynamically load a skill/knowledge file (.md). Use when encountering unfamiliar tools, APIs, or frameworks. Use 'list' to discover available skills, 'search query=X' to find skills, or 'name=X' to load one.",
   longDescription: `动态加载技能/知识文件（SKILL.md），内容通过 tool_result 注入上下文。
 
 **核心原则**: "用到什么知识，临时加载什么知识，不塞 system prompt"
+
+**三种操作**:
+- skill list — 列出所有可用技能
+- skill search query="docker" — 搜索技能
+- skill name="docker" — 加载技能内容
 
 **查找路径**:
 - skills/{name}.md
@@ -62,8 +77,8 @@ export const skillTool: ToolDefinition = {
 **使用场景**:
 - 调用 docker 但不熟悉命令 → skill(name="docker")
 - 调用 Kubernetes API → skill(name="k8s-debug")
-- 调用某个第三方库 → skill(name="stripe-api")
-- 调试特定错误模式 → skill(name="python-async")
+- 不确定有哪些技能 → skill list
+- 搜索特定领域技能 → skill search query="api"
 
 **返回内容**:
 - 文件的 markdown body（不含 frontmatter）
@@ -73,20 +88,30 @@ export const skillTool: ToolDefinition = {
     properties: {
       name: {
         type: "string",
-        description: "Skill name without .md extension (e.g. 'docker', '@k8s/debug')",
+        description: "Skill name without .md extension (e.g. 'docker', '@k8s/debug'), or 'list' to list all skills",
+      },
+      query: {
+        type: "string",
+        description: "Search query for finding skills by name/description/tags (used with search action)",
       },
     },
-    required: ["name"],
+    required: [],
   },
   paramSchema: {
     name: {
       type: "string",
-      description: "技能名称（不含 .md 后缀）。支持普通格式和 @scope/name 格式。",
+      description: "技能名称（不含 .md 后缀）。支持普通格式和 @scope/name 格式。传 'list' 列出所有技能。",
       minLength: 1,
-      pattern: "^[a-zA-Z0-9_/-]+$",
+      pattern: "^[a-zA-Z0-9_/@-]+$",
+    },
+    query: {
+      type: "string",
+      description: "搜索关键词，按名称/描述/标签模糊匹配。",
     },
   },
   examples: [
+    'skill list',
+    'skill search query="docker"',
     'skill name="docker"',
     'skill name="python-async"',
     'skill name="@k8s/debug"',
@@ -100,16 +125,51 @@ export const skillTool: ToolDefinition = {
   effortHint: "minimal",
 };
 
-export async function runSkill(args: { name: string }): Promise<ToolResult> {
-  const skillName = args.name.trim();
-  const filePath = resolveSkillPath(skillName);
+export async function runSkill(args: { name?: string; query?: string }): Promise<ToolResult> {
+  const name = String(args.name ?? "").trim();
+  const query = String(args.query ?? "").trim();
 
+  // list mode
+  if (name === "list") {
+    const dirs = getSkillDirs();
+    const skills = await listSkills(dirs);
+    if (skills.length === 0) {
+      return toolSuccess("No skills found. Create .md files in skills/ directory to add skills.");
+    }
+    const lines = skills.map((s) => {
+      const tags = s.tags.length > 0 ? ` [${s.tags.join(", ")}]` : "";
+      return `- ${s.name}: ${s.description || "(no description)"}${tags}`;
+    });
+    return toolSuccess(`Available skills (${skills.length}):\n${lines.join("\n")}`);
+  }
+
+  // search mode
+  if (query) {
+    const dirs = getSkillDirs();
+    const results = await searchSkills(query, dirs);
+    if (results.length === 0) {
+      return toolSuccess(`No skills matching "${query}".`);
+    }
+    const lines = results.map((s) => {
+      const tags = s.tags.length > 0 ? ` [${s.tags.join(", ")}]` : "";
+      return `- ${s.name}: ${s.description || "(no description)"}${tags}`;
+    });
+    return toolSuccess(`Skills matching "${query}" (${results.length}):\n${lines.join("\n")}`);
+  }
+
+  // load mode
+  if (!name) {
+    return toolError("SKILL_MISSING_NAME", "name is required (or use 'list' to list skills)");
+  }
+
+  const filePath = resolveSkillPath(name);
   if (!filePath) {
-    return {
-      tool_call_id: "",
-      output: `⚠️ 未找到技能: ${skillName}`,
-      is_error: true,
-    };
+    const dirs = getSkillDirs();
+    const available = await listSkills(dirs);
+    const hint = available.length > 0
+      ? `\nAvailable skills: ${available.map((s) => s.name).join(", ")}`
+      : "\nNo skills found. Create .md files in skills/ directory.";
+    return toolError("SKILL_NOT_FOUND", `skill not found: ${name}${hint}`);
   }
 
   try {
@@ -121,15 +181,8 @@ export async function runSkill(args: { name: string }): Promise<ToolResult> {
       startIdx >= 0 && endIdx >= 0
         ? lines.slice(endIdx + 1).join("\n").trim()
         : content;
-    return {
-      tool_call_id: "",
-      output: `📖 技能: ${skillName}\n\n${body}`,
-    };
+    return toolSuccess(`📖 Skill: ${name}\n\n${body}`);
   } catch (err) {
-    return {
-      tool_call_id: "",
-      output: `⚠️ 读取技能文件出错: ${(err as Error).message}`,
-      is_error: true,
-    };
+    return toolError("SKILL_READ_FAILED", `failed to read skill: ${(err as Error).message}`);
   }
 }

@@ -11,12 +11,47 @@ import { runTodo, todoTool } from "./todo.js";
 import { runSkill, skillTool } from "./skill.js";
 import { runSearch, searchTool } from "./search.js";
 import { runPlanner, plannerTool } from "./planner.js";
+import { runUrlFetch, urlFetchTool } from "./url-fetch.js";
+import { runSubtask, subtaskTool } from "./subtask.js";
+import { toolError } from "./error-utils.js";
+import { isMCPTool, parseMCPToolName } from "../mcp/bridge.js";
+import type { MCPRegistry } from "../mcp/registry.js";
 
-export { bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool };
+export { bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool };
+export { subtaskTool } from "./subtask.js";
 
 export const ALL_TOOLS: ToolDefinition[] = [
-  bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool,
+  bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool,
 ];
+
+// Runtime MCP registry reference
+let mcpRegistry: MCPRegistry | null = null;
+
+export function setMCPRegistry(registry: MCPRegistry): void {
+  mcpRegistry = registry;
+}
+
+export function getMCPRegistry(): MCPRegistry | null {
+  return mcpRegistry;
+}
+
+export interface ToolRegistryBuildOptions {
+  staticEnabled?: Record<string, boolean>;
+  runtimeInjected?: ToolDefinition[];
+  channelContextual?: ToolDefinition[];
+}
+
+export function buildToolRegistry(options: ToolRegistryBuildOptions = {}): ToolDefinition[] {
+  const staticEnabled = options.staticEnabled ?? {};
+  const staticLayer = ALL_TOOLS.filter((t) => staticEnabled[t.name] !== false);
+  const merged = [...staticLayer, ...(options.runtimeInjected ?? []), ...(options.channelContextual ?? [])];
+
+  const byName = new Map<string, ToolDefinition>();
+  for (const tool of merged) {
+    byName.set(tool.name, tool);
+  }
+  return Array.from(byName.values());
+}
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
@@ -28,25 +63,37 @@ const handlers: Record<string, ToolHandler> = {
   skill: runSkill as ToolHandler,
   search: runSearch as ToolHandler,
   planner: runPlanner as ToolHandler,
+  url_fetch: runUrlFetch as ToolHandler,
+  subtask: runSubtask as ToolHandler,
 };
 
 export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {
+  // MCP tool routing
+  if (isMCPTool(toolCall.name) && mcpRegistry) {
+    const parsed = parseMCPToolName(toolCall.name);
+    if (parsed) {
+      const result = await mcpRegistry.callTool(parsed.serverName, parsed.toolName, toolCall.arguments);
+      return { ...result, tool_call_id: toolCall.id };
+    }
+  }
+
   const handler = handlers[toolCall.name];
   if (!handler) {
-    return {
-      tool_call_id: toolCall.id,
-      output: `Error: unknown tool '${toolCall.name}'`,
-      is_error: true,
-    };
+    return { ...toolError("TOOL_NOT_FOUND", `unknown tool '${toolCall.name}'`), tool_call_id: toolCall.id };
   }
   try {
     const result = await handler(toolCall.arguments);
-    return { tool_call_id: toolCall.id, output: result.output, is_error: result.is_error };
+    return {
+      ...result,
+      tool_call_id: toolCall.id,
+    };
   } catch (err: unknown) {
     return {
+      ...toolError("TOOL_DISPATCH_FAILED", err instanceof Error ? err.message : String(err), {
+        retriable: false,
+        category: "runtime",
+      }),
       tool_call_id: toolCall.id,
-      output: `Error: ${(err as Error).message}`,
-      is_error: true,
     };
   }
 }

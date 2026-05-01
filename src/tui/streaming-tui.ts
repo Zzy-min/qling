@@ -250,11 +250,8 @@ export class StreamUI {
   // ── 键盘输入处理 ─────────────────────────────────
 
   private setupInput(): void {
-    try {
-      const tty = require("tty");
-      tty.setRawMode(true);
-    } catch (_e) {
-      // not a tty
+    if (typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(true);
     }
 
     process.stdin.resume();

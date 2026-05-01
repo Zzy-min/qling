@@ -14,6 +14,10 @@ import {
   ClassifierResult,
   ToolDefinition,
 } from "../types.js";
+import { PermissionMatrix, type PermissionResult } from "../guard/permissions.js";
+import { RateLimiter, type RateLimitResult } from "../guard/rate-limit.js";
+import { appendGuardAudit } from "../guard.js";
+import type { GuardConfig } from "../config.js";
 
 // --- 0. 动态工具选择器（<30 工具限制 + 场景路由）---
 
@@ -201,9 +205,24 @@ export class HookManager {
   private postHooks: PostToolUseHandler[] = [];
   private failureHooks: FailureHandler[] = [];
   private classifier: SpeculativeClassifier;
+  private permissionMatrix: PermissionMatrix | null = null;
+  private rateLimiter: RateLimiter | null = null;
+  private guardConfig: GuardConfig | null = null;
 
-  constructor(toolDefs: ToolDefinition[]) {
+  constructor(toolDefs: ToolDefinition[], guardConfig?: GuardConfig) {
     this.classifier = new SpeculativeClassifier(toolDefs);
+    if (guardConfig) {
+      this.guardConfig = guardConfig;
+      if (guardConfig.permissions) {
+        this.permissionMatrix = new PermissionMatrix(
+          guardConfig.permissions.default,
+          guardConfig.permissions.rules
+        );
+      }
+      if (guardConfig.rate_limit?.enabled) {
+        this.rateLimiter = new RateLimiter(guardConfig.rate_limit.max_per_minute);
+      }
+    }
   }
 
   register(name: "PreToolUse", handler: PreToolUseHandler): void;
@@ -215,7 +234,58 @@ export class HookManager {
     else if (name === "PostToolUseFailure") this.failureHooks.push(handler as FailureHandler);
   }
 
-  async runPreHook(ctx: ToolHookContext): Promise<HookResult> {
+  async runPreHook(ctx: ToolHookContext, sessionId?: string): Promise<HookResult> {
+    // 1. Permission matrix check (highest priority)
+    if (this.permissionMatrix && this.guardConfig) {
+      const permResult = this.permissionMatrix.evaluate(ctx.toolName);
+      if (permResult.decision === "deny") {
+        await appendGuardAudit(this.guardConfig, {
+          tool: ctx.toolName,
+          action: "deny",
+          category: "permission",
+          reason: permResult.reason ?? "denied by permission rule: " + (permResult.matched_rule ?? "default"),
+        });
+        return {
+          decision: "deny",
+          blockingError: permResult.reason ?? "工具权限拒绝: " + ctx.toolName,
+          preventContinuation: true,
+        };
+      }
+      if (permResult.decision === "ask") {
+        await appendGuardAudit(this.guardConfig, {
+          tool: ctx.toolName,
+          action: "allow",
+          category: "permission",
+          reason: "ask triggered by rule: " + (permResult.matched_rule ?? "default"),
+        });
+        return {
+          decision: "ask",
+          additionalContexts: [permResult.reason ?? "工具需要确认: " + ctx.toolName],
+        };
+      }
+    }
+
+    // 2. Rate limit check
+    if (this.rateLimiter && sessionId) {
+      const rlResult = this.rateLimiter.check(ctx.toolName, sessionId);
+      if (!rlResult.allowed) {
+        if (this.guardConfig) {
+          await appendGuardAudit(this.guardConfig, {
+            tool: ctx.toolName,
+            action: "deny",
+            category: "rate_limit",
+            reason: `rate limit exceeded, retry after ${rlResult.retryAfterMs}ms`,
+          });
+        }
+        return {
+          decision: "deny",
+          blockingError: `速率限制: 工具 ${ctx.toolName} 调用过于频繁，请 ${Math.ceil((rlResult.retryAfterMs ?? 0) / 1000)}s 后重试`,
+          preventContinuation: false,
+        };
+      }
+    }
+
+    // 3. Speculative classifier
     const fakeCall: ToolCall = {
       id: "speculative",
       name: ctx.toolName,
@@ -240,6 +310,7 @@ export class HookManager {
       };
     }
 
+    // 4. Custom pre-hooks
     for (const handler of this.preHooks) {
       const result = await handler(ctx);
       if (result.decision === "deny") return result;
@@ -271,17 +342,23 @@ export interface PipelineContext {
 }
 
 export class ToolPipeline {
+  private sessionId: string | null = null;
+
   constructor(
     private toolDefs: ToolDefinition[],
     private hookManager: HookManager
   ) {}
 
+  setSessionId(id: string): void {
+    this.sessionId = id;
+  }
+
   async execute(toolCall: ToolCall, runner: (tc: ToolCall) => Promise<ToolResult>): Promise<ToolResult> {
     const def = this.toolDefs.find((t) => t.name === toolCall.name);
     const hookCtx = this.buildHookContext(toolCall, def);
 
-    // 1. PreHook（含 Speculative Classifier）
-    const preResult = await this.hookManager.runPreHook(hookCtx);
+    // 1. PreHook（含 Permission Matrix + Rate Limiter + Speculative Classifier）
+    const preResult = await this.hookManager.runPreHook(hookCtx, this.sessionId ?? undefined);
 
     if (preResult.decision === "deny") {
       console.error(`🚫 [Pipeline] 工具 ${toolCall.name} 被 Hook 拦截: ${preResult.blockingError}`);
@@ -293,13 +370,12 @@ export class ToolPipeline {
     }
 
     if (preResult.decision === "ask") {
-      const msg = `【需要确认】工具 ${toolCall.name} 需要确认。\n原因: ${preResult.additionalContexts?.join("\n") ?? "未知"}`;
-      console.error(`⚠️ [Pipeline] ${msg}`);
-      return {
-        tool_call_id: toolCall.id,
-        output: msg,
-        is_error: true,
-      };
+      const { ApprovalRequiredError } = await import("../guard/approval.js");
+      throw new ApprovalRequiredError(
+        toolCall.id,
+        toolCall.name,
+        preResult.additionalContexts ?? ["需要确认"]
+      );
     }
 
     // 2. 执行工具

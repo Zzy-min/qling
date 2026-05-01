@@ -1,10 +1,15 @@
 // ============================================================
-// 轻灵 - Memory 系统 v2（参考 Microsoft AI Agents for Beginners Lesson 12 & 13）
+// 轻灵 - Memory 系统 v3（WAL + 投影 Worker + LLM Dream）
 // 三层架构：Scratchpad（会话）→ Conversation（对话）→ Persisted（持久化）
 // ============================================================
 
 import * as fs from "fs/promises";
 import * as path from "path";
+import type { PersistedEntry } from "./types.js";
+import { WriteAheadLog } from "./memory/wal.js";
+import type { WALEntry } from "./types.js";
+import { ProjectionWorker } from "./memory/projection-worker.js";
+import { MemoryCompactor } from "./memory/compactor.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -12,22 +17,30 @@ const DEFAULT_CONFIG = {
   transcriptWindow: 4,
 };
 
-// --- Persisted Memory（长期存储，磁盘持久化）---
-
-interface PersistedEntry {
-  id: string;
-  content: string;
-  source: string;
-  createdAt: number;
-  importance: number;
-}
+// --- PersistedMemory（长期存储，WAL 模式可选）---
 
 export class PersistedMemory {
   entries: PersistedEntry[] = [];
   private memoryDir: string;
+  private wal: WriteAheadLog | null = null;
+  private projectionWorker: ProjectionWorker | null = null;
 
   constructor(memoryDir: string) {
     this.memoryDir = memoryDir;
+  }
+
+  setWAL(
+    wal: WriteAheadLog,
+    options: { intervalMs?: number; maxPendingEntries?: number } = {}
+  ): void {
+    this.wal = wal;
+    this.projectionWorker = new ProjectionWorker(wal, {
+      applyEntry: (entry) => this.applyWALEntry(entry),
+      getEntries: () => this.entries,
+    }, {
+      intervalMs: options.intervalMs,
+      maxPendingEntries: options.maxPendingEntries,
+    });
   }
 
   async init(): Promise<void> {
@@ -36,14 +49,63 @@ export class PersistedMemory {
   }
 
   add(content: string, source: string, importance: number = 0.5): void {
-    this.entries.push({
+    const entry: PersistedEntry = {
       id: "mem_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
       content,
       source,
       createdAt: Date.now(),
       importance,
-    });
+    };
+    this.entries.push(entry);
     this.entries.sort((a, b) => b.importance - a.importance);
+  }
+
+  remove(id: string): boolean {
+    const idx = this.entries.findIndex((e) => e.id === id);
+    if (idx === -1) return false;
+    this.entries.splice(idx, 1);
+    return true;
+  }
+
+  update(id: string, updates: Partial<Pick<PersistedEntry, "content" | "importance">>): boolean {
+    const entry = this.entries.find((e) => e.id === id);
+    if (!entry) return false;
+    if (updates.content !== undefined) entry.content = updates.content;
+    if (updates.importance !== undefined) entry.importance = updates.importance;
+    this.entries.sort((a, b) => b.importance - a.importance);
+    return true;
+  }
+
+  applyWALEntry(entry: WALEntry): void {
+    switch (entry.op) {
+      case "add": {
+        const data = entry.data as PersistedEntry;
+        if (!this.entries.some((e) => e.id === data.id)) {
+          this.entries.push(data);
+          this.entries.sort((a, b) => b.importance - a.importance);
+        }
+        break;
+      }
+      case "remove": {
+        const data = entry.data as { id: string };
+        this.entries = this.entries.filter((e) => e.id !== data.id);
+        break;
+      }
+      case "update": {
+        const data = entry.data as PersistedEntry;
+        const existing = this.entries.find((e) => e.id === data.id);
+        if (existing) {
+          if (data.content !== undefined) existing.content = data.content;
+          if (data.importance !== undefined) existing.importance = data.importance;
+        }
+        break;
+      }
+      case "compact": {
+        const data = entry.data as PersistedEntry[];
+        this.entries = data;
+        break;
+      }
+    }
   }
 
   getRelevant(query: string, limit: number = 5): PersistedEntry[] {
@@ -74,8 +136,14 @@ export class PersistedMemory {
   }
 
   async saveToDisk(): Promise<void> {
-    const file = path.join(this.memoryDir, "memory.json");
-    await fs.writeFile(file, JSON.stringify(this.entries, null, 2), "utf-8");
+    if (this.wal) {
+      // WAL 模式：写入 WAL 条目，由 ProjectionWorker 异步投影
+      await this.wal.append("compact", this.entries);
+    } else {
+      // 传统模式：直接写 memory.json
+      const file = path.join(this.memoryDir, "memory.json");
+      await fs.writeFile(file, JSON.stringify(this.entries, null, 2), "utf-8");
+    }
   }
 
   async loadFromDisk(): Promise<void> {
@@ -88,7 +156,6 @@ export class PersistedMemory {
     }
   }
 
-  // 批量合并（用于压缩后的持久化）
   merge(entries: PersistedEntry[]): void {
     const existing = new Map(this.entries.map((e) => [e.id, e]));
     for (const entry of entries) {
@@ -100,6 +167,24 @@ export class PersistedMemory {
 
   getAll(): PersistedEntry[] {
     return [...this.entries];
+  }
+
+  compact(maxEntries: number = 1000): void {
+    const compactor = new MemoryCompactor({ maxEntries });
+    const result = compactor.compactWithEntries(this.entries);
+    this.entries = result.entries;
+  }
+
+  startProjection(): void {
+    this.projectionWorker?.start();
+  }
+
+  stopProjection(): void {
+    this.projectionWorker?.stop();
+  }
+
+  async forceCheckpoint(): Promise<void> {
+    await this.projectionWorker?.forceCheckpoint();
   }
 }
 
@@ -124,16 +209,14 @@ export class ScratchpadMemory {
     this.notes.delete(key);
   }
 
-  // 列出所有笔记
   entries(): IterableIterator<[string, string]> {
     return this.notes.entries();
   }
 
-  // 转为提示字符串
   formatForPrompt(): string {
     if (this.notes.size === 0) return "";
-    const lines = Array.from(this.notes.entries()).map(([k, v]) => "• " + k + ": " + v);
-    return "【会话笔记】\n" + lines.join("\n");
+    const lines = Array.from(this.notes.entries()).map(([k, v]) => "- " + k + ": " + v);
+    return "[会话笔记]\n" + lines.join("\n");
   }
 
   clear(): void {
@@ -172,15 +255,12 @@ export class ConversationMemory {
     this.turns = [];
   }
 
-  // 提取关键信息（供 AutoDream 使用）
   extractKeyInfo(): string[] {
     const recent = this.turns.slice(-8);
     const lines: string[] = [];
     for (const t of recent) {
-      // 提取用户提到的文件路径
       const paths = t.content.match(/[/\.a-zA-Z0-9_-]+\.(ts|js|py|md|json|yml|yaml|sh)/g);
       if (paths) lines.push(...paths);
-      // 提取用户提到的工具/技术
       const techs = t.content.match(/(?:使用|调用|通过)\s+(\S+)/g);
       if (techs) lines.push(...techs);
     }
@@ -205,6 +285,25 @@ export class MemoryStore {
 
   async init(): Promise<void> {
     await this.persisted.init();
+  }
+
+  setWAL(
+    wal: WriteAheadLog,
+    options: { intervalMs?: number; maxPendingEntries?: number } = {}
+  ): void {
+    this.persisted.setWAL(wal, options);
+  }
+
+  startProjection(): void {
+    this.persisted.startProjection();
+  }
+
+  stopProjection(): void {
+    this.persisted.stopProjection();
+  }
+
+  async forceCheckpoint(): Promise<void> {
+    await this.persisted.forceCheckpoint();
   }
 
   // --- Persisted（对外 API）---
@@ -242,7 +341,7 @@ export class MemoryStore {
   promoteNoteToMemory(key: string, importance: number = 0.6): boolean {
     const value = this.scratchpad.get(key);
     if (!value) return false;
-    this.persisted.add("[笔记→记忆] " + key + ": " + value, "manual", importance);
+    this.persisted.add("[笔记->记忆] " + key + ": " + value, "manual", importance);
     this.scratchpad.delete(key);
     return true;
   }
@@ -278,6 +377,10 @@ export class MemoryStore {
   importPersisted(entries: PersistedEntry[]): void {
     this.persisted.merge(entries);
   }
+
+  compactPersisted(maxEntries: number): void {
+    this.persisted.compact(maxEntries);
+  }
 }
 
 // --- extractDreamMemories（AutoDream 提取记忆）---
@@ -306,9 +409,7 @@ export async function extractDreamMemories(
     /(?:记住|记得|重要|不要忘记)[：:](.+)/gi,
     /(?:项目|技术栈|框架)[：:](\S+)/gi,
     /(?:工作目录)[：:](\S+)/gi,
-    // 工具使用记录
     /(?:使用|调用)[：:]\s*(\S+)/gi,
-    // 文件路径
     /([/\.a-zA-Z0-9_-]+\.(?:ts|js|py|md|json|yml|yaml|sh))/g,
   ];
 
@@ -320,7 +421,6 @@ export async function extractDreamMemories(
     }
   }
 
-  // 去重
   return Array.from(new Set(memories));
 }
 
@@ -341,7 +441,6 @@ export class TokenBudgetManager {
     this.usedTokens += tokens;
   }
 
-  /** 用 API 返回的实际累计值直接同步（不累加） */
   syncUsage(actualTokens: number): void {
     this.usedTokens = actualTokens;
   }
@@ -360,7 +459,7 @@ export class TokenBudgetManager {
 
   buildNudgeMessage(): string {
     const pct = Math.round(this.getRemainingPct() * 100);
-    return "⚠️ Token 预算即将耗尽（剩余 " + pct + "%），请精简回复，减少工具调用。";
+    return "Token 预算即将耗尽（剩余 " + pct + "%），请精简回复，减少工具调用。";
   }
 
   estimateMessagesCost(messages: { content: string }[]): number {

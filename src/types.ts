@@ -23,6 +23,13 @@ export interface ToolResult {
   tool_call_id: string;
   output: string;
   is_error?: boolean;
+  error?: {
+    code: string;
+    message: string;
+    retriable?: boolean;
+    category?: "validation" | "permission" | "network" | "io" | "runtime" | "guard";
+  };
+  meta?: Record<string, unknown>;
 }
 
 export interface Message {
@@ -36,6 +43,8 @@ export interface Message {
 
 export interface AgentConfig {
   apiKey: string;
+  provider?: string;
+  endpoint?: string;
   model: string;
   systemPrompt: string;
   maxIterations: number;
@@ -43,6 +52,23 @@ export interface AgentConfig {
   // v2 新增
   tokenBudget?: TokenBudgetConfig;
   sections?: PromptSectionRegistry;
+  runtime?: {
+    workspaceDir: string | null;
+    fileCacheDir: string;
+    fileStateDir: string;
+    maxSteps: number;
+    parseRetries: number;
+    maxTokenBudget: number;
+    toolRepeatLimit: number;
+    timeoutMs: number;
+  };
+  logging?: {
+    level: "debug" | "info" | "warn" | "error";
+    format: "text" | "json";
+    inspectPrompt: boolean;
+    inspectRequest: boolean;
+    inspectDumpDir: string;
+  };
 }
 
 export interface ToolParam {
@@ -221,4 +247,70 @@ export interface AutoDreamConfig {
   enabled: boolean;
   turnThreshold: number;   // 多少轮后触发（默认 24）
   transcriptWindow?: number; // 取最近多少轮 transcript（默认 2-4）
+}
+
+// --- Persisted Memory Entry（WAL + 投影）---
+
+export interface PersistedEntry {
+  id: string;
+  content: string;
+  source: string;
+  createdAt: number;
+  importance: number;
+}
+
+// --- WAL ---
+
+export interface WALEntry {
+  seq: number;
+  op: "add" | "remove" | "update" | "compact";
+  timestamp: number;
+  data: unknown;
+  checksum: string;
+}
+
+export interface WALState {
+  lastSeq: number;
+  lastCheckpointSeq: number;
+}
+
+// --- LLM Dream ---
+
+export interface LLMDreamConfig {
+  enabled: boolean;
+  model: string;
+  maxTokens: number;
+  apiKey: string;
+  endpoint: string;
+}
+
+// --- MCP ---
+
+export interface MCPServerConfig {
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  enabled: boolean;
+  transport?: "stdio" | "http";
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+// --- Subtask ---
+
+export interface SubtaskConfig {
+  task: string;
+  parentContext?: string;
+  maxIterations?: number;
+  depth?: number;
+  tools?: ToolDefinition[];
+  timeoutMs?: number;
+}
+
+export interface SubtaskResult {
+  success: boolean;
+  output: string;
+  iterations: number;
+  durationMs: number;
 }

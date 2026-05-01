@@ -1,6 +1,10 @@
 import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
+import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+
+const MAX_WRITE_BYTES = 256 * 1024; // 256KB
 
 export const writeTool: ToolDefinition = {
   name: "write",
@@ -74,22 +78,62 @@ export const writeTool: ToolDefinition = {
   effortHint: "medium",
 };
 
+const DANGEROUS_PATHS = [
+  "/etc/passwd",
+  "/etc/shadow",
+  "/etc/sudoers",
+  "C:\\Windows\\System32",
+  "/sys/",
+  "/proc/",
+];
+
+function isDangerousPath(filePath: string): string | null {
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  for (const pattern of DANGEROUS_PATHS) {
+    if (normalized.includes(pattern.replace(/\\/g, "/").toLowerCase())) {
+      return pattern;
+    }
+  }
+  return null;
+}
+
 export async function runWrite(args: {
   path: string;
   content: string;
 }): Promise<ToolResult> {
+  const inputPath = String(args.path ?? "").trim();
+  if (!inputPath) {
+    return toolError("WRITE_INVALID_PATH", "path is required");
+  }
+  const roots = getRuntimeRootsFromEnv();
+  const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
+  if (!isWithinAllowedRoots(resolvedPath, roots)) {
+    return toolError("WRITE_OUTSIDE_ALLOWED_ROOT", `${resolvedPath} is outside allowed roots`);
+  }
+
+  const content = String(args.content ?? "");
+  const byteLength = Buffer.byteLength(content, "utf-8");
+  if (byteLength > MAX_WRITE_BYTES) {
+    return toolError(
+      "WRITE_CONTENT_TOO_LARGE",
+      `content exceeds ${MAX_WRITE_BYTES} bytes (current: ${byteLength})`
+    );
+  }
+
+  const danger = isDangerousPath(resolvedPath);
+  if (danger) {
+    return toolError("WRITE_DANGEROUS_PATH", `path "${resolvedPath}" matches dangerous pattern "${danger}"`);
+  }
+
   try {
-    await mkdir(dirname(args.path), { recursive: true });
-    await writeFile(args.path, args.content, "utf-8");
-    return {
-      tool_call_id: "",
-      output: `✅ 文件已写入: ${args.path}`,
-    };
+    await mkdir(dirname(resolvedPath), { recursive: true });
+    await writeFile(resolvedPath, content, "utf-8");
+    return toolSuccess(`✅ 文件已写入: ${resolvedPath}`);
   } catch (err: unknown) {
-    return {
-      tool_call_id: "",
-      output: `Error: ${(err as Error).message}`,
-      is_error: true,
-    };
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "EACCES" || code === "EPERM") {
+      return toolError("WRITE_PERMISSION_DENIED", `permission denied for ${resolvedPath}`);
+    }
+    return toolError("WRITE_FAILED", getErrorMessage(err));
   }
 }

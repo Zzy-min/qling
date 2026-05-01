@@ -5,8 +5,14 @@
 // - stdout/stderr 正确路由（避免 NotADirectoryError）
 // ============================================================
 
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
+import { stat } from "fs/promises";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { toolError, toolSuccess } from "./error-utils.js";
+import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+
+const MAX_COMMAND_LENGTH = 5000;
+const MAX_OUTPUT_BYTES = 1024 * 1024; // 1MB per stream
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -43,6 +49,14 @@ export const bashTool: ToolDefinition = {
         type: "number",
         description: "Timeout in seconds (default: 60, max: 300)",
       },
+      env_allowlist: {
+        type: "array",
+        description: "Extra environment keys to inherit from host process",
+      },
+      env_inject: {
+        type: "object",
+        description: "Explicit env key/value overrides (guarded by key format check)",
+      },
     },
     required: ["command"],
   },
@@ -63,6 +77,15 @@ export const bashTool: ToolDefinition = {
       minimum: 1,
       maximum: 300,
       default: 60,
+    },
+    env_allowlist: {
+      type: "array",
+      description: "额外继承的环境变量名数组，例如 [\"HTTP_PROXY\"]",
+      items: { type: "string", description: "环境变量名" },
+    },
+    env_inject: {
+      type: "object",
+      description: "显式注入的环境变量键值对（键必须匹配 ^[A-Z_][A-Z0-9_]*$）",
     },
   },
   examples: [
@@ -92,67 +115,146 @@ export async function runBash(args: {
   command: string;
   cwd?: string;
   timeout?: number;
+  env_allowlist?: string[];
+  env_inject?: Record<string, string>;
 }): Promise<ToolResult> {
+  const command = String(args.command ?? "").trim();
+  if (!command) {
+    return toolError("BASH_EMPTY_COMMAND", "command is required");
+  }
+  if (command.length > MAX_COMMAND_LENGTH) {
+    return toolError(
+      "BASH_COMMAND_TOO_LONG",
+      `command exceeds ${MAX_COMMAND_LENGTH} characters (current: ${command.length})`
+    );
+  }
+
+  const timeoutSec = Math.max(1, Math.min(300, args.timeout ?? 60));
+  const roots = getRuntimeRootsFromEnv();
+  const cwdInput = String(args.cwd ?? ".").trim();
+  const cwd = resolveToolPath(cwdInput, roots, "workspace");
+  if (!isWithinAllowedRoots(cwd, roots)) {
+    return toolError("BASH_OUTSIDE_ALLOWED_ROOT", `${cwd} is outside allowed roots`);
+  }
+  try {
+    const cwdStat = await stat(cwd);
+    if (!cwdStat.isDirectory()) {
+      return toolError("BASH_INVALID_CWD", `${cwd} is not a directory`);
+    }
+  } catch {
+    return toolError("BASH_CWD_NOT_FOUND", `cwd not found: ${cwd}`);
+  }
+
   return new Promise((resolve) => {
-    const timeout = (args.timeout ?? 60) * 1000;
+    const timeout = timeoutSec * 1000;
     const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-    const shellArgs = process.platform === "win32" ? ["/c", args.command] : ["-c", args.command];
+    const shellArgs = process.platform === "win32" ? ["/c", command] : ["-c", command];
 
     const proc = spawn(shell, shellArgs, {
-      cwd: args.cwd ?? process.cwd(),
+      cwd,
+      env: buildSafeEnv(args.env_allowlist ?? [], args.env_inject ?? {}),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
 
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let settled = false;
+    let timedOut = false;
+
+    const appendCapped = (
+      current: string,
+      incoming: Buffer,
+      currentBytes: number
+    ): { next: string; bytes: number; truncated: boolean } => {
+      if (currentBytes >= MAX_OUTPUT_BYTES) {
+        return { next: current, bytes: currentBytes, truncated: true };
+      }
+      const remaining = MAX_OUTPUT_BYTES - currentBytes;
+      if (incoming.byteLength <= remaining) {
+        return {
+          next: current + incoming.toString(),
+          bytes: currentBytes + incoming.byteLength,
+          truncated: false,
+        };
+      }
+      return {
+        next: current + incoming.subarray(0, remaining).toString(),
+        bytes: MAX_OUTPUT_BYTES,
+        truncated: true,
+      };
+    };
 
     const finish = (code: number | null, signal: string | null) => {
       if (settled) return;
       settled = true;
 
+      const stdoutSuffix = stdoutTruncated ? `\n[stdout truncated at ${MAX_OUTPUT_BYTES} bytes]` : "";
+      const stderrSuffix = stderrTruncated ? `\n[stderr truncated at ${MAX_OUTPUT_BYTES} bytes]` : "";
+
       // 超时
-      if (code === null && signal === "SIGTERM") {
-        resolve({
-          tool_call_id: "",
-          output: `exit code: null (killed after ${args.timeout ?? 60}s timeout)\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-          is_error: true,
-        });
+      if (timedOut) {
+        resolve(
+          toolError(
+            "BASH_TIMEOUT",
+            `killed after ${timeoutSec}s timeout\nstdout:\n${stdout}${stdoutSuffix}\nstderr:\n${stderr}${stderrSuffix}`
+          )
+        );
         return;
       }
 
       // 组合输出（避免 stderr 干扰主输出）
+      const combined =
+        stderr.trim().length > 0
+          ? `stdout:\n${stdout}${stdoutSuffix}\nstderr:\n${stderr}${stderrSuffix}`
+          : `${stdout || "(no output)"}${stdoutSuffix}`;
+
+      if ((code ?? 0) !== 0) {
+        resolve(toolError("BASH_EXIT_NON_ZERO", `exit code: ${code ?? "null"}\n${combined}`));
+        return;
+      }
+
       if (stderr.trim()) {
-        resolve({
-          tool_call_id: "",
-          output: `stdout:\n${stdout}\nstderr:\n${stderr}`,
-          is_error: code !== 0,
-        });
+        resolve(toolSuccess(combined));
       } else {
-        resolve({
-          tool_call_id: "",
-          output: stdout || "(no output)",
-          is_error: code !== 0,
-        });
+        resolve(toolSuccess(combined));
       }
     };
 
     // 超时控制
     const timer = setTimeout(() => {
-      proc.kill("SIGTERM");
-      // 给进程一点时间优雅退出
-      setTimeout(() => {
-        if (!settled) proc.kill("SIGKILL");
-      }, 2000);
+      timedOut = true;
+      if (process.platform === "win32") {
+        // Windows: 用 taskkill 强制终止进程树
+        try {
+          execFileSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { timeout: 5000 });
+        } catch {
+          proc.kill();
+        }
+      } else {
+        proc.kill("SIGTERM");
+        setTimeout(() => {
+          if (!settled) proc.kill("SIGKILL");
+        }, 2000);
+      }
     }, timeout);
 
     proc.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      const next = appendCapped(stdout, chunk, stdoutBytes);
+      stdout = next.next;
+      stdoutBytes = next.bytes;
+      stdoutTruncated ||= next.truncated;
     });
 
     proc.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const next = appendCapped(stderr, chunk, stderrBytes);
+      stderr = next.next;
+      stderrBytes = next.bytes;
+      stderrTruncated ||= next.truncated;
     });
 
     proc.on("close", (code, signal) => {
@@ -164,12 +266,52 @@ export async function runBash(args: {
       clearTimeout(timer);
       if (!settled) {
         settled = true;
-        resolve({
-          tool_call_id: "",
-          output: `spawn error: ${err.message}`,
-          is_error: true,
-        });
+        resolve(toolError("BASH_SPAWN_ERROR", `spawn error: ${err.message}`));
       }
     });
   });
+}
+
+function buildSafeEnv(envAllowlist: string[], envInject: Record<string, string>): NodeJS.ProcessEnv {
+  const safe: NodeJS.ProcessEnv = {};
+  const baseKeys = new Set([
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "TMP",
+    "TEMP",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+  ]);
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith("QINGLING_") || baseKeys.has(key.toUpperCase())) {
+      safe[key] = value;
+    }
+  }
+
+  for (const key of envAllowlist) {
+    const normalized = key.trim();
+    if (!isSafeEnvKey(normalized)) continue;
+    if (process.env[normalized] !== undefined) {
+      safe[normalized] = process.env[normalized];
+    }
+  }
+
+  for (const [key, value] of Object.entries(envInject)) {
+    const normalized = key.trim();
+    if (!isSafeEnvKey(normalized)) continue;
+    safe[normalized] = String(value);
+  }
+
+  return safe;
+}
+
+function isSafeEnvKey(key: string): boolean {
+  return /^[A-Z_][A-Z0-9_]*$/.test(key);
 }

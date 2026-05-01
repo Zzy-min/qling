@@ -325,9 +325,9 @@ export class KnowledgeObserver {
   }
 
   private isAlreadyInMemory(obs: Observation): boolean {
-    // 简单检查 content 是否已在持久化记忆中
-    // 这个检查应该在 MemoryStore.getRelevant 中已有实现
-    return false; // 保守返回 false
+    // 检查 content 是否已在持久化记忆中
+    const existing = this.memoryStore.getRelevant(obs.content, 20);
+    return existing.some((e) => e.content.includes(obs.content.slice(0, 50)));
   }
 }
 

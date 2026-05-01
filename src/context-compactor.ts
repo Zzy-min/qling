@@ -10,7 +10,8 @@ import { Message } from "./types.js";
 function estimateTokens(text: string): number {
   let count = 0;
   for (const ch of text) {
-    count += ch >= "\u4e00" && ch <= "\u9fff" ? 2 : ch === "\n" ? 1 : 0.25;
+    // CJK \u5b57\u7b26\u7ea6 1.5 tokens\uff0cASCII \u7ea6 0.25 tokens
+    count += ch >= "\u4e00" && ch <= "\u9fff" ? 1.5 : 0.25;
   }
   return count;
 }
@@ -91,6 +92,24 @@ function detectPoison(message: Message): string[] {
   return findings;
 }
 
+function findLinkedAssistantIndex(messages: Message[], toolAbsIdx: number): number {
+  const toolMsg = messages[toolAbsIdx];
+  if (!toolMsg || toolMsg.role !== "tool") return -1;
+  const toolCallId = toolMsg.tool_call_id;
+
+  for (let i = toolAbsIdx - 1; i >= 0; i--) {
+    const candidate = messages[i];
+    if (!candidate || candidate.role !== "assistant") continue;
+    if ((candidate.tool_calls?.length ?? 0) === 0) continue;
+    if (!toolCallId) return i;
+    if (candidate.tool_calls!.some((tc) => tc.id === toolCallId)) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
 // --- 摘要 prompt ---
 const SUMMARY_PROMPT = `请将以下会话历史压缩为简洁摘要，保留：
 1. 已完成的关键任务和结果
@@ -114,11 +133,10 @@ export class ContextCompactor {
     return total > this.maxTokens;
   }
 
-  // 执行压缩：保留 system + 摘要旧消息 + 保留 recent
+  // 执行压缩：摘要旧消息 + 保留 recent
   async compact(messages: Message[], recentKeep = 6): Promise<Message[]> {
     if (messages.length <= recentKeep + 1) return messages;
 
-    const systemMsg = messages[0];
     // recent 必须包含完整的 tool_call chain（最近的 assistant 的 tool_calls + 对应 tool 结果）
     // 保护机制：若 recentKeep 内有 tool 消息对，往外扩直到找到对应的 assistant message
     let recentMsgs = messages.slice(-recentKeep);
@@ -129,26 +147,22 @@ export class ContextCompactor {
     for (let i = 0; i < recentMsgs.length; i++) {
       const msg = recentMsgs[i];
       if (msg.role === "tool") {
-        // 往前找对应的 assistant
-        for (let j = i - 1; j >= 0; j--) {
-          const candidate = recentMsgs[j];
-          if (candidate && candidate.role === "assistant" && (candidate.tool_calls?.length ?? 0) > 0) {
-            const assistantIdx = recentStartIdx + j;
-            if (assistantIdx < protectedStartIdx) {
-              protectedStartIdx = assistantIdx;
-            }
-            break;
-          }
+        const toolAbsIdx = recentStartIdx + i;
+        const assistantIdx = findLinkedAssistantIndex(messages, toolAbsIdx);
+        const chainStartIdx = assistantIdx >= 0 ? assistantIdx : toolAbsIdx;
+        if (chainStartIdx < protectedStartIdx) {
+          protectedStartIdx = chainStartIdx;
         }
       }
     }
 
-    if (protectedStartIdx > recentStartIdx) {
+    if (protectedStartIdx < recentStartIdx) {
       recentMsgs = messages.slice(protectedStartIdx);
       console.error(`📦 保护 tool chain，向外扩展 recent 到 ${messages.length - protectedStartIdx} 条`);
     }
 
-    const oldMsgs = messages.slice(1, -(recentMsgs.length));
+    // oldMsgs = recent 之前的所有消息（不含 system，因为 AgentLoop.messages 不含 system）
+    const oldMsgs = messages.slice(0, messages.length - recentMsgs.length);
 
     // 1. 冲突检测（Lesson 12: Context Pruning）
     const conflicts = detectConflicts(messages);
@@ -164,21 +178,20 @@ export class ContextCompactor {
         poisonFindings.push({ index: i, patterns: findings });
       }
     }
+    let cleanedOldMsgs = oldMsgs;
     if (poisonFindings.length > 0) {
       console.error(`🚨 检测到 ${poisonFindings.length} 处可能的提示注入`);
-      // 过滤掉有毒消息（仅从 oldMsgs 中过滤）
+      // 过滤掉有毒消息
       const cleanOld = oldMsgs.filter((_, i) => {
-        const pf = poisonFindings.find((p) => p.index === i);
-        return !pf;
+        return !poisonFindings.some((p) => p.index === i);
       });
       if (cleanOld.length >= 1) {
-        oldMsgs.length = 0;
-        oldMsgs.push(...cleanOld);
+        cleanedOldMsgs = cleanOld;
       }
     }
 
     // 3. 摘要旧消息
-    const oldText = oldMsgs
+    const oldText = cleanedOldMsgs
       .map((m) => `${m.role}: ${m.content}`)
       .join("\n\n");
 
@@ -195,16 +208,17 @@ export class ContextCompactor {
         .join("\n");
     }
 
-    const result: Message[] = [systemMsg];
+    // 用 user 消息注入摘要（AgentLoop.messages 不含 system role）
+    const result: Message[] = [];
 
     if (summary || conflictNote) {
       result.push({
-        role: "system",
+        role: "user",
         content:
           `【会话记忆摘要（压缩后）】\n${summary}${
             conflictNote ? `\n\n⚠️ 冲突警告：\n${conflictNote}` : ""
           }`,
-      } as Message);
+      });
     }
 
     result.push(...recentMsgs);

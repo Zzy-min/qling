@@ -5,6 +5,12 @@
 import { readFile } from "fs/promises";
 import { stat } from "fs/promises";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
+import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+
+const MAX_READ_LINES = 2000;
+const DEFAULT_READ_LINES = 500;
+const MAX_READ_BYTES = 2 * 1024 * 1024; // 2MB
 
 export const readTool: ToolDefinition = {
   name: "read",
@@ -76,22 +82,50 @@ export async function runRead(args: {
   offset?: number;
   limit?: number;
 }): Promise<ToolResult> {
+  const filePath = String(args.path ?? "").trim();
+  if (!filePath) {
+    return toolError("READ_INVALID_PATH", "path is required");
+  }
+  const roots = getRuntimeRootsFromEnv();
+  const resolvedPath = resolveToolPath(filePath, roots, "workspace");
+  if (!isWithinAllowedRoots(resolvedPath, roots)) {
+    return toolError("READ_OUTSIDE_ALLOWED_ROOT", `${resolvedPath} is outside allowed roots`);
+  }
+
+  const offset = Math.max(0, (args.offset ?? 1) - 1);
+  const limit = Math.min(MAX_READ_LINES, Math.max(1, args.limit ?? DEFAULT_READ_LINES));
+
   try {
-    const stats = await stat(args.path);
+    const stats = await stat(resolvedPath);
     if (!stats.isFile()) {
-      return { tool_call_id: "", output: `Error: ${args.path} is not a file`, is_error: true };
+      return toolError("READ_NOT_FILE", `${resolvedPath} is not a file`);
     }
-    const content = await readFile(args.path, "utf-8");
+    if (stats.size > MAX_READ_BYTES) {
+      return toolError(
+        "READ_FILE_TOO_LARGE",
+        `${resolvedPath} exceeds ${MAX_READ_BYTES} bytes (current: ${stats.size})`
+      );
+    }
+
+    const content = await readFile(resolvedPath, "utf-8");
+    if (content.includes("\u0000")) {
+      return toolError("READ_BINARY_FILE", `${resolvedPath} appears to be binary`);
+    }
+
     const lines = content.split("\n");
-    const offset = Math.max(0, (args.offset ?? 1) - 1);
-    const limit = args.limit ?? 500;
     const selected = lines.slice(offset, offset + limit);
     const header =
       lines.length > limit
         ? `[显示第 ${offset + 1}-${offset + selected.length} 行，共 ${lines.length} 行]\n`
         : "";
-    return { tool_call_id: "", output: header + selected.join("\n") };
+
+    return toolSuccess(header + selected.join("\n"));
   } catch (err: unknown) {
-    return { tool_call_id: "", output: `Error: ${(err as Error).message}`, is_error: true };
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT") return toolError("READ_PATH_NOT_FOUND", `${resolvedPath} not found`);
+    if (code === "EACCES" || code === "EPERM") {
+      return toolError("READ_PERMISSION_DENIED", `permission denied for ${resolvedPath}`);
+    }
+    return toolError("READ_FAILED", getErrorMessage(err));
   }
 }

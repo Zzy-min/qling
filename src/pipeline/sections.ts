@@ -3,6 +3,7 @@
 // ============================================================
 
 import { PromptSection, PromptSectionRegistry, AgentConfig } from "../types.js";
+import type { SkillMeta } from "../skills/types.js";
 
 // --- 默认 Section IDs ---
 export const SECTION_IDS = {
@@ -15,6 +16,7 @@ export const SECTION_IDS = {
   SESSION: "session",
   MCP: "mcp",
   MEMORY: "memory",
+  SKILLS: "skills",
   DYNAMIC: "dynamic",
 } as const;
 
@@ -140,13 +142,37 @@ export function buildTokenBudgetSection(usedTokens: number, maxTokens: number): 
   };
 }
 
-export function buildMCPSection(): PromptSection {
+export function buildSkillsSection(skills: SkillMeta[]): PromptSection {
+  if (skills.length === 0) {
+    return {
+      id: SECTION_IDS.SKILLS,
+      title: "可用技能",
+      content: "当前无可用技能。在 skills/ 目录下创建 .md 文件即可添加。",
+      cacheable: false,
+      dynamic: true,
+      cached: false,
+    };
+  }
+  const lines = skills.map((s) => `- ${s.name}: ${s.description || "(无描述)"}`);
+  return {
+    id: SECTION_IDS.SKILLS,
+    title: "可用技能",
+    content: `【可用技能】（用 skill name="xxx" 加载）\n${lines.join("\n")}`,
+    cacheable: false,
+    dynamic: true,
+    cached: false,
+  };
+}
+
+export function buildMCPSection(serverInfo?: string): PromptSection {
   return {
     id: SECTION_IDS.MCP,
     title: "MCP 服务器",
-    content: `【MCP 服务器】
-当前无可用 MCP 服务器。如有配置将在此处显示。`,
-    cacheable: true,
+    content: serverInfo
+      ? `【MCP 服务器】\n${serverInfo}`
+      : `【MCP 服务器】\n当前无可用 MCP 服务器。如有配置将在此处显示。`,
+    cacheable: false,
+    dynamic: true,
     cached: false,
   };
 }

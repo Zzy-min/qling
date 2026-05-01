@@ -1,12 +1,17 @@
 // ============================================================
 // 轻灵 - search 工具
-// 文件内容搜索（grep）和文件名搜索（glob/find）
+// 文件内容搜索（regex）和文件名搜索（glob）
+// 使用 Node 原生遍历，避免子进程大输出导致 ENOBUFS
 // ============================================================
 
-import { execSync } from "child_process";
-import { stat } from "fs/promises";
-import { resolve } from "path";
+import { readdir, readFile, stat } from "fs/promises";
+import type { Dirent } from "fs";
+import { basename, join } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
+import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+
+const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024; // 2MB
 
 export const searchTool: ToolDefinition = {
   name: "search",
@@ -120,90 +125,207 @@ export async function runSearch(args: {
   context?: number;
   limit?: number;
 }): Promise<ToolResult> {
-  const searchPath = args.path ?? process.cwd();
+  const pattern = String(args.pattern ?? "").trim();
+  if (!pattern) {
+    return toolError("SEARCH_EMPTY_PATTERN", "pattern is required");
+  }
+
+  const roots = getRuntimeRootsFromEnv();
+  const searchPath = args.path ?? roots.workspaceDir ?? roots.fileCacheDir;
   const target = args.target ?? "content";
-  const limit = args.limit ?? 50;
+  if (target !== "content" && target !== "files") {
+    return toolError("SEARCH_INVALID_TARGET", `unsupported target: ${target}`);
+  }
+  const context = clamp(args.context ?? 0, 0, 10);
+  const limit = clamp(args.limit ?? 50, 1, 200);
+  const absPath = resolveToolPath(searchPath, roots, "workspace");
+  if (!isWithinAllowedRoots(absPath, roots)) {
+    return toolError("SEARCH_OUTSIDE_ALLOWED_ROOT", `${absPath} is outside allowed roots`);
+  }
 
   try {
-    // Verify path exists
-    await stat(searchPath);
-  } catch {
-    return { tool_call_id: "", output: `Error: path not found: ${searchPath}`, is_error: true };
+    await stat(absPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "EACCES" || code === "EPERM") {
+      return toolError("SEARCH_PERMISSION_DENIED", `permission denied for ${searchPath}`);
+    }
+    return toolError("SEARCH_PATH_NOT_FOUND", `path not found: ${searchPath}`);
   }
 
   try {
     if (target === "files") {
-      // File name search using find
-      const resolvedPath = resolve(searchPath);
-      let cmd: string;
-      const isWin = process.platform === "win32";
-
-      if (isWin) {
-        // Windows: use dir /s /b with findstr
-        const nameFilter = args.pattern.replace(/\*/g, "%").replace(/\?/g, "_");
-        cmd = `dir /s /b "${resolvedPath}" | findstr /i "${nameFilter}"`;
-      } else {
-        cmd = `find "${resolvedPath}" -type f -name "${args.pattern}" 2>/dev/null | head -${limit}`;
-      }
-
-      const stdout = execSync(cmd, {
-        encoding: "utf-8",
-        timeout: 15_000,
-        cwd: searchPath,
-      });
-
-      const files = stdout.trim().split("\n").filter(Boolean);
-      if (files.length === 0) {
-        return { tool_call_id: "", output: "No files found matching pattern." };
-      }
-
-      const result = files.slice(0, limit).join("\n");
-      const suffix = files.length > limit ? `\n... and ${files.length - limit} more` : "";
-      return { tool_call_id: "", output: `Found ${files.length} file(s):\n${result}${suffix}` };
+      return await searchFiles(absPath, pattern, limit);
     }
-
-    // Content search using grep
-    const isWin = process.platform === "win32";
-    const absPath = resolve(searchPath);
-    let cmd: string;
-
-    if (isWin) {
-      // Windows: use findstr
-      const ctx = args.context && args.context > 0 ? ` /C:${args.context}` : "";
-      cmd = `findstr /S /N /I${ctx} "${args.pattern}" "${absPath}\\*"`;
-      if (args.file_glob) {
-        const ext = args.file_glob.replace(/^\*\./, ".");
-        cmd = `findstr /S /N /I${ctx} /M "${args.pattern}" "${absPath}\\*${ext}"`;
-        cmd = `findstr /S /N /I${ctx} "${args.pattern}" "${absPath}\\*${ext}"`;
-      }
-    } else {
-      const ctx = args.context && args.context > 0 ? ` -C ${args.context}` : "";
-      const globFilter = args.file_glob ? ` --include="${args.file_glob}"` : "";
-      cmd = `grep -rn --color=never${ctx}${globFilter} "${args.pattern}" "${absPath}" 2>/dev/null | head -${limit}`;
-    }
-
-    const stdout = execSync(cmd, {
-      encoding: "utf-8",
-      timeout: 15_000,
-      cwd: searchPath,
-      maxBuffer: 1024 * 1024, // 1MB
-    });
-
-    const matches = stdout.trim().split("\n").filter(Boolean);
-    if (matches.length === 0) {
-      return { tool_call_id: "", output: "No matches found." };
-    }
-
-    const suffix = matches.length >= limit ? `\n... (truncated at ${limit} results)` : "";
-    return {
-      tool_call_id: "",
-      output: `${matches.length} match(es):\n${matches.slice(0, limit).join("\n")}${suffix}`,
-    };
+    return await searchContent(absPath, pattern, args.file_glob, context, limit);
   } catch (err: unknown) {
-    const msg = (err as Error).message;
-    if (msg.includes("no match") || msg.includes("not found") || (err as any).status === 1) {
-      return { tool_call_id: "", output: "No matches found." };
-    }
-    return { tool_call_id: "", output: `Error: ${msg}`, is_error: true };
+    return toolError("SEARCH_FAILED", getErrorMessage(err));
   }
+}
+
+async function searchFiles(absPath: string, pattern: string, limit: number): Promise<ToolResult> {
+  const flags = process.platform === "win32" ? "i" : "";
+  const matcher = globToRegExp(pattern, flags);
+  const matched: string[] = [];
+  let truncated = false;
+
+  await walkFiles(absPath, async (filePath) => {
+    if (!matcher.test(basename(filePath))) {
+      return true;
+    }
+    matched.push(filePath);
+    if (matched.length >= limit) {
+      truncated = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (matched.length === 0) {
+    return toolSuccess("No files found matching pattern.");
+  }
+
+  const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+  return toolSuccess(
+    `Found ${truncated ? `${limit}+` : matched.length} file(s):\n${matched.join("\n")}${suffix}`
+  );
+}
+
+async function searchContent(
+  absPath: string,
+  pattern: string,
+  fileGlob: string | undefined,
+  context: number,
+  limit: number
+): Promise<ToolResult> {
+  const flags = process.platform === "win32" ? "i" : "";
+  const contentRegex = buildRegex(pattern, flags);
+  const fileMatcher = fileGlob ? globToRegExp(fileGlob, flags) : null;
+  const outputs: string[] = [];
+  let matches = 0;
+  let truncated = false;
+
+  await walkFiles(absPath, async (filePath) => {
+    if (fileMatcher && !fileMatcher.test(basename(filePath))) {
+      return true;
+    }
+
+    let text: string;
+    try {
+      const fileStat = await stat(filePath);
+      if (fileStat.size > MAX_SEARCH_FILE_BYTES) {
+        return true;
+      }
+      text = await readFile(filePath, "utf-8");
+    } catch {
+      // 非文本文件或无权限时跳过
+      return true;
+    }
+
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!contentRegex.test(line)) continue;
+
+      matches++;
+      outputs.push(formatMatch(filePath, lines, i, context));
+      if (matches >= limit) {
+        truncated = true;
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  if (matches === 0) {
+    return toolSuccess("No matches found.");
+  }
+
+  const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+  return toolSuccess(`${truncated ? `${limit}+` : matches} match(es):\n${outputs.join("\n")}${suffix}`);
+}
+
+function formatMatch(filePath: string, lines: string[], matchIndex: number, context: number): string {
+  if (context <= 0) {
+    return `${filePath}:${matchIndex + 1}:${lines[matchIndex]}`;
+  }
+
+  const start = Math.max(0, matchIndex - context);
+  const end = Math.min(lines.length - 1, matchIndex + context);
+  const block: string[] = [`${filePath}:${matchIndex + 1}:`];
+  for (let i = start; i <= end; i++) {
+    const marker = i === matchIndex ? ">" : " ";
+    block.push(`  ${marker} ${i + 1}: ${lines[i]}`);
+  }
+  return block.join("\n");
+}
+
+async function walkFiles(
+  rootPath: string,
+  onFile: (filePath: string) => Promise<boolean>
+): Promise<void> {
+  const rootStat = await stat(rootPath);
+  if (rootStat.isFile()) {
+    await onFile(rootPath);
+    return;
+  }
+  if (!rootStat.isDirectory()) return;
+
+  const stack: string[] = [rootPath];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const shouldContinue = await onFile(fullPath);
+      if (!shouldContinue) return;
+    }
+  }
+}
+
+function globToRegExp(glob: string, flags = ""): RegExp {
+  let pattern = "^";
+  for (const ch of glob) {
+    if (ch === "*") {
+      pattern += ".*";
+      continue;
+    }
+    if (ch === "?") {
+      pattern += ".";
+      continue;
+    }
+    pattern += escapeRegExp(ch);
+  }
+  pattern += "$";
+  return new RegExp(pattern, flags);
+}
+
+function buildRegex(pattern: string, flags = ""): RegExp {
+  try {
+    return new RegExp(pattern, flags);
+  } catch (err) {
+    const msg = getErrorMessage(err);
+    throw new Error(`[SEARCH_INVALID_REGEX] invalid regex pattern: ${msg}`);
+  }
+}
+
+function escapeRegExp(char: string): string {
+  return char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }

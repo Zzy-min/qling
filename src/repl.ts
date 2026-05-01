@@ -43,7 +43,13 @@ export class Repl {
 
       if (input.trim() === "q" || input.trim() === "quit" || input.trim() === "exit") {
         console.log("👋 再见！");
+        try {
+          await this.agent.shutdown();
+        } catch {
+          // ignore shutdown cleanup failures in REPL exit path
+        }
         this.rl.close();
+        process.stdin.pause();
         return;
       }
 
@@ -98,7 +104,7 @@ export class Repl {
         console.log(`\n${response}\n`);
       } catch (err) {
         console.error(`\n❌ 出错: ${err instanceof Error ? err.message : String(err)}\n`);
-        this.agent.reset();
+        console.log("💡 输入 !reset 重置对话，或继续输入新任务。\n");
       }
     }
   }
