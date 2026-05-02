@@ -97,6 +97,11 @@ export class AgentLoop extends AgentEventEmitter {
   private sessionId: string;
   private guardConfig: GuardConfig;
 
+  // --- v0.3 Getters (Management) ---
+  getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
+  getMemoryStore(): MemoryStore { return this.memoryStore; }
+  getDiscoveryRegistry(): DiscoveryRegistry { return this.discoveryRegistry; }
+
   // Token 追踪（仅计增量，避免每轮重复计算整个上下文）
   private sessionTokens = 0;
   private initPromise: Promise<void>;

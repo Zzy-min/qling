@@ -1,11 +1,12 @@
 import type { CliGlobalOptions } from "../config.js";
 
-export type CliMode = "help" | "run" | "chat" | "repl";
+export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery";
 
 export interface CliResolutionOk {
   kind: "ok";
   mode: CliMode;
   task?: string;
+  subArgs: string[];
   global: CliGlobalOptions;
   warnings: string[];
 }
@@ -27,9 +28,10 @@ export function parseCliArgs(args: string[]): CliResolution {
   const global: CliGlobalOptions = {};
   const warnings: string[] = [];
   const positional: string[] = [];
+  const subArgs: string[] = [];
 
   let hasHelp = false;
-  let modeFromSubcommand: "run" | "chat" | "repl" | null = null;
+  let modeFromSubcommand: CliMode | null = null;
   let modeFromAliasChat = false;
   let modeFromAliasRepl = false;
   let onceTask: string | null = null;
@@ -43,8 +45,13 @@ export function parseCliArgs(args: string[]): CliResolution {
     }
 
     if (!arg.startsWith("-") && modeFromSubcommand === null && positional.length === 0) {
-      if (arg === "run" || arg === "chat" || arg === "repl") {
-        modeFromSubcommand = arg;
+      const knownModes = ["run", "chat", "repl", "workflow", "memory", "dashboard", "discovery"];
+      if (knownModes.includes(arg)) {
+        modeFromSubcommand = arg as CliMode;
+        if (["workflow", "memory", "dashboard", "discovery"].includes(arg)) {
+          subArgs.push(...args.slice(i + 1));
+          break;
+        }
         continue;
       }
     }
@@ -120,7 +127,7 @@ export function parseCliArgs(args: string[]): CliResolution {
   }
 
   if (hasHelp) {
-    return { kind: "ok", mode: "help", global, warnings };
+    return { kind: "ok", mode: "help", subArgs: [], global, warnings };
   }
 
   const hasOnce = onceTask !== null;
@@ -149,7 +156,11 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "run", task, global, warnings };
+    return { kind: "ok", mode: "run", task, subArgs: [], global, warnings };
+  }
+
+  if (["workflow", "memory", "dashboard", "discovery"].includes(modeFromSubcommand || "")) {
+    return { kind: "ok", mode: modeFromSubcommand!, subArgs, global, warnings };
   }
 
   if (modeFromSubcommand === "chat") {
@@ -161,7 +172,7 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "chat", global, warnings };
+    return { kind: "ok", mode: "chat", subArgs: [], global, warnings };
   }
 
   if (modeFromSubcommand === "repl") {
@@ -173,7 +184,7 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "repl", global, warnings };
+    return { kind: "ok", mode: "repl", subArgs: [], global, warnings };
   }
 
   if (modeFromAliasChat) {
@@ -185,7 +196,7 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "chat", global, warnings };
+    return { kind: "ok", mode: "chat", subArgs: [], global, warnings };
   }
 
   if (modeFromAliasRepl) {
@@ -197,30 +208,36 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "repl", global, warnings };
+    return { kind: "ok", mode: "repl", subArgs: [], global, warnings };
   }
 
   if (hasOnce) {
-    return { kind: "ok", mode: "run", task: onceTask!, global, warnings };
+    return { kind: "ok", mode: "run", task: onceTask!, subArgs: [], global, warnings };
   }
 
   if (hasPositional) {
     warnings.push("positional one-shot form is deprecated, prefer `qingling run \"task\"`.");
-    return { kind: "ok", mode: "run", task: positional.join(" "), global, warnings };
+    return { kind: "ok", mode: "run", task: positional.join(" "), subArgs: [], global, warnings };
   }
 
-  return { kind: "ok", mode: "chat", global, warnings };
+  return { kind: "ok", mode: "chat", subArgs: [], global, warnings };
 }
 
 export function buildHelpText(binName = "qingling"): string {
   return `
 ${binName} - 通用 CLI Agent
 
-用法:
+主要用法:
   ${binName}                          # 默认进入流式 TUI（chat）
   ${binName} chat                     # 显式进入流式 TUI
   ${binName} repl                     # 简易 REPL
   ${binName} run "你的任务"            # 单次执行（推荐）
+
+管理命令 (v0.3):
+  ${binName} workflow resume <id>     # 从状态机 Checkpoint 恢复执行
+  ${binName} memory reindex [--full]  # 重新构建语义记忆向量索引
+  ${binName} dashboard start [--port] # 启动本地白盒化观测控制台
+  ${binName} discovery sync           # 同步动态插件与技能
   ${binName} --help                   # 显示帮助
 
 全局参数:
@@ -234,16 +251,8 @@ ${binName} - 通用 CLI Agent
   --log-format <text|json>            # 日志格式
   --log-level <debug|info|warn|error> # 日志级别
 
-兼容别名（将逐步移除）:
-  ${binName} --tui
-  ${binName} --repl
-  ${binName} --once "你的任务"
-  ${binName} "你的任务"
-
-模式冲突示例:
-  ${binName} repl --once "x"          # Error: [CLI_INVALID_MODE_COMBINATION]
-  ${binName} chat "x"                 # Error: [CLI_INVALID_MODE_COMBINATION]
-  ${binName} --once                   # Error: [CLI_MISSING_TASK]
+兼容别名:
+  ${binName} --tui, --repl, --once "task", "task"
 `.trim();
 }
 

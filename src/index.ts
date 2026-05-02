@@ -111,6 +111,70 @@ async function main() {
   };
 
   const agent = new AgentLoop(agentConfig);
+  await agent.waitForInit();
+
+  // v0.3 Management Subcommands
+  if (decision.mode === "workflow") {
+    const [sub, runId] = decision.subArgs;
+    if (sub === "resume" && runId) {
+      console.error(`🔄 正在从 Checkpoint 恢复: ${runId}`);
+      try {
+        await agent.getWorkflowRuntime().resume(runId);
+        const response = await agent.run();
+        console.log(response);
+        return;
+      } catch (err) {
+        console.error(formatCliError("WORKFLOW_RESUME_FAILED", (err as Error).message));
+        process.exit(1);
+      }
+    }
+    console.error("用法: qingling workflow resume <run_id>");
+    process.exit(1);
+  }
+
+  if (decision.mode === "memory") {
+    const [sub] = decision.subArgs;
+    if (sub === "reindex") {
+      console.error("🧠 正在重新构建语义记忆向量索引...");
+      try {
+        await agent.getMemoryStore().rebuildSemanticIndex();
+        console.error("✅ 索引重建完成");
+        return;
+      } catch (err) {
+        console.error(formatCliError("MEMORY_REINDEX_FAILED", (err as Error).message));
+        process.exit(1);
+      }
+    }
+    console.error("用法: qingling memory reindex [--full]");
+    process.exit(1);
+  }
+
+  if (decision.mode === "dashboard") {
+    const [sub] = decision.subArgs;
+    if (sub === "start") {
+      // Dashboard already starts if enabled in init, but we can force it or keep process alive
+      console.error("📊 Dashboard 运行中。按 Ctrl+C 退出。");
+      await new Promise(() => {}); // Keep alive
+      return;
+    }
+    console.error("用法: qingling dashboard start");
+    process.exit(1);
+  }
+
+  if (decision.mode === "discovery") {
+    const [sub] = decision.subArgs;
+    if (sub === "sync") {
+      console.error("🔍 正在同步动态插件与技能...");
+      await agent.getDiscoveryRegistry().syncAll();
+      const items = agent.getDiscoveryRegistry().getAllItems();
+      console.error(`✅ 同步完成，共发现 ${items.length} 个项目:`);
+      items.forEach(it => console.error(`  - [${it.manifest.type}] ${it.manifest.name} v${it.manifest.version}`));
+      return;
+    }
+    console.error("用法: qingling discovery sync");
+    process.exit(1);
+  }
+
   if (decision.mode === "run") {
     try {
       const channel = resolveRunModeChannel(decision.mode, loaded.config.channels);

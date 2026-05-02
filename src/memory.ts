@@ -421,6 +421,10 @@ export class MemoryStore {
     await this.persisted.forceCheckpoint();
   }
 
+  async rebuildSemanticIndex(): Promise<void> {
+    await this.persisted.rebuildSemanticIndex();
+  }
+
   // --- Persisted（对外 API）---
   add(content: string, source: string, importance: number = 0.5): void {
     this.persisted.add(content, source, importance);
