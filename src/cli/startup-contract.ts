@@ -1,6 +1,6 @@
 import type { CliGlobalOptions } from "../config.js";
 
-export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery";
+export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup";
 
 export interface CliResolutionOk {
   kind: "ok";
@@ -45,10 +45,10 @@ export function parseCliArgs(args: string[]): CliResolution {
     }
 
     if (!arg.startsWith("-") && modeFromSubcommand === null && positional.length === 0) {
-      const knownModes = ["run", "chat", "repl", "workflow", "memory", "dashboard", "discovery"];
+      const knownModes = ["run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup"];
       if (knownModes.includes(arg)) {
         modeFromSubcommand = arg as CliMode;
-        if (["workflow", "memory", "dashboard", "discovery"].includes(arg)) {
+        if (["workflow", "memory", "dashboard", "discovery", "setup"].includes(arg)) {
           subArgs.push(...args.slice(i + 1));
           break;
         }
@@ -159,7 +159,7 @@ export function parseCliArgs(args: string[]): CliResolution {
     return { kind: "ok", mode: "run", task, subArgs: [], global, warnings };
   }
 
-  if (["workflow", "memory", "dashboard", "discovery"].includes(modeFromSubcommand || "")) {
+  if (["workflow", "memory", "dashboard", "discovery", "setup"].includes(modeFromSubcommand || "")) {
     return { kind: "ok", mode: modeFromSubcommand!, subArgs, global, warnings };
   }
 
@@ -232,6 +232,7 @@ ${binName} - 通用 CLI Agent
   ${binName} chat                     # 显式进入流式 TUI
   ${binName} repl                     # 简易 REPL
   ${binName} run "你的任务"            # 单次执行（推荐）
+  ${binName} setup                    # [新] 交互式配置 LLM 提供商 (v0.3)
 
 管理命令 (v0.3):
   ${binName} workflow resume <id>     # 从状态机 Checkpoint 恢复执行

@@ -10,17 +10,13 @@ import * as path from "path";
 
 export const visionAnalyzeTool: ToolDefinition = {
   name: "vision_analyze",
-  description: "Analyze images, screenshots, or UI mockups using visual LLMs. Supports issue identification and UI debugging.",
-  longDescription: `多模态视觉解析工具。支持分析本地图片、页面截图或远程 URL 图片。
+  description: "Analyze images, screenshots, or UI mockups using visual LLMs. Preserves rich artistic and structural details.",
+  longDescription: `多模态视觉解析工具。
 
-**使用场景**:
-- 调试前端 UI 布局问题
-- 解析图表、流程图或架构图
-- 验证视觉改动是否符合预期
-- 提取图片中的文字或关键结构信息
-
-**输出**:
-- 强类型 JSON，包含场景描述、问题定位、证据片段和修复建议。`,
+**重要指引**:
+- 当调用此工具后，Agent 应当在回答中**完整保留**模型返回的视觉意象、空间布局、风格描述和氛围分析。
+- 除非用户明确要求提取特定文字，否则不要将丰富的叙述性描述仅压缩为表格。
+- 艺术感和细节描述是此工具的核心产出。`,
   parameters: {
     type: "object",
     properties: {
@@ -84,15 +80,31 @@ export async function runVisionAnalyze(args: {
   prompt: string;
   detail?: "low" | "high" | "auto";
 }): Promise<ToolResult> {
-  const provider = process.env.QINGLING_VISION_PROVIDER || "openai";
-  const model = process.env.QINGLING_VISION_MODEL || "gpt-4o";
-  const apiKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || "";
+  // 1. 优先级：Vision 专用变量 > LLM 通用变量 > 默认值
+  const provider = process.env.QINGLING_VISION_PROVIDER || process.env.QINGLING_LLM_PROVIDER || "openai";
+  const model = process.env.QINGLING_VISION_MODEL || process.env.QINGLING_LLM_MODEL || "gpt-4o";
+  const apiKey = process.env.QINGLING_LLM_API_KEY || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || "";
+  
+  // 2. 解析 Endpoint
+  let endpoint = process.env.QINGLING_VISION_ENDPOINT || process.env.QINGLING_LLM_ENDPOINT;
+  if (!endpoint) {
+    endpoint = provider === "openai" 
+      ? "https://api.openai.com/v1/chat/completions" 
+      : provider === "deepseek"
+        ? "https://api.deepseek.com/chat/completions"
+        : "http://localhost:11434/v1/chat/completions";
+  } else {
+    // 确保 endpoint 包含 chat/completions 路径
+    if (!endpoint.endsWith("/chat/completions")) {
+      endpoint = endpoint.replace(/\/$/, "") + "/chat/completions";
+    }
+  }
 
   // 只有非本地提供商才强制要求 API Key
   if (!apiKey && provider !== "local") {
     return {
       tool_call_id: "",
-      output: "Error: Missing API Key for vision analysis. Please set OPENAI_API_KEY or DEEPSEEK_API_KEY.",
+      output: `Error: Missing API Key for vision analysis (${provider}). Please check your configuration.`,
       is_error: true,
     };
   }
@@ -135,12 +147,6 @@ export async function runVisionAnalyze(args: {
       };
     }
 
-    const endpoint = provider === "openai" 
-      ? "https://api.openai.com/v1/chat/completions" 
-      : provider === "deepseek"
-        ? "https://api.deepseek.com/chat/completions"
-        : process.env.QINGLING_VISION_ENDPOINT || "http://localhost:11434/v1/chat/completions";
-
     const resp = await axios.post(
       endpoint,
       {
@@ -160,14 +166,21 @@ export async function runVisionAnalyze(args: {
     const result = resp.data.choices?.[0]?.message?.content || "[No analysis result]";
     return {
       tool_call_id: "",
-      output: `👁️ 视觉分析结果 (${model}):\n\n${result}`,
+      output: `👁️ 视觉分析结果 (${model} @ ${provider}):\n\n${result}`,
       meta: { model, provider }
     };
   } catch (err: any) {
     const msg = err.response?.data?.error?.message || err.message;
+    let userHint = "";
+    if (msg.includes("Incorrect API key") || msg.includes("invalid_api_key") || err.response?.status === 401) {
+      userHint = `\n\n💡 提示: 检测到 API Key 鉴权失败。当前 Provider 为: ${provider}。 请确保您的 Key 能够访问该提供商的视觉模型。`;
+      if (provider !== "local") {
+         userHint += "\n如果您想使用本地模型，可设置 QINGLING_VISION_PROVIDER=local 并启动 Ollama。";
+      }
+    }
     return {
       tool_call_id: "",
-      output: `Error: Vision analysis failed: ${msg}`,
+      output: `Error: Vision analysis failed (${provider}): ${msg}${userHint}`,
       is_error: true,
       error: { code: "VISION_FAILED", message: msg, category: "network" }
     };

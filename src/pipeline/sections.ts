@@ -27,7 +27,8 @@ export function buildIntroSection(name: string, version: string): PromptSection 
   return {
     id: SECTION_IDS.INTRO,
     title: "身份",
-    content: `你是一个通用的命令行 Agent，名为"${name}" v${version}。你轻量、敏捷、专注。`,
+    content: `你是一个通用的命令行 Agent，名为"${name}" v${version}。你轻量、敏捷、专注。
+当处理艺术、设计、图片分析等创意任务时，你应当展现出细腻的描述能力，完整传达视觉意象，而不仅仅是数据提取。`,
     cacheable: true,
     cached: false,
   };
@@ -98,7 +99,9 @@ export function buildToneSection(): PromptSection {
     id: SECTION_IDS.TONE,
     title: "风格",
     content: `始终用中文回复，除非用户用英文。
-当任务完成后，给出简洁的完成报告。
+回答应当平衡“简洁”与“丰富”：
+- 对于纯技术、文件或系统操作：保持极致简洁，给出完成报告。
+- 对于图片分析、创意设计或意境咨询：**严禁仅使用表格总结**。你应当完整保留并转述丰富的叙述性细节、视觉意象和氛围描述。
 工具执行结果用 ✅（成功）或 ❌（失败）标记。`,
     cacheable: true,
     cached: false,
@@ -192,7 +195,7 @@ export function buildDefaultRegistry(
 ): PromptSectionRegistry {
   const registry = new PromptSectionRegistry();
 
-  registry.register(buildIntroSection("轻灵", "0.2"));
+  registry.register(buildIntroSection("轻灵", "0.3.0"));
   registry.register(buildToolsSection(tools));
   registry.register(buildWorkflowSection());
   registry.register(buildRestrictionsSection());

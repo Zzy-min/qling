@@ -41,7 +41,14 @@ npm run build
 
 ### 配置
 
-复制环境变量模板并填入 API Key：
+您可以手动配置 `.env` 文件，或者使用新增的交互式配置向导：
+
+```bash
+# 推荐：使用配置向导（支持国内主流 Provider 预设）
+qingling setup
+```
+
+或者手动复制模板：
 
 ```bash
 cp .env.example .env

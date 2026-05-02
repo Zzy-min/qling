@@ -10,6 +10,7 @@
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import dotenv from "dotenv";
 
 import { AgentLoop } from "./agent-loop.js";
@@ -22,21 +23,43 @@ import {
   resolveRunModeChannel,
 } from "./cli/channel-bootstrap.js";
 import { buildToolRegistry } from "./tools/index.js";
+import { runSetup } from "./cli/setup.js";
 import type { AgentConfig } from "./types.js";
 
-function findEnvPath(): string {
-  let dir = path.dirname(fileURLToPath(import.meta.url));
+function findEnvPaths(): string[] {
+  const paths: string[] = [];
+  
+  // 1. 项目配置 (从当前目录向上查找，最优先)
+  let dir = process.cwd();
   while (true) {
     const envPath = path.join(dir, ".env");
-    if (fs.existsSync(envPath)) return envPath;
+    if (fs.existsSync(envPath)) {
+      paths.push(envPath);
+      break;
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return path.join(process.cwd(), ".env");
+
+  // 2. 全局配置 (~/.qingling/.env，作为回退)
+  const globalEnv = path.join(os.homedir(), ".qingling", ".env");
+  if (fs.existsSync(globalEnv)) {
+    paths.push(globalEnv);
+  }
+
+  // 3. 回退: 如果啥也没找到，默认指向当前目录 .env
+  if (paths.length === 0) {
+    paths.push(path.join(process.cwd(), ".env"));
+  }
+
+  return paths;
 }
 
-dotenv.config({ path: findEnvPath() });
+const envPaths = findEnvPaths();
+for (const p of envPaths) {
+  dotenv.config({ path: p });
+}
 
 async function main() {
   const decision = parseCliArgs(process.argv.slice(2));
@@ -110,16 +133,23 @@ async function main() {
     },
   };
 
+  // v0.3 Management Subcommands
+  if (decision.mode === "setup") {
+    await runSetup();
+    return;
+  }
+
+  // --- 延迟实例化 AgentLoop，防止 setup 等管理命令因缺失 Key 而崩溃 ---
   const agent = new AgentLoop(agentConfig);
   await agent.waitForInit();
 
-  // v0.3 Management Subcommands
   if (decision.mode === "workflow") {
     const [sub, runId] = decision.subArgs;
     if (sub === "resume" && runId) {
       console.error(`🔄 正在从 Checkpoint 恢复: ${runId}`);
       try {
-        await agent.getWorkflowRuntime().resume(runId);
+        const checkpoint = await agent.getWorkflowRuntime().resume(runId);
+        agent.syncWorkflowState(checkpoint);
         const response = await agent.run();
         console.log(response);
         return;

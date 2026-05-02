@@ -87,6 +87,14 @@ export class DashboardServer {
       }
     });
 
+    this.server.on("error", (err: any) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`⚠️ Dashboard 端口 ${this.options.port} 已被占用，跳过启动。`);
+      } else {
+        console.error(`❌ Dashboard 启动失败: ${err.message}`);
+      }
+    });
+
     this.server.listen(this.options.port, () => {
       console.error(`🚀 Dashboard 运行在: http://localhost:${this.options.port}`);
     });

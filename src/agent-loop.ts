@@ -102,6 +102,16 @@ export class AgentLoop extends AgentEventEmitter {
   getMemoryStore(): MemoryStore { return this.memoryStore; }
   getDiscoveryRegistry(): DiscoveryRegistry { return this.discoveryRegistry; }
 
+  /** 状态机恢复后的内部同步 */
+  syncWorkflowState(checkpoint: any): void {
+    if (checkpoint.history) {
+      this.turnCount = checkpoint.history.length;
+    }
+    if (checkpoint.contextSnapshot) {
+      this.messages = checkpoint.contextSnapshot;
+    }
+  }
+
   // Token 追踪（仅计增量，避免每轮重复计算整个上下文）
   private sessionTokens = 0;
   private initPromise: Promise<void>;
@@ -461,7 +471,7 @@ export class AgentLoop extends AgentEventEmitter {
       }
 
       // 1. 构建 system prompt（动态sections）
-      const systemPrompt = this.buildSystemPrompt();
+      const systemPrompt = await this.buildSystemPrompt();
 
       // v0.3 Workflow Checkpoint: Update context
       if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
@@ -811,7 +821,7 @@ export class AgentLoop extends AgentEventEmitter {
 
   // --- Private Methods ---
 
-  private buildSystemPrompt(): string {
+  private async buildSystemPrompt(): Promise<string> {
     // 更新 token budget section
     const budgetSec = this.sectionRegistry.get(SECTION_IDS.TOKEN_BUDGET);
     if (budgetSec) {
@@ -831,10 +841,24 @@ export class AgentLoop extends AgentEventEmitter {
       });
     }
 
-    // 加载记忆
-    const memory = this.memoryStore.formatPromptForContext(10);
+    // 加载记忆 (v0.3 支持语义异步预取)
+    let memoryStr = "";
+    if (this.messages.length > 0) {
+       let lastUserMsg = "";
+       for (let i = this.messages.length - 1; i >= 0; i--) {
+         if (this.messages[i].role === "user") {
+           lastUserMsg = this.messages[i].content;
+           break;
+         }
+       }
+       const relevant = await this.memoryStore.getRelevant(lastUserMsg, 10);
+       if (relevant.length > 0) {
+         memoryStr = relevant.map((e) => "[" + e.source + "] " + e.content).join("\n");
+       }
+    }
+
     const sectionPrompt = buildSystemPrompt(this.sectionRegistry, {
-      memory: memory || undefined,
+      memory: memoryStr || undefined,
     });
     const parts = [
       this.config.systemPrompt.trim(),
