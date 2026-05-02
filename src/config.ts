@@ -43,6 +43,35 @@ export interface GuardConfig {
   };
 }
 
+export interface WorkflowConfig {
+  checkpoint_dir: string;
+  retry_policy: {
+    max_attempts: number;
+    initial_delay_ms: number;
+    backoff_factor: number;
+  };
+  max_parallel_states: number;
+}
+
+export interface VisionConfig {
+  provider: string;
+  model: string;
+  max_image_size_mb: number;
+  timeout_ms: number;
+}
+
+export interface DashboardConfig {
+  enabled: boolean;
+  port: number;
+  auth_mode: "none" | "token";
+}
+
+export interface DiscoveryConfig {
+  local_dirs: string[];
+  remote_manifests: string[];
+  allow_unsigned: boolean;
+}
+
 export interface QinglingConfig {
   llm: {
     provider: string;
@@ -61,6 +90,14 @@ export interface QinglingConfig {
     tool_repeat_limit: number;
     timeout_ms: number;
   };
+  features: {
+    semantic_memory: boolean;
+    workflow_runtime: boolean;
+    vision_tool: boolean;
+    dashboard: boolean;
+    dynamic_discovery: boolean;
+    tool_spec_boost: boolean;
+  };
   logging: {
     level: LogLevel;
     format: LogFormat;
@@ -75,7 +112,18 @@ export interface QinglingConfig {
     dream_llm_enabled: boolean;
     dream_turn_threshold: number;
     max_memories: number;
+    semantic: {
+      provider: string;
+      model: string;
+      dim: number;
+      top_k: number;
+      rebuild_policy: "incremental" | "full";
+    };
   };
+  workflow: WorkflowConfig;
+  vision: VisionConfig;
+  dashboard: DashboardConfig;
+  discovery: DiscoveryConfig;
   guard: GuardConfig;
   mcp: {
     servers: Record<string, {
@@ -171,6 +219,14 @@ export function buildDefaultConfig(): QinglingConfig {
       tool_repeat_limit: 6,
       timeout_ms: 300000,
     },
+    features: {
+      semantic_memory: false,
+      workflow_runtime: false,
+      vision_tool: false,
+      dashboard: false,
+      dynamic_discovery: false,
+      tool_spec_boost: false,
+    },
     logging: {
       level: "info",
       format: "text",
@@ -194,6 +250,38 @@ export function buildDefaultConfig(): QinglingConfig {
       dream_llm_enabled: true,
       dream_turn_threshold: 24,
       max_memories: 1000,
+      semantic: {
+        provider: "openai",
+        model: "text-embedding-3-small",
+        dim: 1536,
+        top_k: 5,
+        rebuild_policy: "incremental",
+      },
+    },
+    workflow: {
+      checkpoint_dir: path.join(DEFAULT_STATE_DIR, "workflows"),
+      retry_policy: {
+        max_attempts: 3,
+        initial_delay_ms: 1000,
+        backoff_factor: 2,
+      },
+      max_parallel_states: 1,
+    },
+    vision: {
+      provider: "openai",
+      model: "gpt-4o",
+      max_image_size_mb: 10,
+      timeout_ms: 60000,
+    },
+    dashboard: {
+      enabled: false,
+      port: 9999,
+      auth_mode: "none",
+    },
+    discovery: {
+      local_dirs: [path.join(DEFAULT_STATE_DIR, "plugins")],
+      remote_manifests: [],
+      allow_unsigned: false,
     },
     guard: {
       enabled: true,
@@ -335,6 +423,42 @@ export function applyConfigToProcessEnv(config: QinglingConfig): void {
   process.env.QINGLING_MEMORY_DREAM_LLM_ENABLED = String(config.memory.dream_llm_enabled);
   process.env.QINGLING_MEMORY_DREAM_TURN_THRESHOLD = String(config.memory.dream_turn_threshold);
   process.env.QINGLING_MEMORY_MAX_MEMORIES = String(config.memory.max_memories);
+  process.env.QINGLING_MEMORY_SEMANTIC_PROVIDER = config.memory.semantic.provider;
+  process.env.QINGLING_MEMORY_SEMANTIC_MODEL = config.memory.semantic.model;
+  process.env.QINGLING_MEMORY_SEMANTIC_DIM = String(config.memory.semantic.dim);
+  process.env.QINGLING_MEMORY_SEMANTIC_TOP_K = String(config.memory.semantic.top_k);
+  process.env.QINGLING_MEMORY_SEMANTIC_REBUILD_POLICY = config.memory.semantic.rebuild_policy;
+
+  // Features
+  process.env.QINGLING_FEATURES_SEMANTIC_MEMORY = String(config.features.semantic_memory);
+  process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME = String(config.features.workflow_runtime);
+  process.env.QINGLING_FEATURES_VISION_TOOL = String(config.features.vision_tool);
+  process.env.QINGLING_FEATURES_DASHBOARD = String(config.features.dashboard);
+  process.env.QINGLING_FEATURES_DYNAMIC_DISCOVERY = String(config.features.dynamic_discovery);
+  process.env.QINGLING_FEATURES_TOOL_SPEC_BOOST = String(config.features.tool_spec_boost);
+
+  // Workflow
+  process.env.QINGLING_WORKFLOW_CHECKPOINT_DIR = config.workflow.checkpoint_dir;
+  process.env.QINGLING_WORKFLOW_RETRY_POLICY_MAX_ATTEMPTS = String(config.workflow.retry_policy.max_attempts);
+  process.env.QINGLING_WORKFLOW_RETRY_POLICY_INITIAL_DELAY_MS = String(config.workflow.retry_policy.initial_delay_ms);
+  process.env.QINGLING_WORKFLOW_RETRY_POLICY_BACKOFF_FACTOR = String(config.workflow.retry_policy.backoff_factor);
+  process.env.QINGLING_WORKFLOW_MAX_PARALLEL_STATES = String(config.workflow.max_parallel_states);
+
+  // Vision
+  process.env.QINGLING_VISION_PROVIDER = config.vision.provider;
+  process.env.QINGLING_VISION_MODEL = config.vision.model;
+  process.env.QINGLING_VISION_MAX_IMAGE_SIZE_MB = String(config.vision.max_image_size_mb);
+  process.env.QINGLING_VISION_TIMEOUT_MS = String(config.vision.timeout_ms);
+
+  // Dashboard
+  process.env.QINGLING_DASHBOARD_ENABLED = String(config.dashboard.enabled);
+  process.env.QINGLING_DASHBOARD_PORT = String(config.dashboard.port);
+  process.env.QINGLING_DASHBOARD_AUTH_MODE = config.dashboard.auth_mode;
+
+  // Discovery
+  process.env.QINGLING_DISCOVERY_LOCAL_DIRS = JSON.stringify(config.discovery.local_dirs);
+  process.env.QINGLING_DISCOVERY_REMOTE_MANIFESTS = JSON.stringify(config.discovery.remote_manifests);
+  process.env.QINGLING_DISCOVERY_ALLOW_UNSIGNED = String(config.discovery.allow_unsigned);
 
   // MCP (Phase 4)
   process.env.QINGLING_MCP_SERVERS = JSON.stringify(config.mcp.servers);

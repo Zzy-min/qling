@@ -135,7 +135,7 @@ async function main() {
 
   if (decision.mode === "chat") {
     const repl = new StreamingREPL(agent);
-    repl.start();
+    await repl.start();
     return;
   }
 

@@ -2,10 +2,21 @@
 
 轻量级 AI Agent CLI — 基于流式 TUI 的本地智能助手框架。
 
-## ✨ 特性
+## ✨ v0.3 新特性 — 生产级演进
+
+v0.3 版本在保持极致轻量级的同时，补齐了生产级 Agent 所需的记忆、编排与观测能力。
+
+- **🧠 语义记忆增强 (Semantic Memory)** — 基于 SQLite 的本地向量索引，支持“向量 TopK + 关键词重排”的混合检索，大幅提升知识召回率。
+- **⚙️ 状态机编排与 Checkpoint** — 引入代码优先的 Workflow DSL，所有状态迁移和工具执行实时落盘，支持崩溃后的断点续传。
+- **👁️ 多模态视觉支持** — 新增 `vision_analyze` 工具，可直接分析本地截图或 UI 设计图，支持本地 (Ollama) 与云端模型。
+- **📊 Observability Dashboard** — 内置本地 Web 控制台，白盒化展示 Agent 思考链路、状态机图、Tool 耗时与 Token 消耗。
+- **📦 动态技能注册与发现** — 支持从本地目录或远程 URL 动态加载插件与技能，实现失效隔离与热更新。
+- **🚀 Tool Spec 强约束 (Boost)** — 根据参数 Schema 自动生成调用示例，并增加前置一致性检查，显著降低 LLM 幻觉。
+
+## ✨ 核心特性
 
 - **流式 TUI** — Claude Code 风格的终端界面，实时展示思考、工具调用、验证结果
-- **9 个内置工具** — bash、read、write、search、planner、skill、todo、url_fetch、subtask
+- **10 个内置工具** — bash、read, write, search, planner, skill, todo, url_fetch, subtask, vision_analyze
 - **Pipeline 系统** — 可组合的 Hook（前置/后置）和 Section（系统提示词模块）
 - **上下文压缩** — Token 预算耗尽时自动压缩历史，保持对话连续性
 - **持久记忆** — 长期记忆存储，跨会话积累知识
@@ -57,23 +68,28 @@ npm start
 npm run tui
 npm run repl
 npm run exec -- "你的任务描述"
-
-# 兼容别名（将逐步移除）
-qingling --tui
-qingling --repl
-qingling --once "你的任务描述"
-qingling "你的任务描述"
-
-# 帮助
-qingling --help
 ```
 
-### 启动方式迁移说明（强制切换）
+## ⚙️ v0.3 特性开关 (Feature Flags)
 
-- 从当前版本起：`qingling` / `npm start` **无参数不再显示说明页**，而是直接进入流式 TUI。
-- 标准模式：`run | chat | repl`，模式互斥。
-- 兼容模式：`--tui`、`--repl`、`--once` 与位置参数仍可用，但会输出 deprecation 提示。
-- 冲突错误统一格式：`Error: [CLI_INVALID_MODE_COMBINATION] ...`（退出码 2）。
+所有新特性默认关闭，可通过 `.env` 或配置文件开启：
+
+```bash
+# 开启所有核心特性
+QINGLING_FEATURES_SEMANTIC_MEMORY=true
+QINGLING_FEATURES_WORKFLOW_RUNTIME=true
+QINGLING_FEATURES_VISION_TOOL=true
+QINGLING_FEATURES_DASHBOARD=true
+QINGLING_FEATURES_DYNAMIC_DISCOVERY=true
+QINGLING_FEATURES_TOOL_SPEC_BOOST=true
+
+# 观测台配置
+QINGLING_DASHBOARD_PORT=9999
+
+# 视觉模型配置
+QINGLING_VISION_PROVIDER=openai  # 或 deepseek, local
+QINGLING_VISION_MODEL=gpt-4o
+```
 
 ## 🛠️ 工具一览
 
@@ -87,7 +103,8 @@ qingling --help
 | `skill` | 加载和使用技能 | `skill "debug-patterns"` |
 | `todo` | 任务列表管理 | `add "修复登录 bug"` |
 | `url_fetch` | 受 Guard 约束的结构化网络请求 | `url_fetch url="https://example.com"` |
-| `subtask` | 隔离子任务执行（独立上下文，共享记忆） | `task="分析日志错误"` |
+| `subtask` | 隔离子任务执行 | `task="分析日志错误"` |
+| `vision_analyze` | 多模态视觉解析 (v0.3) | `image_path="ui.png" prompt="分析布局"` |
 
 ## ⚙️ 配置与治理
 

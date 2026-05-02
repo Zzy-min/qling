@@ -233,12 +233,15 @@ export class KnowledgeObserver {
       return 0;
     }
 
-    const highConfidence = this.observations.filter(
-      (o) => o.confidence >= 0.8 && !this.isAlreadyInMemory(o)
-    );
+    const observationsToPromote: Observation[] = [];
+    for (const o of this.observations) {
+      if (o.confidence >= 0.8 && !(await this.isAlreadyInMemory(o))) {
+        observationsToPromote.push(o);
+      }
+    }
 
     let promoted = 0;
-    for (const obs of highConfidence) {
+    for (const obs of observationsToPromote) {
       const tags = this.extractTags(obs);
       this.memoryStore.add(
         `[知识观察] ${obs.content}`,
@@ -324,9 +327,9 @@ export class KnowledgeObserver {
     return tags;
   }
 
-  private isAlreadyInMemory(obs: Observation): boolean {
+  private async isAlreadyInMemory(obs: Observation): Promise<boolean> {
     // 检查 content 是否已在持久化记忆中
-    const existing = this.memoryStore.getRelevant(obs.content, 20);
+    const existing = await this.memoryStore.getRelevant(obs.content, 20);
     return existing.some((e) => e.content.includes(obs.content.slice(0, 50)));
   }
 }

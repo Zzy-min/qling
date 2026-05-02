@@ -23,6 +23,12 @@ import { VerificationAgent } from "./pipeline/verification.js";
 import { ContextCompactor } from "./context-compactor.js";
 import { KnowledgeAgentAdapter } from "./knowledge-agent.js";
 import type { AgentConfig, Message, RawToolCall, ToolCall, ToolResult } from "./types.js";
+import { WorkflowRuntime } from "./workflow-runtime.js";
+import { WorkflowBuilder } from "./workflow-types.js";
+import { checkToolConsistency } from "./pipeline/consistency-checker.js";
+import { DashboardServer } from "./dashboard-server.js";
+import { DiscoveryRegistry } from "./discovery-registry.js";
+import { DiscoverySource } from "./discovery-types.js";
 import { getSkillDirs } from "./tools/skill.js";
 import { listSkills } from "./skills/registry.js";
 import { buildSkillsSection } from "./pipeline/sections.js";
@@ -74,6 +80,7 @@ export class AgentLoop extends AgentEventEmitter {
   private verifier: VerificationAgent;
   private compactor: ContextCompactor;
   private knowledgeAdapter: KnowledgeAgentAdapter;
+  private workflowRuntime: WorkflowRuntime;
   private wal: WriteAheadLog | null = null;
   private memoryWalEnabled = false;
   private memoryDreamLLMEnabled = false;
@@ -83,6 +90,8 @@ export class AgentLoop extends AgentEventEmitter {
   private approvalGate: ApprovalGate;
   private metricsCollector: MetricsCollector | null = null;
   private metricsFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private dashboardServer: DashboardServer | null = null;
+  private discoveryRegistry: DiscoveryRegistry;
   private telemetry: AgentTelemetry | null = null;
   private channel: Channel | null = null;
   private sessionId: string;
@@ -172,6 +181,27 @@ export class AgentLoop extends AgentEventEmitter {
     this.verifier = new VerificationAgent(apiKey, this.config.model);
     this.compactor = new ContextCompactor(6000, this.config.model);
     this.knowledgeAdapter = new KnowledgeAgentAdapter(this.memoryStore);
+    
+    // v0.3 Workflow Runtime
+    this.workflowRuntime = new WorkflowRuntime(
+      path.join(this.runtimeRootDir, "workflows")
+    );
+
+    // v0.3 Discovery Registry
+    const discoverySources: DiscoverySource[] = [];
+    try {
+      const localDirs = JSON.parse(process.env.QINGLING_DISCOVERY_LOCAL_DIRS || "[]");
+      localDirs.forEach((dir: string, i: number) => {
+        discoverySources.push({ id: `local-${i}`, uri: dir, type: "local" });
+      });
+      const remoteManifests = JSON.parse(process.env.QINGLING_DISCOVERY_REMOTE_MANIFESTS || "[]");
+      remoteManifests.forEach((url: string, i: number) => {
+        discoverySources.push({ id: `remote-${i}`, uri: url, type: "remote" });
+      });
+    } catch {
+      // ignore parse errors
+    }
+    this.discoveryRegistry = new DiscoveryRegistry(discoverySources);
 
     // HTTP client + retry interceptor
     this.client = axios.create({
@@ -180,7 +210,7 @@ export class AgentLoop extends AgentEventEmitter {
         Authorization: "Bearer " + this.config.apiKey,
         "Content-Type": "application/json",
       },
-      timeout: this.config.runtime?.timeoutMs ?? 120_000,
+      timeout: this.resolveLlmRequestTimeout(),
     });
 
     this.client.interceptors.response.use(
@@ -216,6 +246,18 @@ export class AgentLoop extends AgentEventEmitter {
   private async init(): Promise<void> {
     await fs.mkdir(this.runtimeRootDir, { recursive: true });
     await fs.mkdir(this.memoryDir, { recursive: true });
+
+    // v0.3 Sync dynamic discovery
+    if (process.env.QINGLING_FEATURES_DYNAMIC_DISCOVERY === "true") {
+      console.error("🔍 正在同步动态插件与技能...");
+      await this.discoveryRegistry.syncAll();
+      const discoveredTools = this.discoveryRegistry.getDiscoveredTools();
+      if (discoveredTools.length > 0) {
+        this.config.tools = [...this.config.tools, ...discoveredTools];
+        console.error(`📦 已发现 ${discoveredTools.length} 个动态工具`);
+      }
+    }
+
     if (this.loggingConfig.inspectPrompt || this.loggingConfig.inspectRequest) {
       await fs.mkdir(this.loggingConfig.inspectDumpDir, { recursive: true });
     }
@@ -248,6 +290,25 @@ export class AgentLoop extends AgentEventEmitter {
         this.wal = new WriteAheadLog(walDir);
         await this.wal.init();
         this.memoryStore.setWAL(this.wal, { intervalMs: projectionInterval });
+        
+        // v0.3 语义记忆初始化
+        const semanticEnabled = process.env.QINGLING_FEATURES_SEMANTIC_MEMORY === "true";
+        if (semanticEnabled) {
+          const { SemanticMemoryIndex } = await import("./memory/semantic-index.js");
+          const { EmbeddingClient } = await import("./memory/embedding.js");
+          
+          const semanticIndex = new SemanticMemoryIndex(this.memoryDir);
+          const embeddingClient = new EmbeddingClient({
+            apiKey: process.env.QINGLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
+            endpoint: process.env.QINGLING_MEMORY_SEMANTIC_ENDPOINT || this.config.endpoint || (this.config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com"),
+            model: process.env.QINGLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small",
+            dimensions: Number(process.env.QINGLING_MEMORY_SEMANTIC_DIM) || 1536,
+          });
+          
+          this.memoryStore.setSemanticIndex(semanticIndex, embeddingClient);
+          console.error("🧠 语义记忆模块已启动 (Hybrid Retrieval Mode)");
+        }
+
         this.memoryStore.startProjection();
         console.error("[Memory] WAL enabled, projection interval=" + projectionInterval + "ms");
       } catch (err) {
@@ -280,6 +341,17 @@ export class AgentLoop extends AgentEventEmitter {
         this.metricsFlushTimer = this.metricsCollector.startAutoFlush();
         this.telemetry = new AgentTelemetry(this.metricsCollector, this.sessionId);
         console.error("[Metrics] enabled, dir=" + metricsDir);
+
+        // v0.3 Dashboard Server
+        if (process.env.QINGLING_FEATURES_DASHBOARD === "true") {
+          this.dashboardServer = new DashboardServer({
+            port: Number(process.env.QINGLING_DASHBOARD_PORT) || 9999,
+            collector: this.metricsCollector,
+            workflowRuntime: this.workflowRuntime,
+            agentLoop: this,
+          });
+          this.dashboardServer.start();
+        }
       } catch (err) {
         console.error("[Metrics] init failed: " + (err as Error).message);
       }
@@ -342,6 +414,8 @@ export class AgentLoop extends AgentEventEmitter {
 
   async run(): Promise<string> {
     await this.initPromise;
+    const toolSignatureCounts = new Map<string, number>();
+    const toolRepeatLimit = Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6);
 
     for (let i = 0; i < this.config.maxIterations; i++) {
       this.turnCount++;
@@ -384,6 +458,11 @@ export class AgentLoop extends AgentEventEmitter {
       // 1. 构建 system prompt（动态sections）
       const systemPrompt = this.buildSystemPrompt();
 
+      // v0.3 Workflow Checkpoint: Update context
+      if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+        await this.workflowRuntime.updateContext(this.messages);
+      }
+
       // 2. 检查上下文大小（仅计增量，不重复累加整个上下文）
       const lastMsg = this.messages[this.messages.length - 1];
       const roundTokens = (lastMsg?.content?.length ?? 0) * 4 + (systemPrompt.length * 0.5);
@@ -409,56 +488,147 @@ export class AgentLoop extends AgentEventEmitter {
 
       // 5. Pipeline 执行（Hook → 工具）
       console.error("\n🔧 执行 " + tool_calls.length + " 个工具...\n");
-      const parsed: ToolCall[] = tool_calls.map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments) as Record<string, unknown>,
-      }));
+      const preparedCalls: Array<{ call: ToolCall; immediateResult?: ToolResult }> = [];
+      for (const tc of tool_calls) {
+        const parseResult = this.parseToolArguments(tc.function.arguments);
+        if (!parseResult.ok) {
+          preparedCalls.push({
+            call: {
+              id: tc.id,
+              name: tc.function.name,
+              arguments: {},
+            },
+            immediateResult: {
+              tool_call_id: tc.id,
+              output: `Error: [TOOL_INVALID_ARGUMENTS] ${parseResult.error}`,
+              is_error: true,
+              error: {
+                code: "TOOL_INVALID_ARGUMENTS",
+                message: parseResult.error,
+                category: "runtime",
+              },
+            },
+          });
+          continue;
+        }
+
+        const call: ToolCall = {
+          id: tc.id,
+          name: tc.function.name,
+          arguments: parseResult.value,
+        };
+        const signature = this.buildToolSignature(call.name, call.arguments);
+        const repeatCount = (toolSignatureCounts.get(signature) ?? 0) + 1;
+        toolSignatureCounts.set(signature, repeatCount);
+        if (repeatCount > toolRepeatLimit) {
+          preparedCalls.push({
+            call,
+            immediateResult: {
+              tool_call_id: tc.id,
+              output:
+                `Error: [TOOL_REPEAT_LIMIT_EXCEEDED] ` +
+                `tool '${call.name}' exceeded repeat limit (${toolRepeatLimit})`,
+              is_error: true,
+              error: {
+                code: "TOOL_REPEAT_LIMIT_EXCEEDED",
+                message: `tool '${call.name}' exceeded repeat limit (${toolRepeatLimit})`,
+                category: "guard",
+              },
+            },
+          });
+          continue;
+        }
+        preparedCalls.push({ call });
+      }
+      
+      // v0.3 Workflow Checkpoint: Set pending tools
+      if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+        await this.workflowRuntime.setPendingTools(preparedCalls.map(p => p.call));
+      }
+
       let turnToolCalls = 0;
       let turnToolFailures = 0;
 
-      for (let j = 0; j < parsed.length; j++) {
-        const tc = parsed[j];
+      for (let j = 0; j < preparedCalls.length; j++) {
+        const prepared = preparedCalls[j];
+        const tc = prepared.call;
         turnToolCalls++;
+
+        // v0.3 Tool Spec Boost: Consistency Check
+        if (process.env.QINGLING_FEATURES_TOOL_SPEC_BOOST === "true") {
+          const def = this.config.tools.find(t => t.name === tc.name);
+          if (def) {
+            const check = checkToolConsistency(tc, def);
+            if (!check.ok) {
+              console.error(`⚠️ [SpecBoost] 检查到幻觉风险: ${tc.name} - ${check.error}`);
+              this.messages.push({
+                role: "tool",
+                content: JSON.stringify({
+                  tool_call_id: tc.id,
+                  output: `Error: [TOOL_SPEC_VIOLATION] ${check.error}. Please correct your arguments based on the schema and examples.`,
+                  is_error: true,
+                }),
+                tool_call_id: tc.id,
+              });
+              turnToolFailures++;
+              continue;
+            }
+            if (check.warnings.length > 0) {
+               console.warn(`[SpecBoost] 潜在警告: ${check.warnings.join("; ")}`);
+            }
+          }
+        }
+
         // 知识观察：工具调用前
         this.knowledgeAdapter.onToolCall(tc);
         this.emit("tool_start", tc.name, tc.arguments);
-        let result: ToolResult;
-        try {
-          result = await this.pipeline.execute(tc, (t) => dispatch(t));
-        } catch (err) {
-          if (err instanceof ApprovalRequiredError && this.channel) {
-            // Approval flow
-            const approvalResponse = await this.approvalGate.requestApproval(
-              {
-                id: err.toolCallId,
-                toolName: err.toolName,
-                arguments: tc.arguments as Record<string, unknown>,
-                reason: err.reasons.join("; "),
-                timestamp: Date.now(),
-              },
-              this.channel
-            );
-            if (approvalResponse.decision === "allow") {
-              result = await dispatch(tc);
+        let result: ToolResult = prepared.immediateResult ?? {
+          tool_call_id: tc.id,
+          output: "",
+          is_error: false,
+        };
+        if (!prepared.immediateResult) {
+          try {
+            result = await this.pipeline.execute(tc, (t) => dispatch(t));
+          } catch (err) {
+            if (err instanceof ApprovalRequiredError && this.channel) {
+              // Approval flow
+              if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+                await this.workflowRuntime.awaitApproval();
+              }
+              const approvalResponse = await this.approvalGate.requestApproval(
+                {
+                  id: err.toolCallId,
+                  toolName: err.toolName,
+                  arguments: tc.arguments as Record<string, unknown>,
+                  reason: err.reasons.join("; "),
+                  timestamp: Date.now(),
+                },
+                this.channel
+              );
+              if (approvalResponse.decision === "allow") {
+                result = await dispatch(tc);
+              } else {
+                result = {
+                  tool_call_id: tc.id,
+                  output: "[Approval Denied] " + err.reasons.join("; "),
+                  is_error: true,
+                  error: { code: "APPROVAL_DENIED", message: "User denied tool execution", category: "permission" },
+                };
+                turnToolFailures++;
+              }
             } else {
               result = {
                 tool_call_id: tc.id,
-                output: "[Approval Denied] " + err.reasons.join("; "),
+                output: (err as Error).message,
                 is_error: true,
-                error: { code: "APPROVAL_DENIED", message: "User denied tool execution", category: "permission" },
+                error: { code: "TOOL_ERROR", message: (err as Error).message, category: "runtime" },
               };
               turnToolFailures++;
             }
-          } else {
-            result = {
-              tool_call_id: tc.id,
-              output: (err as Error).message,
-              is_error: true,
-              error: { code: "TOOL_ERROR", message: (err as Error).message, category: "runtime" },
-            };
-            turnToolFailures++;
           }
+        } else {
+          turnToolFailures++;
         }
         // 知识观察：工具结果后
         this.knowledgeAdapter.onToolResult(result, tc.name);
@@ -491,6 +661,12 @@ export class AgentLoop extends AgentEventEmitter {
         const preview = result.output.split("\n")[0].slice(0, 80);
         const icon = result.is_error ? "❌" : "✅";
         console.error(icon + " " + tc.name + ": " + preview + (result.output.length > 80 ? "..." : ""));
+        
+        // v0.3 Workflow Checkpoint: Add result
+        if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+          await this.workflowRuntime.addToolResult(result);
+        }
+
         this.messages.push({
           role: "tool",
           content: JSON.stringify(result),
@@ -499,7 +675,7 @@ export class AgentLoop extends AgentEventEmitter {
       }
 
       // 6. 验证阶段（针对写操作）
-      const hasWrites = parsed.some((t) => t.name === "write" || t.name === "bash");
+      const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "bash");
       if (hasWrites) {
         await this.verifyLastOperation();
       }
@@ -857,6 +1033,94 @@ export class AgentLoop extends AgentEventEmitter {
       await fs.writeFile(file, JSON.stringify(payload, null, 2), "utf-8");
     } catch {
       // inspect dump failure should not block execution
+    }
+  }
+
+  private resolveLlmRequestTimeout(): number {
+    const envValue = Number(process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS ?? "120000");
+    if (Number.isFinite(envValue) && envValue > 0) {
+      return envValue;
+    }
+    return this.config.runtime?.timeoutMs ?? 120_000;
+  }
+
+  private parseToolArguments(
+    raw: string
+  ): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+    const retries = Math.max(0, this.config.runtime?.parseRetries ?? 0);
+    let candidate = String(raw ?? "");
+    let lastError = "invalid arguments";
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const parsed = JSON.parse(candidate) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          lastError = "arguments must be a JSON object";
+        } else {
+          return { ok: true, value: parsed as Record<string, unknown> };
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+      if (attempt < retries) {
+        candidate = this.repairToolArguments(candidate, attempt);
+      }
+    }
+
+    return {
+      ok: false,
+      error: `failed after ${retries + 1} attempt(s): ${lastError}`,
+    };
+  }
+
+  private repairToolArguments(source: string, attempt: number): string {
+    let out = source.trim();
+    if (attempt === 0) {
+      const fenced = out.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+      if (fenced) {
+        out = fenced[1].trim();
+      }
+      return out;
+    }
+    if (attempt === 1) {
+      return out.replace(/,\s*([}\]])/g, "$1");
+    }
+    if (attempt === 2) {
+      return out
+        .replace(/[“”]/g, "\"")
+        .replace(/[‘’]/g, "'")
+        .replace(/([{,]\s*)'([^']+?)'\s*:/g, '$1"$2":')
+        .replace(/:\s*'([^']*?)'(\s*[,}])/g, ': "$1"$2');
+    }
+    return out;
+  }
+
+  private buildToolSignature(name: string, args: Record<string, unknown>): string {
+    return `${name}:${this.stableStringify(args)}`;
+  }
+
+  private stableStringify(value: unknown): string {
+    const normalize = (input: unknown): unknown => {
+      if (Array.isArray(input)) {
+        return input.map((item) => normalize(item));
+      }
+      if (input && typeof input === "object") {
+        const entries = Object.entries(input as Record<string, unknown>).sort(([a], [b]) =>
+          a.localeCompare(b)
+        );
+        const obj: Record<string, unknown> = {};
+        for (const [k, v] of entries) {
+          obj[k] = normalize(v);
+        }
+        return obj;
+      }
+      return input;
+    };
+
+    try {
+      return JSON.stringify(normalize(value));
+    } catch {
+      return "[unstringifiable]";
     }
   }
 }

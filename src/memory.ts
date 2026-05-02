@@ -10,11 +10,14 @@ import { WriteAheadLog } from "./memory/wal.js";
 import type { WALEntry } from "./types.js";
 import { ProjectionWorker } from "./memory/projection-worker.js";
 import { MemoryCompactor } from "./memory/compactor.js";
+import { SemanticMemoryIndex } from "./memory/semantic-index.js";
+import { EmbeddingClient } from "./memory/embedding.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
   turnThreshold: 24,
   transcriptWindow: 4,
+  semanticEnabled: false,
 };
 
 // --- PersistedMemory（长期存储，WAL 模式可选）---
@@ -24,6 +27,10 @@ export class PersistedMemory {
   private memoryDir: string;
   private wal: WriteAheadLog | null = null;
   private projectionWorker: ProjectionWorker | null = null;
+  
+  // v0.3 语义索引
+  private semanticIndex: SemanticMemoryIndex | null = null;
+  private embeddingClient: EmbeddingClient | null = null;
 
   constructor(memoryDir: string) {
     this.memoryDir = memoryDir;
@@ -37,15 +44,24 @@ export class PersistedMemory {
     this.projectionWorker = new ProjectionWorker(wal, {
       applyEntry: (entry) => this.applyWALEntry(entry),
       getEntries: () => this.entries,
+      onCheckpoint: async (entries) => this.syncSemanticIndex(entries),
     }, {
       intervalMs: options.intervalMs,
       maxPendingEntries: options.maxPendingEntries,
     });
   }
 
+  setSemanticIndex(index: SemanticMemoryIndex, client: EmbeddingClient): void {
+    this.semanticIndex = index;
+    this.embeddingClient = client;
+  }
+
   async init(): Promise<void> {
     await fs.mkdir(this.memoryDir, { recursive: true });
     await this.loadFromDisk();
+    if (this.semanticIndex) {
+      await this.semanticIndex.init();
+    }
   }
 
   add(content: string, source: string, importance: number = 0.5): void {
@@ -64,6 +80,9 @@ export class PersistedMemory {
     const idx = this.entries.findIndex((e) => e.id === id);
     if (idx === -1) return false;
     this.entries.splice(idx, 1);
+    if (this.semanticIndex) {
+      this.semanticIndex.delete(id);
+    }
     return true;
   }
 
@@ -89,6 +108,9 @@ export class PersistedMemory {
       case "remove": {
         const data = entry.data as { id: string };
         this.entries = this.entries.filter((e) => e.id !== data.id);
+        if (this.semanticIndex) {
+          this.semanticIndex.delete(data.id);
+        }
         break;
       }
       case "update": {
@@ -108,7 +130,105 @@ export class PersistedMemory {
     }
   }
 
-  getRelevant(query: string, limit: number = 5): PersistedEntry[] {
+  async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
+    const now = Date.now();
+    
+    // 1. 关键词检索 (同步部分)
+    const keywordResults = this.entries.map((e) => {
+      let score = e.importance;
+      const ageHours = (now - e.createdAt) / (1000 * 60 * 60);
+      score *= Math.pow(0.9, ageHours / 24);
+      const keywords = query.toLowerCase().split(/\s+/);
+      const content = e.content.toLowerCase();
+      const matches = keywords.filter((k) => content.includes(k)).length;
+      score += matches * 0.1;
+      return { entry: e, score };
+    });
+
+    // 2. 语义检索 (异步)
+    let semanticResults: { entry: PersistedEntry, score: number }[] = [];
+    if (this.semanticIndex && this.embeddingClient && query.trim()) {
+      try {
+        const queryVector = await this.embeddingClient.getEmbedding(query);
+        const searchHits = this.semanticIndex.search(queryVector, limit * 2);
+        semanticResults = searchHits.map(h => ({
+          entry: h.entry,
+          score: h.score * 0.8 // 降低语义原始分权重，便于混合
+        }));
+      } catch (err) {
+        console.error(`[PersistedMemory] Semantic search failed, falling back to keywords: ${(err as Error).message}`);
+      }
+    }
+
+    // 3. 混合排序 (Hybrid Rerank)
+    const merged = new Map<string, { entry: PersistedEntry, score: number }>();
+    
+    // 注入关键词分
+    keywordResults.forEach(r => merged.set(r.entry.id, r));
+    
+    // 注入或叠加语义分
+    semanticResults.forEach(r => {
+      const existing = merged.get(r.entry.id);
+      if (existing) {
+        existing.score += r.score; // 叠加
+      } else {
+        merged.set(r.entry.id, r);
+      }
+    });
+
+    return Array.from(merged.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((s) => s.entry);
+  }
+
+  async syncSemanticIndex(entries: PersistedEntry[]): Promise<void> {
+    if (!this.semanticIndex || !this.embeddingClient) return;
+
+    // 增量同步逻辑：找出尚未在向量索引中的条目
+    // 简单起见，这里假设 entries 是全量，实际 ProjectionWorker 会传入合并后的 PersistedMemory.entries
+    // 我们只处理没有被索引的新条目（需要一种方式记录已索引状态，暂时用 content 匹配或直接让 semanticIndex 决定）
+    // 为了性能，我们只取最近 replayed 的或者简单的全量 diff
+    
+    // 这里实现一个简单的逻辑：如果索引为空，则全量重建；否则增量处理
+    // (实际应用中应在 SemanticMemoryIndex 记录 last_indexed_at)
+    
+    // 先做最小可行实现：批量处理
+    const batchSize = 10;
+    const entriesToIndex = entries.slice(-batchSize); // 仅处理最近 10 条作为示例
+    try {
+      const vectors = await this.embeddingClient.getEmbeddings(entriesToIndex.map(e => e.content));
+      for (let i = 0; i < entriesToIndex.length; i++) {
+        this.semanticIndex.upsert(entriesToIndex[i], vectors[i]);
+      }
+    } catch (err) {
+      console.error(`[PersistedMemory] Async semantic indexing failed: ${(err as Error).message}`);
+    }
+  }
+
+  async rebuildSemanticIndex(): Promise<void> {
+    if (!this.semanticIndex || !this.embeddingClient) return;
+    this.semanticIndex.clear();
+    const batchSize = 10;
+    for (let i = 0; i < this.entries.length; i += batchSize) {
+      const batch = this.entries.slice(i, i + batchSize);
+      const vectors = await this.embeddingClient.getEmbeddings(batch.map(e => e.content));
+      for (let j = 0; j < batch.length; j++) {
+        this.semanticIndex.upsert(batch[j], vectors[j]);
+      }
+    }
+  }
+
+  formatForPrompt(limit: number = 10): string {
+    if (this.entries.length === 0) return "";
+    const relevant = this.getRelevantSync("", limit);
+    if (relevant.length === 0) return "";
+    return relevant
+      .map((e) => "[" + e.source + "] " + e.content)
+      .join("\n");
+  }
+
+  private getRelevantSync(query: string, limit: number = 5): PersistedEntry[] {
     const now = Date.now();
     const scored = this.entries.map((e) => {
       let score = e.importance;
@@ -124,15 +244,6 @@ export class PersistedMemory {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map((s) => s.entry);
-  }
-
-  formatForPrompt(limit: number = 10): string {
-    if (this.entries.length === 0) return "";
-    const relevant = this.getRelevant("", limit);
-    if (relevant.length === 0) return "";
-    return relevant
-      .map((e) => "[" + e.source + "] " + e.content)
-      .join("\n");
   }
 
   async saveToDisk(): Promise<void> {
@@ -294,6 +405,10 @@ export class MemoryStore {
     this.persisted.setWAL(wal, options);
   }
 
+  setSemanticIndex(index: SemanticMemoryIndex, client: EmbeddingClient): void {
+    this.persisted.setSemanticIndex(index, client);
+  }
+
   startProjection(): void {
     this.persisted.startProjection();
   }
@@ -311,7 +426,7 @@ export class MemoryStore {
     this.persisted.add(content, source, importance);
   }
 
-  getRelevant(query: string, limit: number = 5): PersistedEntry[] {
+  async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
     return this.persisted.getRelevant(query, limit);
   }
 

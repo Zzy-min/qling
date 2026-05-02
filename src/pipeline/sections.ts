@@ -4,6 +4,7 @@
 
 import { PromptSection, PromptSectionRegistry, AgentConfig } from "../types.js";
 import type { SkillMeta } from "../skills/types.js";
+import { buildToolSpecBoostPrompt } from "./example-generator.js";
 
 // --- 默认 Section IDs ---
 export const SECTION_IDS = {
@@ -42,12 +43,17 @@ export function buildToolsSection(tools: AgentConfig["tools"]): PromptSection {
     )
     .join("\n");
 
+  let content = `你可用的工具：\n\n${toolList}`;
+
+  // v0.3 Tool Spec Boost
+  if (process.env.QINGLING_FEATURES_TOOL_SPEC_BOOST === "true") {
+    content += "\n\n" + buildToolSpecBoostPrompt(tools);
+  }
+
   return {
     id: SECTION_IDS.TOOLS,
     title: "工具列表",
-    content: `你可用的工具：
-
-${toolList}`,
+    content,
     cacheable: true,
     cached: false,
   };

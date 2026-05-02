@@ -15,6 +15,8 @@ import { StreamUI } from "./streaming-tui.js";
 export class StreamingREPL {
   private ui: StreamUI;
   private agent: AgentLoop;
+  private closed = false;
+  private onClose: (() => void) | null = null;
 
   constructor(agent?: AgentLoop) {
     this.agent = agent ?? new AgentLoop();
@@ -23,14 +25,30 @@ export class StreamingREPL {
     this.ui = new StreamUI(model, toolsCount);
   }
 
-  start(): void {
+  async start(): Promise<void> {
     this.ui.onInput((cmd) => this.handleUserInput(cmd));
     this.wireAgentEvents();
     this.ui.start();
+    await new Promise<void>((resolve) => {
+      this.onClose = resolve;
+    });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    await this.close();
+  }
+
+  private async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    try {
+      await this.agent.shutdown();
+    } catch {
+      // ignore shutdown cleanup failures in chat exit path
+    }
     this.ui.stop();
+    this.onClose?.();
+    this.onClose = null;
   }
 
   // ── 事件连接 ────────────────────────────────────────
@@ -116,6 +134,12 @@ export class StreamingREPL {
   // ── 用户输入处理 ────────────────────────────────────
 
   private async handleUserInput(cmd: string): Promise<void> {
+    const normalized = cmd.trim().toLowerCase();
+    if (normalized === "q" || normalized === "quit" || normalized === "exit") {
+      await this.close();
+      return;
+    }
+
     const startTime = Date.now();
 
     this.ui.appendState("idle", "thinking");

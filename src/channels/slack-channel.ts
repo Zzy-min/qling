@@ -23,6 +23,14 @@ export class SlackChannel implements Channel {
   private lastTs = new Map<string, string>();
   private lastActiveChannelId: string | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pendingApprovals = new Map<
+    string,
+    {
+      requestId: string;
+      resolve: (response: ApprovalResponse) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   constructor(config: SlackChannelConfig) {
     this.botToken = config.botToken;
@@ -53,6 +61,11 @@ export class SlackChannel implements Channel {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
+    }
+    for (const [shortId, pending] of this.pendingApprovals) {
+      clearTimeout(pending.timer);
+      pending.resolve({ requestId: pending.requestId, decision: "deny", timestamp: Date.now() });
+      this.pendingApprovals.delete(shortId);
     }
   }
 
@@ -116,22 +129,29 @@ export class SlackChannel implements Channel {
       }
     }
 
+    const shortId = request.id.slice(0, 8).toLowerCase();
     return new Promise<ApprovalResponse>((resolve) => {
-      const originalHandler = this.userMessageHandler;
-      const shortId = request.id.slice(0, 8);
+      const existing = this.pendingApprovals.get(shortId);
+      if (existing) {
+        clearTimeout(existing.timer);
+        existing.resolve({ requestId: existing.requestId, decision: "deny", timestamp: Date.now() });
+        this.pendingApprovals.delete(shortId);
+      }
 
-      this.userMessageHandler = async (msg: string) => {
-        const trimmed = msg.trim().toLowerCase();
-        if (trimmed.startsWith("allow ") && trimmed.includes(shortId)) {
-          this.userMessageHandler = originalHandler;
-          resolve({ requestId: request.id, decision: "allow", timestamp: Date.now() });
-        } else if (trimmed.startsWith("deny ") && trimmed.includes(shortId)) {
-          this.userMessageHandler = originalHandler;
-          resolve({ requestId: request.id, decision: "deny", timestamp: Date.now() });
-        } else if (originalHandler) {
-          await originalHandler(msg);
+      const timer = setTimeout(() => {
+        const pending = this.pendingApprovals.get(shortId);
+        if (!pending || pending.requestId !== request.id) {
+          return;
         }
-      };
+        this.pendingApprovals.delete(shortId);
+        pending.resolve({ requestId: request.id, decision: "deny", timestamp: Date.now() });
+      }, 300_000);
+
+      this.pendingApprovals.set(shortId, {
+        requestId: request.id,
+        resolve,
+        timer,
+      });
     });
   }
 
@@ -193,6 +213,10 @@ export class SlackChannel implements Channel {
             this.lastTs.set(channelId, ts);
           }
 
+          if (this.tryHandleApprovalText(text)) {
+            continue;
+          }
+
           this.lastActiveChannelId = channelId;
           await this.userMessageHandler(text);
         }
@@ -210,5 +234,37 @@ export class SlackChannel implements Channel {
       return [this.lastActiveChannelId];
     }
     return [];
+  }
+
+  private tryHandleApprovalText(text: string): boolean {
+    const m = /^\s*(allow|deny)\s+([a-z0-9]{4,})\b/i.exec(text.trim());
+    if (!m) {
+      return false;
+    }
+    const decision = m[1].toLowerCase() === "allow" ? "allow" : "deny";
+    const token = m[2].toLowerCase();
+    const key = this.resolvePendingApprovalKey(token);
+    if (!key) {
+      return false;
+    }
+    const pending = this.pendingApprovals.get(key);
+    if (!pending) {
+      return false;
+    }
+    clearTimeout(pending.timer);
+    this.pendingApprovals.delete(key);
+    pending.resolve({ requestId: pending.requestId, decision, timestamp: Date.now() });
+    return true;
+  }
+
+  private resolvePendingApprovalKey(token: string): string | null {
+    if (this.pendingApprovals.has(token)) {
+      return token;
+    }
+    const matches = [...this.pendingApprovals.keys()].filter((k) => k.startsWith(token));
+    if (matches.length === 1) {
+      return matches[0];
+    }
+    return null;
   }
 }

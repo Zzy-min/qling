@@ -22,6 +22,7 @@ export class ProjectionWorker {
   private running = false;
   private applyEntry: (entry: WALEntry) => void;
   private getEntries: () => PersistedEntry[];
+  private onCheckpoint?: (entries: PersistedEntry[]) => Promise<void>;
   private options: ProjectionWorkerOptions;
   private firstRun = true;
   private projectedCount = 0;
@@ -31,12 +32,14 @@ export class ProjectionWorker {
     callbacks: {
       applyEntry: (entry: WALEntry) => void;
       getEntries: () => PersistedEntry[];
+      onCheckpoint?: (entries: PersistedEntry[]) => Promise<void>;
     },
     options: Partial<ProjectionWorkerOptions> = {}
   ) {
     this.wal = wal;
     this.applyEntry = callbacks.applyEntry;
     this.getEntries = callbacks.getEntries;
+    this.onCheckpoint = callbacks.onCheckpoint;
     this.options = { ...DEFAULT_OPTIONS, ...options };
   }
 
@@ -67,7 +70,16 @@ export class ProjectionWorker {
     }
 
     // checkpoint
-    await this.wal.checkpoint(this.getEntries());
+    const currentEntries = this.getEntries();
+    await this.wal.checkpoint(currentEntries);
+    
+    // trigger post-checkpoint hook
+    if (this.onCheckpoint) {
+      this.onCheckpoint(currentEntries).catch(err => {
+        console.error(`[ProjectionWorker] onCheckpoint hook failed: ${err.message}`);
+      });
+    }
+
     this.projectedCount += entries.length;
     this.firstRun = false;
     return entries.length;

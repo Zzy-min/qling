@@ -183,6 +183,7 @@ export class StreamUI {
   private running: boolean = false;
   private inputCallback: ((cmd: string) => Promise<void>) | null = null;
   private currentToolRunning: boolean = false;
+  private dataHandler: ((chunk: string) => void) | null = null;
 
   constructor(model: string = "deepseek-chat", tools: number = 0) {
     this.model = model;
@@ -198,7 +199,15 @@ export class StreamUI {
 
   stop(): void {
     this.running = false;
-    process.exit(0);
+    if (this.dataHandler) {
+      process.stdin.off("data", this.dataHandler);
+      this.dataHandler = null;
+    }
+    if (typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(false);
+    }
+    process.stdin.pause();
+    process.stdout.write("\n");
   }
 
   onInput(cb: (cmd: string) => Promise<void>): void {
@@ -259,7 +268,7 @@ export class StreamUI {
 
     let partial = "";
 
-    process.stdin.on("data", (chunk: string) => {
+    this.dataHandler = (chunk: string) => {
       if (!this.running) return;
       for (const ch of chunk) {
         const seq = partial + ch;
@@ -298,7 +307,8 @@ export class StreamUI {
           partial = "";
         }
       }
-    });
+    };
+    process.stdin.on("data", this.dataHandler);
   }
 
   private handleEnter(): void {
