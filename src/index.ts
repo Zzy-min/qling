@@ -24,6 +24,7 @@ import {
 } from "./cli/channel-bootstrap.js";
 import { buildToolRegistry } from "./tools/index.js";
 import { runSetup } from "./cli/setup.js";
+import { checkOnboarding } from "./onboarding/tutorial.js";
 import type { AgentConfig } from "./types.js";
 
 function findEnvPaths(): string[] {
@@ -71,6 +72,11 @@ async function main() {
   if (decision.mode === "help") {
     console.log(buildHelpText("qingling"));
     process.exit(0);
+  }
+
+  // v0.4 Onboarding Tutorial (仅在交互模式下触发)
+  if (decision.mode === "chat" || decision.mode === "repl") {
+    await checkOnboarding();
   }
 
   for (const warning of decision.warnings) {

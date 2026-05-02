@@ -163,10 +163,18 @@ export async function runVisionAnalyze(args: {
       }
     );
 
-    const result = resp.data.choices?.[0]?.message?.content || "[No analysis result]";
+    const result = resp.data.choices?.[0]?.message?.content || "";
+    
+    // 自动重试机制：如果结果为空，尝试重新调用一次
+    const internalArgs = args as any;
+    if (!result && !internalArgs._is_retry) {
+      console.warn("⚠️ 视觉分析返回空结果，正在尝试自动重试...");
+      return runVisionAnalyze({ ...args, _is_retry: true } as any);
+    }
+
     return {
       tool_call_id: "",
-      output: `👁️ 视觉分析结果 (${model} @ ${provider}):\n\n${result}`,
+      output: result ? `👁️ 视觉分析结果 (${model} @ ${provider}):\n\n${result}` : "[No analysis result]",
       meta: { model, provider }
     };
   } catch (err: any) {

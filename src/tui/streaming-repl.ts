@@ -11,6 +11,7 @@
 
 import { AgentLoop } from "../agent-loop.js";
 import { StreamUI } from "./streaming-tui.js";
+import { handleSlashCommand } from "../commands/index.js";
 
 export class StreamingREPL {
   private ui: StreamUI;
@@ -54,12 +55,6 @@ export class StreamingREPL {
   // ── 事件连接 ────────────────────────────────────────
 
   private wireAgentEvents(): void {
-    // thinking 事件不直接打印 — 最终回复由 appendFinal 统一渲染
-    // 避免与 handleUserInput 中的 appendFinal 重复输出
-    // this.agent.on("thinking", (content: string) => {
-    //   this.ui.appendThinking(content);
-    // });
-
     this.agent.on("tool_start", (name: string, args: Record<string, unknown>) => {
       const cmd = this.argsToCommand(name, args);
       this.ui.appendToolStart(name, cmd);
@@ -93,10 +88,6 @@ export class StreamingREPL {
     this.agent.on("verification", (verdict: string, details: string) => {
       const status = verdict === "PASS" ? "pass" : verdict === "FAIL" ? "fail" : "warn";
       this.ui.appendValidation(status, details);
-    });
-
-    this.agent.on("turn_end", (_turnCount: number) => {
-      // 可选：显示轮次统计
     });
   }
 
@@ -134,23 +125,32 @@ export class StreamingREPL {
   // ── 用户输入处理 ────────────────────────────────────
 
   private async handleUserInput(cmd: string): Promise<void> {
-    const normalized = cmd.trim().toLowerCase();
+    const input = cmd.trim();
+    if (!input) {
+      this.ui.showPrompt();
+      return;
+    }
+
+    const normalized = input.toLowerCase();
     if (normalized === "q" || normalized === "quit" || normalized === "exit") {
       await this.close();
       return;
     }
 
-    const startTime = Date.now();
+    // v0.4 Slash Commands
+    const handled = await handleSlashCommand(input, this.agent);
+    if (handled) {
+      this.ui.showPrompt();
+      return;
+    }
 
+    const startTime = Date.now();
     this.ui.appendState("idle", "thinking");
 
     try {
-      this.agent.addUserMessage(cmd);
-
+      this.agent.addUserMessage(input);
       this.ui.appendState("thinking", "running");
-
       const response = await this.agent.run();
-
       this.ui.appendState("running", "done");
 
       if (response && response.trim()) {

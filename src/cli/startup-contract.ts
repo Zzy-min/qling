@@ -254,6 +254,9 @@ ${binName} - 通用 CLI Agent
 
 兼容别名:
   ${binName} --tui, --repl, --once "task", "task"
+
+模式冲突示例:
+  ${binName} repl --once "x"          # Error: [CLI_INVALID_MODE_COMBINATION]
 `.trim();
 }
 

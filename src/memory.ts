@@ -564,6 +564,10 @@ export class TokenBudgetManager {
     this.usedTokens = actualTokens;
   }
 
+  reset(): void {
+    this.usedTokens = 0;
+  }
+
   getRemaining(): number {
     return this.maxTokens - this.usedTokens;
   }

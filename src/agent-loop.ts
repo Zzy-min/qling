@@ -726,6 +726,9 @@ export class AgentLoop extends AgentEventEmitter {
   reset(): void {
     this.messages = [];
     this.turnCount = 0;
+    this.sessionTokens = 0;
+    this.tokenBudget.reset();
+    this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
   }
 
