@@ -139,7 +139,7 @@ export class PersistedMemory {
       return { entry: e, score, source: "keyword" as const };
     });
 
-    // 2. 向量检索
+    // 2. 向量检索 (v0.3+)
     let semanticResults: { entry: PersistedEntry, score: number, source: "vector" }[] = [];
     if (this.cognitiveIndex && this.embeddingClient && query.trim()) {
       try {
@@ -150,8 +150,16 @@ export class PersistedMemory {
           score: h.score * 0.8,
           source: "vector" as const
         }));
-      } catch (err) {
-        console.error(`[PersistedMemory] Vector search failed: ${(err as Error).message}`);
+      } catch (err: any) {
+        // 专项修复：处理 404 (Endpoint 不支持)
+        if (err.message.includes("404")) {
+           if (!(this as any)._warned404) {
+             console.warn(`[Memory] ⚠️ 当前提供商不支持 Embedding 接口 (404)，已降级为纯关键词检索模式。`);
+             (this as any)._warned404 = true;
+           }
+        } else {
+           console.error(`[PersistedMemory] Vector search failed: ${err.message}`);
+        }
       }
     }
 

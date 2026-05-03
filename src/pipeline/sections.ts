@@ -214,7 +214,7 @@ export function buildDefaultRegistry(
 ): PromptSectionRegistry {
   const registry = new PromptSectionRegistry();
 
-  registry.register(buildIntroSection("轻灵", "0.4.0"));
+  registry.register(buildIntroSection("轻灵", "0.5.0"));
   registry.register(buildToolsSection(tools));
   registry.register(buildWorkflowSection());
   registry.register(buildRestrictionsSection());

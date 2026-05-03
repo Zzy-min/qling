@@ -686,6 +686,34 @@ export class AgentLoop extends AgentEventEmitter {
         this.knowledgeAdapter.onToolResult(result, tc.name);
         this.emit("tool_result", tc.name, result.output, result.is_error ?? false);
 
+        // v0.5 M1: Knowledge Graph Linking (Automatic)
+        if (!result.is_error && (tc.name === "bash" || tc.name === "write" || tc.name === "read")) {
+          let lastUserMsg = "";
+          for (let i = this.messages.length - 1; i >= 0; i--) {
+            if (this.messages[i].role === "user") {
+              lastUserMsg = this.messages[i].content;
+              break;
+            }
+          }
+          const taskId = "task_" + Buffer.from(lastUserMsg.slice(0, 10)).toString("hex");
+          
+          this.memoryStore.link(
+            { id: taskId, type: "task", label: lastUserMsg.slice(0, 50) },
+            "uses",
+            { id: "tool_" + tc.name, type: "tool", label: tc.name }
+          );
+
+          const args = tc.arguments as any;
+          const targetFile = args.path || args.file || "";
+          if (targetFile) {
+            this.memoryStore.link(
+              { id: "tool_" + tc.name, type: "tool", label: tc.name },
+              tc.name === "read" ? "reads" : "writes",
+              { id: "file_" + Buffer.from(targetFile).toString("hex"), type: "file", label: targetFile }
+            );
+          }
+        }
+
         // Guard M2: 内容过滤（工具输出）
         if (this.guardConfig.enabled && this.guardConfig.content_filter?.enabled) {
           const cf = applyContentFilter(result.output, {
@@ -734,6 +762,29 @@ export class AgentLoop extends AgentEventEmitter {
 
       // 7. Auto-dream 检查
       await this.checkAutoDream();
+
+      // v0.5 M1: Experience Distillation (M1 Core)
+      if (this.turnCount > 0 && !preparedCalls.some(p => p.immediateResult?.is_error || (p.call.id && this.messages.some(m => m.tool_call_id === p.call.id && JSON.parse(m.content!).is_error)))) {
+         const successfulCmds = preparedCalls
+           .filter(p => p.call.name === "bash")
+           .map(p => (p.call.arguments as any).cmd || (p.call.arguments as any).command);
+         
+         if (successfulCmds.length > 0) {
+           let lastUserMsg = "";
+           for (let i = this.messages.length - 1; i >= 0; i--) {
+             if (this.messages[i].role === "user") {
+               lastUserMsg = this.messages[i].content;
+               break;
+             }
+           }
+           this.memoryStore.addPractice(
+             lastUserMsg.slice(0, 100), 
+             successfulCmds, 
+             preparedCalls.map(p => (p.call.arguments as any).path || (p.call.arguments as any).file).filter(Boolean)
+           );
+           console.error(`✨ [认知] 已将 ${successfulCmds.length} 条成功指令蒸馏为最佳实践`);
+         }
+      }
 
       // 7b. 记录对话轮次（更新 conversation memory）
       this.memoryStore.addConversationTurn("user", lastUserMsg);
@@ -970,11 +1021,11 @@ export class AgentLoop extends AgentEventEmitter {
     } catch (err) {
       const e = err as any;
       const detail = JSON.stringify(e.response?.data ?? {}).slice(0, 500);
-      throw new Error("DeepSeek API error: " + detail);
+      throw new Error(`${this.config.provider} API error: ` + detail);
     }
 
     const choice = resp.data.choices?.[0];
-    if (!choice) throw new Error("DeepSeek API error: " + JSON.stringify(resp.data));
+    if (!choice) throw new Error(`${this.config.provider} API error: ` + JSON.stringify(resp.data));
 
     const msg = choice.message;
     let rawToolCalls: RawToolCall[] | undefined;

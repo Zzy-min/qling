@@ -13,11 +13,20 @@ export const detachCommand: SlashCommand = {
     console.log("\n🚀 【正在尝试后台脱离...】");
     
     try {
-      // 1. 尝试向守护进程提交当前任务
+      // 1. 获取当前状态快照
+      const checkpoint = agentLoop.getWorkflowRuntime().getCheckpoint();
+      const stats = {
+        turnCount: (agentLoop as any).turnCount,
+        sessionTokens: (agentLoop as any).sessionTokens,
+      };
+
+      // 2. 提交至守护进程
       await axios.post(endpoint, {
         name: "Detached Mission",
         description: "从交互式会话脱离的任务",
         sessionId: agentLoop.getSessionId(),
+        checkpoint,
+        stats,
       }, { timeout: 3000 });
 
       console.log("-----------------------------------------");

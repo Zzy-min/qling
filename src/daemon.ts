@@ -6,18 +6,51 @@
 import * as http from "http";
 import { MissionManager } from "./mission/manager.js";
 import { AgentLoop } from "./agent-loop.js";
+import { loadQinglingConfig, applyConfigToProcessEnv } from "./config.js";
 import * as path from "path";
 import * as os from "os";
+import * as fs from "fs";
+import dotenv from "dotenv";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME_DIR, ".qingling");
-const PORT = Number(process.env.QINGLING_DAEMON_PORT) || 9998;
+
+function loadEnv() {
+  // 1. 项目配置
+  let dir = process.cwd();
+  while (true) {
+    const envPath = path.join(dir, ".env");
+    if (fs.existsSync(envPath)) {
+      dotenv.config({ path: envPath });
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // 2. 全局配置
+  const globalEnv = path.join(HOME_DIR, ".qingling", ".env");
+  if (fs.existsSync(globalEnv)) {
+    dotenv.config({ path: globalEnv });
+  }
+}
 
 async function main() {
+  loadEnv();
+  
   const stateDir = process.env.QINGLING_FILE_STATE_DIR || DEFAULT_STATE_DIR;
   const manager = new MissionManager(stateDir);
   await manager.init();
 
+  // 尝试预加载配置并应用到环境变量
+  try {
+    const { config } = await loadQinglingConfig({});
+    applyConfigToProcessEnv(config);
+  } catch (err) {
+    console.error(`[qinglingd] Warning: Failed to load config: ${(err as Error).message}`);
+  }
+
+  const PORT = Number(process.env.QINGLING_DAEMON_PORT) || 9998;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${PORT}`);
     
@@ -38,8 +71,8 @@ async function main() {
         const data = JSON.parse(body);
         const mission = await manager.createMission(data.name, data.description, data.sessionId);
         
-        // 异步启动任务执行 (Detach)
-        executeMissionInBackground(mission.id, manager, stateDir);
+        // 异步启动任务执行 (Detach) - 传入全量数据以支持状态恢复
+        executeMissionInBackground(mission.id, manager, stateDir, data);
         
         res.end(JSON.stringify({ ok: true, missionId: mission.id }));
         return;
@@ -64,21 +97,51 @@ async function main() {
 }
 
 /** 后台执行使命逻辑 */
-async function executeMissionInBackground(id: string, manager: MissionManager, stateDir: string) {
+async function executeMissionInBackground(id: string, manager: MissionManager, stateDir: string, data: any) {
   const mission = manager.getMission(id);
   if (!mission) return;
 
   try {
     await manager.updateStatus(id, "running");
     
-    // 初始化一个独立的 Agent 实例进行后台处理
-    // 注意：这里需要根据 mission.sessionId 恢复上下文
-    const agent = new AgentLoop({
-      runtime: { fileStateDir: stateDir }
-    } as any);
+    // 重新加载配置
+    const { config: loadedConfig } = await loadQinglingConfig({});
+    const { buildToolRegistry } = await import("./tools/index.js");
+
+    const staticEnabled: Record<string, boolean> = {};
+    for (const [name, cfg] of Object.entries(loadedConfig.tools)) {
+      staticEnabled[name] = cfg.enabled;
+    }
+    const tools = buildToolRegistry({ staticEnabled });
+
+    const agentConfig: any = {
+      apiKey: loadedConfig.llm.api_key || process.env.QINGLING_LLM_API_KEY || "",
+      provider: loadedConfig.llm.provider,
+      endpoint: loadedConfig.llm.endpoint,
+      model: loadedConfig.llm.model,
+      maxIterations: loadedConfig.runtime.max_steps,
+      tools,
+      runtime: {
+        workspaceDir: loadedConfig.runtime.workspace_dir || process.cwd(),
+        fileCacheDir: loadedConfig.runtime.file_cache_dir,
+        fileStateDir: stateDir,
+      },
+    };
+
+    const agent = new AgentLoop(agentConfig);
     await agent.waitForInit();
+
+    // v0.5 M3: 状态恢复 (High-fidelity Resume)
+    if (data.checkpoint) {
+       console.log(`[qinglingd] 正在为使命 ${id} 恢复状态机快照...`);
+       agent.syncWorkflowState(data.checkpoint);
+       if (data.stats) {
+          (agent as any).sessionTokens = data.stats.sessionTokens || 0;
+       }
+    } else {
+       agent.addUserMessage(mission.description);
+    }
     
-    agent.addUserMessage(mission.description);
     const result = await agent.run();
     
     await manager.updateStatus(id, "succeeded");
