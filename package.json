@@ -13,6 +13,7 @@
     "tui": "node dist/index.js chat",
     "repl": "node dist/index.js repl",
     "exec": "node dist/index.js run",
+    "daemon": "node dist/daemon.js",
     "prepare": "npm run build",
     "prepack": "npm run build",
     "dev": "tsc --watch",
@@ -24,6 +25,7 @@
     "axios": "^1.7.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.0",
+    "playwright": "^1.59.1",
     "string-width": "^8.2.0",
     "yaml": "^2.8.1",
     "zod": "^3.23.0"

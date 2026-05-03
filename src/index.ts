@@ -12,6 +12,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import dotenv from "dotenv";
+import axios from "axios";
 
 import { AgentLoop } from "./agent-loop.js";
 import { Repl } from "./repl.js";
@@ -210,6 +211,9 @@ async function main() {
 
     if (decision.mode === "mission") {
       const [sub, ...mArgs] = decision.subArgs;
+      const DAEMON_PORT = process.env.QINGLING_DAEMON_PORT || "9998";
+      const daemonUrl = `http://localhost:${DAEMON_PORT}`;
+
       const manager = agent.getMissionManager();
       
       if (sub === "start") {
@@ -218,25 +222,48 @@ async function main() {
           console.error("用法: qingling mission start \"任务描述\"");
           process.exit(1);
         }
-        const mission = await manager.createMission("New Mission", task, agent.getSessionId());
-        console.error(`🚀 使命已创建并加入队列: ${mission.id}`);
-        console.error(`提示: 目前 M2 阶段使命将在当前进程执行。在 M3 中将迁移至 qinglingd 守护进程。`);
         
-        await manager.updateStatus(mission.id, "running");
-        agent.addUserMessage(task);
-        const response = await agent.run();
-        await manager.updateStatus(mission.id, "succeeded");
-        console.log(response);
-        return;
+        // 尝试发给守护进程
+        try {
+          const resp = await axios.post(`${daemonUrl}/missions`, {
+            name: "CLI Mission",
+            description: task,
+            sessionId: agent.getSessionId(),
+          }, { timeout: 2000 });
+          console.error(`🚀 使命已成功提交至 qinglingd 守护进程: ${resp.data.missionId}`);
+          console.error(`提示: 您现在可以关闭此终端，任务将在后台继续。`);
+          return;
+        } catch {
+          console.warn(`⚠️ 守护进程未启动，将在当前前台进程执行使命...`);
+          const mission = await manager.createMission("Local Mission", task, agent.getSessionId());
+          await manager.updateStatus(mission.id, "running");
+          agent.addUserMessage(task);
+          const response = await agent.run();
+          await manager.updateStatus(mission.id, "succeeded");
+          console.log(response);
+          return;
+        }
       }
 
       if (sub === "list") {
-        const missions = manager.listMissions();
+        let missions: any[] = [];
+        try {
+           const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+           missions = resp.data;
+           console.error("📡 数据来源: qinglingd 守护进程");
+        } catch {
+           missions = manager.listMissions();
+           console.error("📁 数据来源: 本地文件缓存 (守护进程未运行)");
+        }
+
         console.log("\n📋 【使命列表】");
         console.log("-----------------------------------------");
         if (missions.length === 0) console.log("(无)");
         missions.forEach(m => {
-          console.log(`- [${m.status.toUpperCase()}] ${m.id} | ${m.description.slice(0, 30)}...`);
+          const status = m.status.toUpperCase();
+          const time = new Date(m.createdAt).toLocaleString();
+          console.log(`- [${status}] ${m.id} | ${time}`);
+          console.log(`  任务: ${m.description.slice(0, 50)}...`);
         });
         console.log("-----------------------------------------\n");
         return;

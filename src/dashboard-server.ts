@@ -58,27 +58,36 @@ export class DashboardServer {
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
               checkpoint,
-              is_running: (this.options.agentLoop as any).turnCount > 0, // 简化判断
+              is_running: (this.options.agentLoop as any).turnCount > 0,
               session_id: (this.options.agentLoop as any).sessionId,
             }));
             return;
           }
 
+          // 2b. 获取所有使命 (Read-only)
+          if (url.pathname === "/api/missions" && req.method === "GET") {
+            const manager = (this.options.agentLoop as any).getMissionManager();
+            const list = manager.listMissions();
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(list));
+            return;
+          }
+
           // 3. 执行控制 (Read-write)
           if (url.pathname === "/api/control/pause" && req.method === "POST") {
-            // TODO: 实现暂停逻辑
+            // 物理实现：通过 agentLoop 发射暂停信号 (M3 后续完善信号量)
+            this.options.agentLoop.emit("control_signal", "pause");
             res.writeHead(200);
-            res.end(JSON.stringify({ ok: true, action: "pause" }));
+            res.end(JSON.stringify({ ok: true, action: "pause", status: "pausing" }));
             return;
           }
 
           if (url.pathname === "/api/control/resume" && req.method === "POST") {
-            // TODO: 实现恢复逻辑
+            this.options.agentLoop.emit("control_signal", "resume");
             res.writeHead(200);
-            res.end(JSON.stringify({ ok: true, action: "resume" }));
+            res.end(JSON.stringify({ ok: true, action: "resume", status: "resuming" }));
             return;
           }
-
           // 4. 静态资源 (前端) - 暂返回简单文本，后续接入前端产物
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
           res.end("<h1>轻灵 Observability Dashboard</h1><p>API 端点已就绪 (v0.3)</p>");
