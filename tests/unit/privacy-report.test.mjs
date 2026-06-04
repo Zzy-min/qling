@@ -8,18 +8,18 @@ import { buildLocalPrivacyReport, formatPrivacyReport } from "../../dist/privacy
 
 test("privacy report formatter includes local data paths", () => {
   const lines = formatPrivacyReport({
-    workspaceDir: "C:\\repo\\qingling",
-    stateDir: "C:\\Users\\Lenovo\\.qingling",
-    sessionsDir: "C:\\Users\\Lenovo\\.qingling\\sessions",
-    cacheDir: "C:\\Users\\Lenovo\\.qingling\\cache",
+    workspaceDir: "C:\\repo\\qling",
+    stateDir: "C:\\Users\\Lenovo\\.qling",
+    sessionsDir: "C:\\Users\\Lenovo\\.qling\\sessions",
+    cacheDir: "C:\\Users\\Lenovo\\.qling\\cache",
     savedSessionCount: 3,
     model: "deepseek-chat",
   });
   const joined = lines.join("\n");
 
   assert.match(joined, /本地数据留存/);
-  assert.match(joined, /C:\\repo\\qingling/);
-  assert.match(joined, /C:\\Users\\Lenovo\\.qingling/);
+  assert.match(joined, /C:\\repo\\qling/);
+  assert.match(joined, /C:\\Users\\Lenovo\\.qling/);
   assert.match(joined, /已存快照\s*: 3/);
   assert.match(joined, /deepseek-chat/);
 });
@@ -40,7 +40,7 @@ test("privacy report formatter states provider boundary honestly", () => {
 });
 
 test("local privacy report counts saved session summaries without exposing message bodies", async () => {
-  const root = mkdtempSync(join(tmpdir(), "qingling-privacy-"));
+  const root = mkdtempSync(join(tmpdir(), "qling-privacy-"));
   try {
     const sessionsDir = join(root, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
@@ -50,7 +50,7 @@ test("local privacy report counts saved session summaries without exposing messa
         version: 1,
         name: "session-local",
         sessionId: "sid-local",
-        workspaceDir: "C:/repo/qingling",
+        workspaceDir: "C:/repo/qling",
         createdAt: "2026-05-31T00:00:00.000Z",
         updatedAt: "2026-05-31T00:01:00.000Z",
         messages: [{ role: "user", content: "SECRET_PRIVACY_BODY" }],
@@ -62,7 +62,7 @@ test("local privacy report counts saved session summaries without exposing messa
     );
 
     const report = await buildLocalPrivacyReport({
-      workspaceDir: "C:/repo/qingling",
+      workspaceDir: "C:/repo/qling",
       stateDir: root,
       cacheDir: join(root, "cache"),
       model: "test-model",

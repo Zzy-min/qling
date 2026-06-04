@@ -8,9 +8,9 @@ import { spawnSync } from "node:child_process";
 const ENTRY = join(process.cwd(), "dist/index.js");
 
 test("cli run smoke: telegram default without token fails fast with coded error", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-channel-smoke-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-channel-smoke-"));
   try {
-    const configPath = join(dir, "qingling.config.json");
+    const configPath = join(dir, "qling.config.json");
     await writeFile(
       configPath,
       JSON.stringify({

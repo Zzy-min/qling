@@ -21,7 +21,7 @@ function createContext(root) {
 }
 
 async function withTempRoot(fn) {
-  const root = await mkdtemp(join(tmpdir(), "qingling-export-index-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-export-index-"));
   try {
     await fn(root);
   } finally {

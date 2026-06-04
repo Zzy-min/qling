@@ -7,7 +7,7 @@
 
 ## 配置治理
 - 优先级 `CLI > ENV > config > defaults`：已实现
-- `QINGLING_*` 命名映射：已实现
+- `QLING_*` 命名映射：已实现
 - `${ENV_VAR}` 展开与缺失告警：已实现
 - `--config` 指定配置文件：已实现
 
@@ -50,7 +50,7 @@
 - 记忆压缩（去重 + 过期 + 上限裁剪）：已实现（Phase 3）
 - LLM 增强记忆提取（regex 降级兜底）：已实现（Phase 3）
 - AutoDream 定期提取：已实现
-- WAL + 投影配置：已实现（`QINGLING_MEMORY_WAL_ENABLED` 等）
+- WAL + 投影配置：已实现（`QLING_MEMORY_WAL_ENABLED` 等）
 
 ## 扩展平面
 - Skills 统一策略：已实现（加载 + @scope + 多路径解析 + listing/search + frontmatter 解析 + mtime 缓存）
@@ -102,6 +102,6 @@
 
 ## 文档（Phase E）
 - LICENSE 文件（MIT）：已实现
-- skills/qingling.md 工具列表补全（9/9 工具 + CLI 模式 + Guard/MCP 概述）：已实现
+- skills/qling.md 工具列表补全（9/9 工具 + CLI 模式 + Guard/MCP 概述）：已实现
 - README 补充（前置条件、Guard M2、MCP HTTP、通道、审批流、指标、源码树）：已实现
 - CHANGELOG.md（v0.1.0 版本记录，Phase 0-E 功能汇总）：已实现

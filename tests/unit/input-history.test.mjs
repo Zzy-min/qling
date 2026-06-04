@@ -12,7 +12,7 @@ import {
 } from "../../dist/tui/input-history.js";
 
 async function withTempState(fn) {
-  const root = await mkdtemp(join(tmpdir(), "qingling-input-history-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-input-history-"));
   try {
     await fn(root);
   } finally {
@@ -87,7 +87,7 @@ test("input history skips obvious sensitive input", async () => {
 
 test("input history respects disabled environment flag", async () => {
   await withTempState(async (stateDir) => {
-    const env = { QINGLING_TUI_HISTORY_ENABLED: "false" };
+    const env = { QLING_TUI_HISTORY_ENABLED: "false" };
 
     await appendInputHistory("will not persist", { stateDir, env });
 

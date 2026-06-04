@@ -27,7 +27,7 @@ function waitForExit(child, timeoutMs = 12_000) {
 }
 
 test("chat smoke: exit command triggers graceful shutdown", async () => {
-  const stateDir = mkdtempSync(join(tmpdir(), "qingling-chat-history-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "qling-chat-history-"));
   try {
     const child = spawn(
       process.execPath,
@@ -48,8 +48,8 @@ test("chat smoke: exit command triggers graceful shutdown", async () => {
       {
         env: {
           ...process.env,
-          QINGLING_MEMORY_WAL_ENABLED: "false",
-          QINGLING_METRICS_ENABLED: "false",
+          QLING_MEMORY_WAL_ENABLED: "false",
+          QLING_METRICS_ENABLED: "false",
         },
         stdio: ["pipe", "pipe", "pipe"],
       }

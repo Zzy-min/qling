@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Session Loop 与 Slash 命令一致性计划（2026-05-16）
+# `qling` 阶段 B：Session Loop 与 Slash 命令一致性计划（2026-05-16）
 
 ## Step 1: 测试先行
 
@@ -13,7 +13,7 @@
   - `.claude/loop.md` 优先于 `~/.claude/loop.md`
   - 缺省时回退到内置 maintenance prompt
 - 新增 `tests/smoke/session-loop.smoke.test.mjs`：
-  - 在临时 `QINGLING_FILE_STATE_DIR` 下创建 loop
+  - 在临时 `QLING_FILE_STATE_DIR` 下创建 loop
   - 校验 `/tasks` 能列出
   - 校验 `/tasks cancel` 生效
 

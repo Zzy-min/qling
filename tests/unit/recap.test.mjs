@@ -29,7 +29,7 @@ test("recap message formatter makes compact one-line excerpts", () => {
 test("local recap includes session, goal, task, workspace and recent messages", () => {
   const text = formatLocalRecap({
     stats: { sessionId: "session-abc", turnCount: 4, tokens: 1234, compactions: 1 },
-    workspaceDir: "C:\\repo\\qingling",
+    workspaceDir: "C:\\repo\\qling",
     goalStatus: { status: "active", condition: "测试通过" },
     activeTasks: [{ id: "tsk_1", status: "active", prompt: "检查构建" }],
     messages: [
@@ -46,7 +46,7 @@ test("local recap includes session, goal, task, workspace and recent messages", 
   assert.match(text, /tokens=1,234/);
   assert.match(text, /goal=active/);
   assert.match(text, /tasks=1/);
-  assert.match(text, /C:\\repo\\qingling/);
+  assert.match(text, /C:\\repo\\qling/);
   assert.doesNotMatch(text, /system: sys/);
   assert.match(text, /user: 实现 recap/);
   assert.match(text, /assistant: 已完成/);
@@ -76,7 +76,7 @@ test("saved session recap args support latest, count and explicit refs", () => {
 });
 
 test("saved session recap reads latest local snapshot", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-saved-recap-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-saved-recap-"));
   try {
     const sessionsDir = path.join(stateDir, "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
@@ -130,7 +130,7 @@ test("saved session recap reads latest local snapshot", async () => {
 });
 
 test("saved session recap reads explicit local snapshot", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-saved-recap-ref-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-saved-recap-ref-"));
   try {
     const sessionsDir = path.join(stateDir, "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
@@ -160,7 +160,7 @@ test("saved session recap reads explicit local snapshot", async () => {
 });
 
 test("saved session recap reports missing snapshots without throwing", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-saved-recap-empty-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-saved-recap-empty-"));
   try {
     const latest = await buildSavedSessionRecap(stateDir, { sessionRef: "latest", count: 6 });
     const explicit = await buildSavedSessionRecap(stateDir, { sessionRef: "missing-session", count: 6 });

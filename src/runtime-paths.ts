@@ -10,13 +10,13 @@ export interface RuntimeRoots {
 export type DefaultRootKind = "workspace" | "file_cache" | "file_state";
 
 const HOME = os.homedir();
-const DEFAULT_STATE_DIR = path.join(HOME, ".qingling");
+const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
 const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
 
 export function getRuntimeRootsFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeRoots {
-  const state = path.resolve(env.QINGLING_FILE_STATE_DIR ?? DEFAULT_STATE_DIR);
-  const cache = path.resolve(env.QINGLING_FILE_CACHE_DIR ?? path.join(state, "cache"));
-  const ws = env.QINGLING_WORKSPACE_DIR?.trim();
+  const state = path.resolve(env.QLING_FILE_STATE_DIR ?? DEFAULT_STATE_DIR);
+  const cache = path.resolve(env.QLING_FILE_CACHE_DIR ?? path.join(state, "cache"));
+  const ws = env.QLING_WORKSPACE_DIR?.trim();
 
   return {
     workspaceDir: ws ? path.resolve(ws) : null,

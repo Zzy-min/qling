@@ -2,7 +2,7 @@
 
 ## Summary
 
-新增只读权限解释能力：`/permissions explain <tool>`、`/权限 解释 <tool>`、`qingling permissions explain <tool>`，用于在触发工具前解释当前本地权限规则会如何处理指定工具。
+新增只读权限解释能力：`/permissions explain <tool>`、`/权限 解释 <tool>`、`qling permissions explain <tool>`，用于在触发工具前解释当前本地权限规则会如何处理指定工具。
 
 ## Goals
 
@@ -34,8 +34,8 @@
   - `/权限 explain <tool>`
   - `/权限 解释 <tool>`
 - Top-level CLI:
-  - `qingling permissions explain <tool>`
-  - `qingling 权限 解释 <tool>`
+  - `qling permissions explain <tool>`
+  - `qling 权限 解释 <tool>`
 
 ## Output Fields
 
@@ -53,8 +53,8 @@
 
 - `guard.permissions.default`
 - `guard.permissions.rules`
-- `QINGLING_GUARD_PERMISSIONS_DEFAULT`
-- `QINGLING_PERMISSIONS_MODE`
+- `QLING_GUARD_PERMISSIONS_DEFAULT`
+- `QLING_PERMISSIONS_MODE`
 
 命令不读取：
 
@@ -75,6 +75,6 @@
 - `/help` 展示 `/permissions explain <tool>`。
 - `/permissions explain bash` 能展示决策、匹配规则和效果说明。
 - `/权限 解释 bash` 与英文命令行为一致。
-- `qingling permissions explain bash` 通过本地配置/环境变量解释结果。
+- `qling permissions explain bash` 通过本地配置/环境变量解释结果。
 - 输出不包含 session body 或 API key。
 - `npm run build`、目标测试、startup smoke、`npm run ci:check` 通过。

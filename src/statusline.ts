@@ -183,7 +183,7 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
     : null;
   const permissionMode = typeof agentLoop.getPermissionMode === "function"
     ? agentLoop.getPermissionMode()
-    : process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT ?? null;
+    : process.env.QLING_GUARD_PERMISSIONS_DEFAULT ?? null;
   const inputQueue = context.inputQueue
     ? {
         pendingCount: Number(context.inputQueue.pendingCount ?? 0),
@@ -201,7 +201,7 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
     activeTasks,
     tokens: Number(stats.tokens ?? 0),
     maxTokens: resolveTokenBudgetMax(agentLoop),
-    costPer1kTokens: parseStatusLineCostPer1k(process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS),
+    costPer1kTokens: parseStatusLineCostPer1k(process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS),
     inputQueue,
   };
 }

@@ -8,7 +8,7 @@ import { buildDefaultConfig } from "../../dist/config.js";
 import { buildLocalStatusReport, formatLocalStatusReport } from "../../dist/local-status-report.js";
 
 async function withTempDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-local-status-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-local-status-"));
   try {
     await fn(dir);
   } finally {
@@ -28,7 +28,7 @@ test("local status report summarizes local config and storage metadata without l
     config.llm.model = "status-model";
     config.llm.endpoint = "https://user:pass@example.com/v1?token=STATUS_ENDPOINT_SECRET#frag";
     config.llm.api_key = "sk-status-secret";
-    config.runtime.workspace_dir = "C:/repo/qingling";
+    config.runtime.workspace_dir = "C:/repo/qling";
     config.runtime.file_state_dir = dir;
     config.runtime.file_cache_dir = join(dir, "cache");
     config.guard.permissions.default = "ask";

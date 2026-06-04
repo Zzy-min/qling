@@ -72,9 +72,9 @@ test("e2e: tool call chain with fake LLM server", async () => {
     {
       env: {
         ...process.env,
-        QINGLING_MEMORY_WAL_ENABLED: "false",
-        QINGLING_METRICS_ENABLED: "false",
-        QINGLING_GUARD_ENABLED: "false",
+        QLING_MEMORY_WAL_ENABLED: "false",
+        QLING_METRICS_ENABLED: "false",
+        QLING_GUARD_ENABLED: "false",
       },
       stdio: ["ignore", "pipe", "pipe"],
     }

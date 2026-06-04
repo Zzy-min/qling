@@ -1,4 +1,4 @@
-# `qingling statusline` 顶层命令计划（2026-05-31）
+# `qling statusline` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
@@ -8,7 +8,7 @@
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["statusline"])` 返回 `mode=statusline`。
   - `parseCliArgs(["状态线"])` 返回 `mode=statusline`。
-  - help 包含 `qingling statusline` 和 `状态线`。
+  - help 包含 `qling statusline` 和 `状态线`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js --workspace <tmp> --model local-status 状态线` 以 0 退出。
   - stdout 包含 `model=local-status`、`branch=main`、`session=-`。

@@ -88,12 +88,12 @@ export async function runSetup() {
 
   // 构造环境变量内容
   const envLines = [
-    `QINGLING_LLM_PROVIDER=${pName}`,
-    `QINGLING_LLM_ENDPOINT=${pEndpoint}`,
-    `QINGLING_LLM_MODEL=${pModel}`,
+    `QLING_LLM_PROVIDER=${pName}`,
+    `QLING_LLM_ENDPOINT=${pEndpoint}`,
+    `QLING_LLM_MODEL=${pModel}`,
   ];
   if (key) {
-    envLines.push(`QINGLING_LLM_API_KEY=${key}`);
+    envLines.push(`QLING_LLM_API_KEY=${key}`);
     envLines.push(`OPENAI_API_KEY=${key}`);
     envLines.push(`DEEPSEEK_API_KEY=${key}`);
   }
@@ -101,9 +101,9 @@ export async function runSetup() {
   // 针对视觉能力的额外配置
   const useForVision = await rl.question("\n是否将此 Provider 同时也设为默认视觉分析 (Vision) 提供商? (Y/n): ");
   if (useForVision.trim().toLowerCase() !== 'n') {
-    envLines.push(`QINGLING_VISION_PROVIDER=${pName}`);
-    envLines.push(`QINGLING_VISION_MODEL=${pModel}`);
-    envLines.push(`QINGLING_VISION_ENDPOINT=${pEndpoint}`);
+    envLines.push(`QLING_VISION_PROVIDER=${pName}`);
+    envLines.push(`QLING_VISION_MODEL=${pModel}`);
+    envLines.push(`QLING_VISION_ENDPOINT=${pEndpoint}`);
   }
 
   // --- v0.4 进阶特性配置 ---
@@ -111,33 +111,33 @@ export async function runSetup() {
   
   const enableDashboard = await rl.question("是否开启 Web 观测控制台 (Dashboard)? (y/N): ");
   if (enableDashboard.trim().toLowerCase() === 'y') {
-    envLines.push("QINGLING_FEATURES_DASHBOARD=true");
-    envLines.push("QINGLING_METRICS_ENABLED=true"); // Dashboard 强依赖 Metrics 收集数据
+    envLines.push("QLING_FEATURES_DASHBOARD=true");
+    envLines.push("QLING_METRICS_ENABLED=true"); // Dashboard 强依赖 Metrics 收集数据
     const port = await rl.question("  - 请设置端口 [默认: 9999]: ");
-    if (port.trim()) envLines.push(`QINGLING_DASHBOARD_PORT=${port.trim()}`);
+    if (port.trim()) envLines.push(`QLING_DASHBOARD_PORT=${port.trim()}`);
   }
 
   const enableSemantic = await rl.question("是否开启语义记忆 (需要 Embedding 支持)? (y/N): ");
   if (enableSemantic.trim().toLowerCase() === 'y') {
-    envLines.push("QINGLING_FEATURES_SEMANTIC_MEMORY=true");
+    envLines.push("QLING_FEATURES_SEMANTIC_MEMORY=true");
   }
 
   const enableWorkflow = await rl.question("是否开启状态机编排与 Checkpoint (断点续传)? (Y/n): ");
   if (enableWorkflow.trim().toLowerCase() !== 'n') {
-    envLines.push("QINGLING_FEATURES_WORKFLOW_RUNTIME=true");
+    envLines.push("QLING_FEATURES_WORKFLOW_RUNTIME=true");
   }
 
   const enableSpecBoost = await rl.question("是否开启工具规范增强 (防幻觉)? (Y/n): ");
   if (enableSpecBoost.trim().toLowerCase() !== 'n') {
-    envLines.push("QINGLING_FEATURES_TOOL_SPEC_BOOST=true");
+    envLines.push("QLING_FEATURES_TOOL_SPEC_BOOST=true");
   }
 
   const enableDiscovery = await rl.question("是否开启动态技能发现? (Y/n): ");
   if (enableDiscovery.trim().toLowerCase() !== 'n') {
-    envLines.push("QINGLING_FEATURES_DYNAMIC_DISCOVERY=true");
+    envLines.push("QLING_FEATURES_DYNAMIC_DISCOVERY=true");
   }
 
-  const globalEnvPath = path.join(os.homedir(), ".qingling", ".env");
+  const globalEnvPath = path.join(os.homedir(), ".qling", ".env");
   await fs.mkdir(path.dirname(globalEnvPath), { recursive: true });
   await fs.writeFile(globalEnvPath, envLines.join("\n") + "\n", "utf-8");
 

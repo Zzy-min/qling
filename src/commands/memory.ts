@@ -20,8 +20,8 @@ import { SlashCommand } from "./types.js";
 function resolveStateDir(context: SlashCommandContext): string {
   const agentLoop = context.agentLoop as any;
   return agentLoop.getRuntimeRootDir?.()
-    || process.env.QINGLING_FILE_STATE_DIR
-    || join(context.homeDir ?? homedir(), ".qingling");
+    || process.env.QLING_FILE_STATE_DIR
+    || join(context.homeDir ?? homedir(), ".qling");
 }
 
 function normalizeSubcommand(value: string | undefined): string {

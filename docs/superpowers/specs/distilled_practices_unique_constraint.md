@@ -1,7 +1,7 @@
 # Spec: Adding UNIQUE Constraint to task_pattern in distilled_practices
 
 ## Problem Description
-In `qingling` CLI, at the end of a session where the agent learns a best practice, the program invokes `addPractice()` in `CognitiveIndex`.
+In `qling` CLI, at the end of a session where the agent learns a best practice, the program invokes `addPractice()` in `CognitiveIndex`.
 This function attempts an `INSERT ... ON CONFLICT(task_pattern) DO UPDATE ...` statement (Upsert).
 However, SQLite requires that the column specified in the `ON CONFLICT` clause must have a `UNIQUE` or `PRIMARY KEY` constraint.
 Currently, the `distilled_practices` table defines `task_pattern TEXT NOT NULL` without `UNIQUE` constraints, leading to the following runtime database crash:
@@ -20,4 +20,4 @@ Currently, the `distilled_practices` table defines `task_pattern TEXT NOT NULL` 
 
 ## Verification Plan
 1. Compile the TypeScript codebase.
-2. Run qingling locally or write a test script calling `CognitiveIndex.init()` and `addPractice()` repeatedly with the same `task_pattern` to verify it successfully upserts without `ON CONFLICT` exceptions.
+2. Run qling locally or write a test script calling `CognitiveIndex.init()` and `addPractice()` repeatedly with the same `task_pattern` to verify it successfully upserts without `ON CONFLICT` exceptions.

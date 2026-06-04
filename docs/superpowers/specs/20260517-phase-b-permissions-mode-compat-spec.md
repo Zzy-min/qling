@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：`permissions.mode` 兼容映射规格（2026-05-17）
+# `qling` 阶段 B：`permissions.mode` 兼容映射规格（2026-05-17）
 
 ## 背景
 
@@ -10,7 +10,7 @@
 建立兼容映射，保证两套入口语义一致：
 
 - 文件配置：`permissions.mode` -> `guard.permissions.default`
-- 环境变量：`QINGLING_PERMISSIONS_MODE` -> `QINGLING_GUARD_PERMISSIONS_DEFAULT`
+- 环境变量：`QLING_PERMISSIONS_MODE` -> `QLING_GUARD_PERMISSIONS_DEFAULT`
 
 ## 范围
 
@@ -20,5 +20,5 @@
 ## 验收
 
 - 配置文件包含 `permissions.mode` 时，加载后 `guard.permissions.default` 正确。
-- 仅设置 `QINGLING_PERMISSIONS_MODE` 时，`guard.permissions.default` 正确。
+- 仅设置 `QLING_PERMISSIONS_MODE` 时，`guard.permissions.default` 正确。
 - `applyConfigToProcessEnv` 同步导出两个环境变量。

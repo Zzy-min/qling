@@ -82,7 +82,7 @@ test("mcp url sanitizer strips userinfo query and hash", () => {
   assert.equal(sanitizeMcpUrl(""), "-");
 });
 
-test("mcp report accepts QINGLING_MCP_SERVERS env override for local visibility", () => {
+test("mcp report accepts QLING_MCP_SERVERS env override for local visibility", () => {
   const report = buildLocalMcpReport(
     {
       servers: {},
@@ -90,7 +90,7 @@ test("mcp report accepts QINGLING_MCP_SERVERS env override for local visibility"
       call_timeout_ms: 30000,
     },
     {
-      QINGLING_MCP_SERVERS: JSON.stringify({
+      QLING_MCP_SERVERS: JSON.stringify({
         envServer: {
           command: "",
           args: [],

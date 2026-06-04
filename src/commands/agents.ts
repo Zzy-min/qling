@@ -9,7 +9,7 @@ import type { SlashCommandContext } from "./runtime.js";
 function resolveStateDir(context: SlashCommandContext): string {
   const loop = context.agentLoop as Record<string, any>;
   const runtimeRoot = typeof loop.getRuntimeRootDir === "function" ? loop.getRuntimeRootDir() : undefined;
-  return runtimeRoot || process.env.QINGLING_FILE_STATE_DIR || join(context.homeDir ?? homedir(), ".qingling");
+  return runtimeRoot || process.env.QLING_FILE_STATE_DIR || join(context.homeDir ?? homedir(), ".qling");
 }
 
 async function listLocalMissionsReadOnly(stateDir: string): Promise<Mission[]> {

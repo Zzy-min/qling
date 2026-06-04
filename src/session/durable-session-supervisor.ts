@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import * as path from "path";
 
 import { AgentLoop } from "../agent-loop.js";
-import { applyConfigToProcessEnv, loadQinglingConfig } from "../config.js";
+import { applyConfigToProcessEnv, loadQlingConfig } from "../config.js";
 import { buildToolRegistry } from "../tools/index.js";
 import { SessionGoalController } from "./goal-controller.js";
 import { SessionGoalManager } from "./session-goal-manager.js";
@@ -188,7 +188,7 @@ export class DurableSessionSupervisor {
   }
 
   private async createAgent(): Promise<AgentLoop> {
-    const { config } = await loadQinglingConfig({});
+    const { config } = await loadQlingConfig({});
     applyConfigToProcessEnv(config);
 
     const staticEnabled: Record<string, boolean> = {};
@@ -198,7 +198,7 @@ export class DurableSessionSupervisor {
     const tools = buildToolRegistry({ staticEnabled });
 
     const agent = new AgentLoop({
-      apiKey: config.llm.api_key || process.env.QINGLING_LLM_API_KEY || "",
+      apiKey: config.llm.api_key || process.env.QLING_LLM_API_KEY || "",
       provider: config.llm.provider,
       endpoint: config.llm.endpoint,
       model: config.llm.model,

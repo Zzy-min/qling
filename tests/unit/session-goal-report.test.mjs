@@ -13,7 +13,7 @@ import {
 } from "../../dist/session-goal-report.js";
 
 async function withTempDir(fn) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-goal-report-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-report-"));
   try {
     return await fn(dir);
   } finally {
@@ -31,7 +31,7 @@ async function writeSession(root, name, overrides = {}) {
         version: 1,
         name,
         sessionId: name,
-        workspaceDir: "C:/repo/qingling",
+        workspaceDir: "C:/repo/qling",
         createdAt: "2026-06-01T00:00:00.000Z",
         updatedAt: "2026-06-01T00:00:00.000Z",
         messages: [{ role: "user", content: "SECRET_GOAL_SESSION_BODY" }],

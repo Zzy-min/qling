@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Session Loop 与 Slash 命令一致性设计（2026-05-16）
+# `qling` 阶段 B：Session Loop 与 Slash 命令一致性设计（2026-05-16）
 
 ## 背景
 

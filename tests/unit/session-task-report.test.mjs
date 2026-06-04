@@ -12,7 +12,7 @@ import {
 } from "../../dist/session-task-report.js";
 
 async function withTempDir(fn) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-task-report-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-task-report-"));
   try {
     return await fn(dir);
   } finally {

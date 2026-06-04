@@ -1,4 +1,4 @@
-# `qingling mcp` 顶层本地 MCP 摘要规格（2026-06-01）
+# `qling mcp` 顶层本地 MCP 摘要规格（2026-06-01）
 
 ## 背景
 
@@ -6,8 +6,8 @@
 
 ## 目标
 
-- 新增顶层命令 `qingling mcp`。
-- 新增中文别名 `qingling MCP` 与 `qingling 外部工具`。
+- 新增顶层命令 `qling mcp`。
+- 新增中文别名 `qling MCP` 与 `qling 外部工具`。
 - 输出当前生效 MCP 配置摘要：server 总数、启用数、connection/call timeout。
 - 对每个 server 输出：name、enabled、transport、command/args 或 url、env keys、header keys。
 - env/header 只显示 key 和 `set(redacted)`，不输出值。
@@ -24,8 +24,8 @@
 
 ## 行为
 
-- `qingling mcp` 输出本地 MCP 摘要后退出。
-- `qingling MCP`、`qingling 外部工具` 与英文命令行为一致。
+- `qling mcp` 输出本地 MCP 摘要后退出。
+- `qling MCP`、`qling 外部工具` 与英文命令行为一致。
 - 无 MCP server 时输出 `(无 MCP server)`。
 - stdio server 显示 command 和 args；http server 显示脱敏 url。
 

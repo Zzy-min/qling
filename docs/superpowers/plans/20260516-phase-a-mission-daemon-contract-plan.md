@@ -1,4 +1,4 @@
-# `qingling` 阶段 A：Mission / Daemon / CLI 契约收敛实施计划（2026-05-16）
+# `qling` 阶段 A：Mission / Daemon / CLI 契约收敛实施计划（2026-05-16）
 
 ## Step 1: 测试先行
 

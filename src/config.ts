@@ -72,7 +72,7 @@ export interface DiscoveryConfig {
   allow_unsigned: boolean;
 }
 
-export interface QinglingConfig {
+export interface QlingConfig {
   llm: {
     provider: string;
     model: string;
@@ -200,16 +200,16 @@ export interface CliGlobalOptions {
 }
 
 export interface LoadedConfig {
-  config: QinglingConfig;
+  config: QlingConfig;
   warnings: string[];
   usedConfigPath?: string;
 }
 
 const HOME = os.homedir();
-const DEFAULT_STATE_DIR = path.join(HOME, ".qingling");
+const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
 const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
 
-export function buildDefaultConfig(): QinglingConfig {
+export function buildDefaultConfig(): QlingConfig {
   return {
     llm: {
       provider: "deepseek",
@@ -372,13 +372,13 @@ export function buildDefaultConfig(): QinglingConfig {
   };
 }
 
-export async function loadQinglingConfig(
+export async function loadQlingConfig(
   cli: CliGlobalOptions,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<LoadedConfig> {
   const warnings: string[] = [];
   const defaults = buildDefaultConfig();
-  let fromFile: Partial<QinglingConfig> = {};
+  let fromFile: Partial<QlingConfig> = {};
   let usedConfigPath: string | undefined;
 
   const configPath = resolveConfigPath(cli.configPath);
@@ -388,7 +388,7 @@ export async function loadQinglingConfig(
   if (configPath && existsSync(configPath)) {
     const raw = await readFile(configPath, "utf-8");
     const expanded = expandEnvTemplate(raw, env, warnings);
-    fromFile = parseConfigByExt(configPath, expanded) as Partial<QinglingConfig>;
+    fromFile = parseConfigByExt(configPath, expanded) as Partial<QlingConfig>;
     usedConfigPath = configPath;
   }
 
@@ -406,167 +406,167 @@ export async function loadQinglingConfig(
   };
 }
 
-export function applyConfigToProcessEnv(config: QinglingConfig): void {
-  process.env.QINGLING_LLM_PROVIDER = config.llm.provider;
-  process.env.QINGLING_LLM_MODEL = config.llm.model;
-  process.env.QINGLING_LLM_ENDPOINT = config.llm.endpoint;
-  process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS = String(config.llm.request_timeout_ms);
+export function applyConfigToProcessEnv(config: QlingConfig): void {
+  process.env.QLING_LLM_PROVIDER = config.llm.provider;
+  process.env.QLING_LLM_MODEL = config.llm.model;
+  process.env.QLING_LLM_ENDPOINT = config.llm.endpoint;
+  process.env.QLING_LLM_REQUEST_TIMEOUT_MS = String(config.llm.request_timeout_ms);
   if (config.llm.api_key) {
-    process.env.QINGLING_LLM_API_KEY = config.llm.api_key;
+    process.env.QLING_LLM_API_KEY = config.llm.api_key;
   }
 
   if (config.runtime.workspace_dir) {
-    process.env.QINGLING_WORKSPACE_DIR = config.runtime.workspace_dir;
+    process.env.QLING_WORKSPACE_DIR = config.runtime.workspace_dir;
   } else {
-    delete process.env.QINGLING_WORKSPACE_DIR;
+    delete process.env.QLING_WORKSPACE_DIR;
   }
-  process.env.QINGLING_FILE_CACHE_DIR = config.runtime.file_cache_dir;
-  process.env.QINGLING_FILE_STATE_DIR = config.runtime.file_state_dir;
-  process.env.QINGLING_GUARD_ENABLED = String(config.guard.enabled);
-  process.env.QINGLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES =
+  process.env.QLING_FILE_CACHE_DIR = config.runtime.file_cache_dir;
+  process.env.QLING_FILE_STATE_DIR = config.runtime.file_state_dir;
+  process.env.QLING_GUARD_ENABLED = String(config.guard.enabled);
+  process.env.QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES =
     JSON.stringify(config.guard.network.url_fetch.allowed_url_prefixes);
-  process.env.QINGLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS = String(
+  process.env.QLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS = String(
     config.guard.network.url_fetch.deny_private_ips
   );
-  process.env.QINGLING_GUARD_NETWORK_URL_FETCH_FOLLOW_REDIRECTS = String(
+  process.env.QLING_GUARD_NETWORK_URL_FETCH_FOLLOW_REDIRECTS = String(
     config.guard.network.url_fetch.follow_redirects
   );
-  process.env.QINGLING_GUARD_REDACTION_ENABLED = String(config.guard.redaction.enabled);
-  process.env.QINGLING_GUARD_REDACTION_PATTERNS = JSON.stringify(config.guard.redaction.patterns);
-  process.env.QINGLING_GUARD_AUDIT_JSONL_PATH = config.guard.audit.jsonl_path;
-  process.env.QINGLING_GUARD_RATE_LIMIT_ENABLED = String(config.guard.rate_limit.enabled);
-  process.env.QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE = String(config.guard.rate_limit.max_per_minute);
-  process.env.QINGLING_GUARD_CONTENT_FILTER_ENABLED = String(config.guard.content_filter.enabled);
-  process.env.QINGLING_GUARD_CONTENT_FILTER_PII = String(config.guard.content_filter.pii_detection);
-  process.env.QINGLING_GUARD_CONTENT_FILTER_INJECTION = String(config.guard.content_filter.injection_detection);
-  process.env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM = JSON.stringify(config.guard.content_filter.custom_patterns);
-  process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT = config.guard.permissions.default;
-  process.env.QINGLING_GUARD_PERMISSIONS_RULES = JSON.stringify(config.guard.permissions.rules);
-  process.env.QINGLING_PERMISSIONS_MODE = config.guard.permissions.default;
+  process.env.QLING_GUARD_REDACTION_ENABLED = String(config.guard.redaction.enabled);
+  process.env.QLING_GUARD_REDACTION_PATTERNS = JSON.stringify(config.guard.redaction.patterns);
+  process.env.QLING_GUARD_AUDIT_JSONL_PATH = config.guard.audit.jsonl_path;
+  process.env.QLING_GUARD_RATE_LIMIT_ENABLED = String(config.guard.rate_limit.enabled);
+  process.env.QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE = String(config.guard.rate_limit.max_per_minute);
+  process.env.QLING_GUARD_CONTENT_FILTER_ENABLED = String(config.guard.content_filter.enabled);
+  process.env.QLING_GUARD_CONTENT_FILTER_PII = String(config.guard.content_filter.pii_detection);
+  process.env.QLING_GUARD_CONTENT_FILTER_INJECTION = String(config.guard.content_filter.injection_detection);
+  process.env.QLING_GUARD_CONTENT_FILTER_CUSTOM = JSON.stringify(config.guard.content_filter.custom_patterns);
+  process.env.QLING_GUARD_PERMISSIONS_DEFAULT = config.guard.permissions.default;
+  process.env.QLING_GUARD_PERMISSIONS_RULES = JSON.stringify(config.guard.permissions.rules);
+  process.env.QLING_PERMISSIONS_MODE = config.guard.permissions.default;
 
   // Memory (Phase 3)
-  process.env.QINGLING_MEMORY_WAL_ENABLED = String(config.memory.wal_enabled);
-  process.env.QINGLING_MEMORY_PROJECTION_INTERVAL_MS = String(config.memory.projection_interval_ms);
-  process.env.QINGLING_MEMORY_DREAM_LLM_ENABLED = String(config.memory.dream_llm_enabled);
-  process.env.QINGLING_MEMORY_DREAM_TURN_THRESHOLD = String(config.memory.dream_turn_threshold);
-  process.env.QINGLING_MEMORY_MAX_MEMORIES = String(config.memory.max_memories);
-  process.env.QINGLING_MEMORY_SEMANTIC_PROVIDER = config.memory.semantic.provider;
-  process.env.QINGLING_MEMORY_SEMANTIC_MODEL = config.memory.semantic.model;
-  process.env.QINGLING_MEMORY_SEMANTIC_DIM = String(config.memory.semantic.dim);
-  process.env.QINGLING_MEMORY_SEMANTIC_TOP_K = String(config.memory.semantic.top_k);
-  process.env.QINGLING_MEMORY_SEMANTIC_REBUILD_POLICY = config.memory.semantic.rebuild_policy;
+  process.env.QLING_MEMORY_WAL_ENABLED = String(config.memory.wal_enabled);
+  process.env.QLING_MEMORY_PROJECTION_INTERVAL_MS = String(config.memory.projection_interval_ms);
+  process.env.QLING_MEMORY_DREAM_LLM_ENABLED = String(config.memory.dream_llm_enabled);
+  process.env.QLING_MEMORY_DREAM_TURN_THRESHOLD = String(config.memory.dream_turn_threshold);
+  process.env.QLING_MEMORY_MAX_MEMORIES = String(config.memory.max_memories);
+  process.env.QLING_MEMORY_SEMANTIC_PROVIDER = config.memory.semantic.provider;
+  process.env.QLING_MEMORY_SEMANTIC_MODEL = config.memory.semantic.model;
+  process.env.QLING_MEMORY_SEMANTIC_DIM = String(config.memory.semantic.dim);
+  process.env.QLING_MEMORY_SEMANTIC_TOP_K = String(config.memory.semantic.top_k);
+  process.env.QLING_MEMORY_SEMANTIC_REBUILD_POLICY = config.memory.semantic.rebuild_policy;
 
   // Features
-  process.env.QINGLING_FEATURES_SEMANTIC_MEMORY = String(config.features.semantic_memory);
-  process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME = String(config.features.workflow_runtime);
-  process.env.QINGLING_FEATURES_VISION_TOOL = String(config.features.vision_tool);
-  process.env.QINGLING_FEATURES_DASHBOARD = String(config.features.dashboard);
-  process.env.QINGLING_FEATURES_DYNAMIC_DISCOVERY = String(config.features.dynamic_discovery);
-  process.env.QINGLING_FEATURES_TOOL_SPEC_BOOST = String(config.features.tool_spec_boost);
+  process.env.QLING_FEATURES_SEMANTIC_MEMORY = String(config.features.semantic_memory);
+  process.env.QLING_FEATURES_WORKFLOW_RUNTIME = String(config.features.workflow_runtime);
+  process.env.QLING_FEATURES_VISION_TOOL = String(config.features.vision_tool);
+  process.env.QLING_FEATURES_DASHBOARD = String(config.features.dashboard);
+  process.env.QLING_FEATURES_DYNAMIC_DISCOVERY = String(config.features.dynamic_discovery);
+  process.env.QLING_FEATURES_TOOL_SPEC_BOOST = String(config.features.tool_spec_boost);
 
   // Workflow
-  process.env.QINGLING_WORKFLOW_CHECKPOINT_DIR = config.workflow.checkpoint_dir;
-  process.env.QINGLING_WORKFLOW_RETRY_POLICY_MAX_ATTEMPTS = String(config.workflow.retry_policy.max_attempts);
-  process.env.QINGLING_WORKFLOW_RETRY_POLICY_INITIAL_DELAY_MS = String(config.workflow.retry_policy.initial_delay_ms);
-  process.env.QINGLING_WORKFLOW_RETRY_POLICY_BACKOFF_FACTOR = String(config.workflow.retry_policy.backoff_factor);
-  process.env.QINGLING_WORKFLOW_MAX_PARALLEL_STATES = String(config.workflow.max_parallel_states);
+  process.env.QLING_WORKFLOW_CHECKPOINT_DIR = config.workflow.checkpoint_dir;
+  process.env.QLING_WORKFLOW_RETRY_POLICY_MAX_ATTEMPTS = String(config.workflow.retry_policy.max_attempts);
+  process.env.QLING_WORKFLOW_RETRY_POLICY_INITIAL_DELAY_MS = String(config.workflow.retry_policy.initial_delay_ms);
+  process.env.QLING_WORKFLOW_RETRY_POLICY_BACKOFF_FACTOR = String(config.workflow.retry_policy.backoff_factor);
+  process.env.QLING_WORKFLOW_MAX_PARALLEL_STATES = String(config.workflow.max_parallel_states);
 
   // Vision
-  process.env.QINGLING_VISION_PROVIDER = config.vision.provider;
-  process.env.QINGLING_VISION_MODEL = config.vision.model;
-  process.env.QINGLING_VISION_MAX_IMAGE_SIZE_MB = String(config.vision.max_image_size_mb);
-  process.env.QINGLING_VISION_TIMEOUT_MS = String(config.vision.timeout_ms);
+  process.env.QLING_VISION_PROVIDER = config.vision.provider;
+  process.env.QLING_VISION_MODEL = config.vision.model;
+  process.env.QLING_VISION_MAX_IMAGE_SIZE_MB = String(config.vision.max_image_size_mb);
+  process.env.QLING_VISION_TIMEOUT_MS = String(config.vision.timeout_ms);
 
   // Dashboard
-  process.env.QINGLING_DASHBOARD_ENABLED = String(config.dashboard.enabled);
-  process.env.QINGLING_DASHBOARD_PORT = String(config.dashboard.port);
-  process.env.QINGLING_DASHBOARD_AUTH_MODE = config.dashboard.auth_mode;
+  process.env.QLING_DASHBOARD_ENABLED = String(config.dashboard.enabled);
+  process.env.QLING_DASHBOARD_PORT = String(config.dashboard.port);
+  process.env.QLING_DASHBOARD_AUTH_MODE = config.dashboard.auth_mode;
 
   // Discovery
-  process.env.QINGLING_DISCOVERY_LOCAL_DIRS = JSON.stringify(config.discovery.local_dirs);
-  process.env.QINGLING_DISCOVERY_REMOTE_MANIFESTS = JSON.stringify(config.discovery.remote_manifests);
-  process.env.QINGLING_DISCOVERY_ALLOW_UNSIGNED = String(config.discovery.allow_unsigned);
+  process.env.QLING_DISCOVERY_LOCAL_DIRS = JSON.stringify(config.discovery.local_dirs);
+  process.env.QLING_DISCOVERY_REMOTE_MANIFESTS = JSON.stringify(config.discovery.remote_manifests);
+  process.env.QLING_DISCOVERY_ALLOW_UNSIGNED = String(config.discovery.allow_unsigned);
 
   // MCP (Phase 4)
-  process.env.QINGLING_MCP_SERVERS = JSON.stringify(config.mcp.servers);
-  process.env.QINGLING_MCP_CONNECTION_TIMEOUT_MS = String(config.mcp.connection_timeout_ms);
-  process.env.QINGLING_MCP_CALL_TIMEOUT_MS = String(config.mcp.call_timeout_ms);
+  process.env.QLING_MCP_SERVERS = JSON.stringify(config.mcp.servers);
+  process.env.QLING_MCP_CONNECTION_TIMEOUT_MS = String(config.mcp.connection_timeout_ms);
+  process.env.QLING_MCP_CALL_TIMEOUT_MS = String(config.mcp.call_timeout_ms);
 
   // Metrics (Phase 5)
-  process.env.QINGLING_METRICS_ENABLED = String(config.metrics.enabled);
-  process.env.QINGLING_METRICS_DIR = config.metrics.dir;
-  process.env.QINGLING_METRICS_FLUSH_INTERVAL_MS = String(config.metrics.flush_interval_ms);
-  process.env.QINGLING_METRICS_RETENTION_DAYS = String(config.metrics.retention_days);
+  process.env.QLING_METRICS_ENABLED = String(config.metrics.enabled);
+  process.env.QLING_METRICS_DIR = config.metrics.dir;
+  process.env.QLING_METRICS_FLUSH_INTERVAL_MS = String(config.metrics.flush_interval_ms);
+  process.env.QLING_METRICS_RETENTION_DAYS = String(config.metrics.retention_days);
 
   // Channels (Phase 5)
-  process.env.QINGLING_CHANNEL_DEFAULT = config.channels.default;
-  process.env.QINGLING_CHANNEL_TELEGRAM_TOKEN = config.channels.telegram.token;
-  process.env.QINGLING_CHANNEL_TELEGRAM_POLL_INTERVAL_MS = String(
+  process.env.QLING_CHANNEL_DEFAULT = config.channels.default;
+  process.env.QLING_CHANNEL_TELEGRAM_TOKEN = config.channels.telegram.token;
+  process.env.QLING_CHANNEL_TELEGRAM_POLL_INTERVAL_MS = String(
     config.channels.telegram.poll_interval_ms
   );
-  process.env.QINGLING_CHANNEL_TELEGRAM_ALLOWED_CHAT_IDS = JSON.stringify(
+  process.env.QLING_CHANNEL_TELEGRAM_ALLOWED_CHAT_IDS = JSON.stringify(
     config.channels.telegram.allowed_chat_ids
   );
-  process.env.QINGLING_CHANNEL_SLACK_BOT_TOKEN = config.channels.slack.bot_token;
-  process.env.QINGLING_CHANNEL_SLACK_APP_TOKEN = config.channels.slack.app_token;
-  process.env.QINGLING_CHANNEL_SLACK_CHANNEL_IDS = JSON.stringify(config.channels.slack.channel_ids);
-  process.env.QINGLING_CHANNEL_SLACK_POLL_INTERVAL_MS = String(
+  process.env.QLING_CHANNEL_SLACK_BOT_TOKEN = config.channels.slack.bot_token;
+  process.env.QLING_CHANNEL_SLACK_APP_TOKEN = config.channels.slack.app_token;
+  process.env.QLING_CHANNEL_SLACK_CHANNEL_IDS = JSON.stringify(config.channels.slack.channel_ids);
+  process.env.QLING_CHANNEL_SLACK_POLL_INTERVAL_MS = String(
     config.channels.slack.poll_interval_ms
   );
-  process.env.QINGLING_AGENTS_ISOLATION_MODE = config.agents.isolation.mode;
-  process.env.QINGLING_AGENTS_ISOLATION_REQUIRE_GIT = String(config.agents.isolation.require_git);
-  process.env.QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY = config.agents.isolation.non_git_policy;
+  process.env.QLING_AGENTS_ISOLATION_MODE = config.agents.isolation.mode;
+  process.env.QLING_AGENTS_ISOLATION_REQUIRE_GIT = String(config.agents.isolation.require_git);
+  process.env.QLING_AGENTS_ISOLATION_NON_GIT_POLICY = config.agents.isolation.non_git_policy;
 }
 
 export function guardConfigFromEnv(env: NodeJS.ProcessEnv = process.env): GuardConfig {
   const defaults = buildDefaultConfig().guard;
   const prefixes = parseStringArray(
-    env.QINGLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES,
+    env.QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES,
     defaults.network.url_fetch.allowed_url_prefixes
   );
   const redactionPatterns = parseStringArray(
-    env.QINGLING_GUARD_REDACTION_PATTERNS,
+    env.QLING_GUARD_REDACTION_PATTERNS,
     defaults.redaction.patterns
   );
 
   return {
-    enabled: parseBoolean(env.QINGLING_GUARD_ENABLED, defaults.enabled),
+    enabled: parseBoolean(env.QLING_GUARD_ENABLED, defaults.enabled),
     network: {
       url_fetch: {
         allowed_url_prefixes: prefixes,
         deny_private_ips: parseBoolean(
-          env.QINGLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS,
+          env.QLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS,
           defaults.network.url_fetch.deny_private_ips
         ),
         follow_redirects: parseBoolean(
-          env.QINGLING_GUARD_NETWORK_URL_FETCH_FOLLOW_REDIRECTS,
+          env.QLING_GUARD_NETWORK_URL_FETCH_FOLLOW_REDIRECTS,
           defaults.network.url_fetch.follow_redirects
         ),
       },
     },
     redaction: {
-      enabled: parseBoolean(env.QINGLING_GUARD_REDACTION_ENABLED, defaults.redaction.enabled),
+      enabled: parseBoolean(env.QLING_GUARD_REDACTION_ENABLED, defaults.redaction.enabled),
       patterns: redactionPatterns,
     },
     audit: {
-      jsonl_path: env.QINGLING_GUARD_AUDIT_JSONL_PATH ?? defaults.audit.jsonl_path,
+      jsonl_path: env.QLING_GUARD_AUDIT_JSONL_PATH ?? defaults.audit.jsonl_path,
     },
     rate_limit: {
-      enabled: parseBoolean(env.QINGLING_GUARD_RATE_LIMIT_ENABLED, defaults.rate_limit.enabled),
-      max_per_minute: parseNumber(env.QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE, defaults.rate_limit.max_per_minute),
+      enabled: parseBoolean(env.QLING_GUARD_RATE_LIMIT_ENABLED, defaults.rate_limit.enabled),
+      max_per_minute: parseNumber(env.QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE, defaults.rate_limit.max_per_minute),
     },
     content_filter: {
-      enabled: parseBoolean(env.QINGLING_GUARD_CONTENT_FILTER_ENABLED, defaults.content_filter.enabled),
-      pii_detection: parseBoolean(env.QINGLING_GUARD_CONTENT_FILTER_PII, defaults.content_filter.pii_detection),
-      injection_detection: parseBoolean(env.QINGLING_GUARD_CONTENT_FILTER_INJECTION, defaults.content_filter.injection_detection),
-      custom_patterns: parseStringArray(env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM, defaults.content_filter.custom_patterns),
+      enabled: parseBoolean(env.QLING_GUARD_CONTENT_FILTER_ENABLED, defaults.content_filter.enabled),
+      pii_detection: parseBoolean(env.QLING_GUARD_CONTENT_FILTER_PII, defaults.content_filter.pii_detection),
+      injection_detection: parseBoolean(env.QLING_GUARD_CONTENT_FILTER_INJECTION, defaults.content_filter.injection_detection),
+      custom_patterns: parseStringArray(env.QLING_GUARD_CONTENT_FILTER_CUSTOM, defaults.content_filter.custom_patterns),
     },
     permissions: {
       default: resolvePermissionMode(
-        env.QINGLING_GUARD_PERMISSIONS_DEFAULT ?? env.QINGLING_PERMISSIONS_MODE,
+        env.QLING_GUARD_PERMISSIONS_DEFAULT ?? env.QLING_PERMISSIONS_MODE,
         defaults.permissions.default
       ),
-      rules: parsePermissionRules(env.QINGLING_GUARD_PERMISSIONS_RULES, defaults.permissions.rules),
+      rules: parsePermissionRules(env.QLING_GUARD_PERMISSIONS_RULES, defaults.permissions.rules),
     },
   };
 }
@@ -575,7 +575,7 @@ function resolveConfigPath(input?: string): string | undefined {
   if (input && input.trim()) {
     return path.resolve(input.trim());
   }
-  const candidates = ["qingling.config.yaml", "qingling.config.yml", "qingling.config.json"];
+  const candidates = ["qling.config.yaml", "qling.config.yml", "qling.config.json"];
   for (const p of candidates) {
     const abs = path.resolve(process.cwd(), p);
     if (existsSync(abs)) return abs;
@@ -602,51 +602,51 @@ function expandEnvTemplate(raw: string, env: NodeJS.ProcessEnv, warnings: string
   });
 }
 
-function buildEnvConfig(env: NodeJS.ProcessEnv, defaults: QinglingConfig): Partial<QinglingConfig> {
+function buildEnvConfig(env: NodeJS.ProcessEnv, defaults: QlingConfig): Partial<QlingConfig> {
   const flatDefaults = flattenObject(defaults);
   const acc: Record<string, unknown> = {};
   for (const [key, defaultValue] of Object.entries(flatDefaults)) {
-    const envName = toQinglingEnvName(key);
+    const envName = toQlingEnvName(key);
     const raw = env[envName];
     if (raw === undefined) continue;
     setByPath(acc, key, parseEnvValue(raw, defaultValue));
   }
 
   applyLegacyRuntimeEnvAliases(acc, env);
-  if (env.QINGLING_PERMISSIONS_MODE !== undefined) {
+  if (env.QLING_PERMISSIONS_MODE !== undefined) {
     setByPath(
       acc,
       "guard.permissions.default",
-      resolvePermissionMode(env.QINGLING_PERMISSIONS_MODE, defaults.guard.permissions.default)
+      resolvePermissionMode(env.QLING_PERMISSIONS_MODE, defaults.guard.permissions.default)
     );
   }
-  if (env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM !== undefined) {
+  if (env.QLING_GUARD_CONTENT_FILTER_CUSTOM !== undefined) {
     setByPath(
       acc,
       "guard.content_filter.custom_patterns",
       parseStringArray(
-        env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM,
+        env.QLING_GUARD_CONTENT_FILTER_CUSTOM,
         defaults.guard.content_filter.custom_patterns
       )
     );
   }
-  return acc as Partial<QinglingConfig>;
+  return acc as Partial<QlingConfig>;
 }
 
 function applyLegacyRuntimeEnvAliases(acc: Record<string, unknown>, env: NodeJS.ProcessEnv): void {
-  if (env.QINGLING_WORKSPACE_DIR !== undefined) {
-    setByPath(acc, "runtime.workspace_dir", env.QINGLING_WORKSPACE_DIR);
+  if (env.QLING_WORKSPACE_DIR !== undefined) {
+    setByPath(acc, "runtime.workspace_dir", env.QLING_WORKSPACE_DIR);
   }
-  if (env.QINGLING_FILE_CACHE_DIR !== undefined) {
-    setByPath(acc, "runtime.file_cache_dir", env.QINGLING_FILE_CACHE_DIR);
+  if (env.QLING_FILE_CACHE_DIR !== undefined) {
+    setByPath(acc, "runtime.file_cache_dir", env.QLING_FILE_CACHE_DIR);
   }
-  if (env.QINGLING_FILE_STATE_DIR !== undefined) {
-    setByPath(acc, "runtime.file_state_dir", env.QINGLING_FILE_STATE_DIR);
+  if (env.QLING_FILE_STATE_DIR !== undefined) {
+    setByPath(acc, "runtime.file_state_dir", env.QLING_FILE_STATE_DIR);
   }
 }
 
-function toQinglingEnvName(keyPath: string): string {
-  return `QINGLING_${keyPath.replace(/[.-]/g, "_").toUpperCase()}`;
+function toQlingEnvName(keyPath: string): string {
+  return `QLING_${keyPath.replace(/[.-]/g, "_").toUpperCase()}`;
 }
 
 function parseEnvValue(raw: string, defaultValue: unknown): unknown {
@@ -746,19 +746,19 @@ function resolvePermissionMode(
   return fallback;
 }
 
-function applyPermissionModeCompat(config: QinglingConfig): void {
+function applyPermissionModeCompat(config: QlingConfig): void {
   const raw = (config as any)?.permissions?.mode;
   const mapped = resolvePermissionMode(raw, config.guard.permissions.default);
   config.guard.permissions.default = mapped;
 }
 
-function normalizeAgentsIsolationConfig(config: QinglingConfig): void {
+function normalizeAgentsIsolationConfig(config: QlingConfig): void {
   const defaults = buildDefaultConfig().agents.isolation;
   const isolation = (config as any)?.agents?.isolation ?? {};
   const modeRaw = String(isolation.mode ?? defaults.mode).toLowerCase();
   const nonGitPolicyRaw = String(isolation.non_git_policy ?? defaults.non_git_policy).toLowerCase();
 
-  config.agents = config.agents ?? ({ isolation: defaults } as QinglingConfig["agents"]);
+  config.agents = config.agents ?? ({ isolation: defaults } as QlingConfig["agents"]);
   config.agents.isolation.mode = modeRaw === "off" ? "off" : "worktree";
   config.agents.isolation.require_git =
     typeof isolation.require_git === "boolean" ? isolation.require_git : defaults.require_git;
@@ -766,7 +766,7 @@ function normalizeAgentsIsolationConfig(config: QinglingConfig): void {
     nonGitPolicyRaw === "deny" || nonGitPolicyRaw === "off" ? (nonGitPolicyRaw as "deny" | "off") : "warn";
 }
 
-function applyCliOverrides(config: QinglingConfig, cli: CliGlobalOptions): QinglingConfig {
+function applyCliOverrides(config: QlingConfig, cli: CliGlobalOptions): QlingConfig {
   const next = deepClone(config);
   if (cli.workspaceDir) next.runtime.workspace_dir = path.resolve(cli.workspaceDir);
   if (cli.noWorkspace) next.runtime.workspace_dir = null;
@@ -783,7 +783,7 @@ function applyCliOverrides(config: QinglingConfig, cli: CliGlobalOptions): Qingl
   return next;
 }
 
-function normalizeRuntimeRoots(config: QinglingConfig): void {
+function normalizeRuntimeRoots(config: QlingConfig): void {
   config.runtime.file_state_dir = path.resolve(config.runtime.file_state_dir);
   config.runtime.file_cache_dir = path.resolve(config.runtime.file_cache_dir);
   if (config.runtime.workspace_dir) {

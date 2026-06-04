@@ -2,13 +2,13 @@
 
 ## Problem
 
-`qingling chat` already routes slash commands through the local command dispatcher, but `qingling repl` still treats `/help`, `/exports`, and other slash commands as normal prompts for the model.
+`qling chat` already routes slash commands through the local command dispatcher, but `qling repl` still treats `/help`, `/exports`, and other slash commands as normal prompts for the model.
 
 This creates inconsistent interactive behavior and makes the older REPL entrypoint feel less like Claude Code.
 
 ## Goals
 
-- Route slash commands typed in `qingling repl` through the existing local slash command dispatcher before model execution.
+- Route slash commands typed in `qling repl` through the existing local slash command dispatcher before model execution.
 - Preserve existing REPL commands: `q`, `quit`, `exit`, `!reset`, `!save`, `!load`, `!sessions`, and `!ls`.
 - Keep slash command execution local-first, using the existing command implementations and default writers.
 - Make REPL single-line input behavior directly unit-testable without driving the readline loop.

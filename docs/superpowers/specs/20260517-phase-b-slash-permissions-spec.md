@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：`/permissions` 命令补齐规格（2026-05-17）
+# `qling` 阶段 B：`/permissions` 命令补齐规格（2026-05-17）
 
 ## 背景与问题
 

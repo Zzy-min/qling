@@ -50,9 +50,9 @@ function timestampForFile(date: Date): string {
 
 function resolveStateDir(context: SlashCommandContext, env: SessionExportOptions["env"]): string {
   const agentLoop = context.agentLoop as any;
-  return env?.QINGLING_FILE_STATE_DIR
+  return env?.QLING_FILE_STATE_DIR
     || agentLoop.getRuntimeRootDir?.()
-    || join(homedir(), ".qingling");
+    || join(homedir(), ".qling");
 }
 
 export function resolveSessionExportsDir(

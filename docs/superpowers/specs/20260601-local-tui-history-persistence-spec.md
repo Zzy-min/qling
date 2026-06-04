@@ -1,8 +1,8 @@
-# `qingling` TUI 本地持久输入历史规格（2026-06-01）
+# `qling` TUI 本地持久输入历史规格（2026-06-01）
 
 ## 背景
 
-当前 TUI 已支持上下方向键和 `Ctrl+R` 在进程内历史中找回输入，但关闭 `qingling chat` 后历史即丢失。对长周期本地 Agent 使用来说，跨会话找回最近 prompt、slash command 和多行输入是接近 Claude Code 交互手感的关键能力。
+当前 TUI 已支持上下方向键和 `Ctrl+R` 在进程内历史中找回输入，但关闭 `qling chat` 后历史即丢失。对长周期本地 Agent 使用来说，跨会话找回最近 prompt、slash command 和多行输入是接近 Claude Code 交互手感的关键能力。
 
 ## 目标
 
@@ -35,7 +35,7 @@
 - 写入前会裁剪首尾空白；空输入不写入。
 - 单条输入最大 8000 字符，超过后不写入。
 - 默认读取和写入上限均为 200 条。
-- `QINGLING_TUI_HISTORY_ENABLED=false` 时不加载也不写入。
+- `QLING_TUI_HISTORY_ENABLED=false` 时不加载也不写入。
 
 ## 验收
 

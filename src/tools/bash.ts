@@ -290,7 +290,7 @@ function buildSafeEnv(envAllowlist: string[], envInject: Record<string, string>)
   ]);
 
   for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith("QINGLING_") || baseKeys.has(key.toUpperCase())) {
+    if (key.startsWith("QLING_") || baseKeys.has(key.toUpperCase())) {
       safe[key] = value;
     }
   }

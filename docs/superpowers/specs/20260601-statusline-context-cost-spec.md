@@ -2,7 +2,7 @@
 
 ## Summary
 
-增强 `/statusline`、`/状态线` 与 `qingling statusline`：在现有 model/session/branch/permission/goal/tasks/tokens 基础上，新增上下文占用 `ctx=` 与可选成本估算 `cost≈`，让交互状态更接近 Claude Code 的即时反馈，同时保持本地只读。
+增强 `/statusline`、`/状态线` 与 `qling statusline`：在现有 model/session/branch/permission/goal/tasks/tokens 基础上，新增上下文占用 `ctx=` 与可选成本估算 `cost≈`，让交互状态更接近 Claude Code 的即时反馈，同时保持本地只读。
 
 ## Goals
 
@@ -21,10 +21,10 @@
   - `/statusline`
   - `/状态线`
 - Top-level CLI:
-  - `qingling statusline`
-  - `qingling 状态线`
+  - `qling statusline`
+  - `qling 状态线`
 - Optional local env:
-  - `QINGLING_STATUSLINE_COST_PER_1K_TOKENS`
+  - `QLING_STATUSLINE_COST_PER_1K_TOKENS`
 
 ## Formatting
 
@@ -65,8 +65,8 @@ model=deepseek-chat  session=session_1234  branch=main  perm=ask(确认)  goal=a
 
 - `formatStatusLine` 输出 `ctx=` 和 `cost` 字段。
 - 未配置成本时显示 `cost=-`。
-- 配置 `QINGLING_STATUSLINE_COST_PER_1K_TOKENS` 后 slash/top-level 状态线显示 `cost≈$...`。
+- 配置 `QLING_STATUSLINE_COST_PER_1K_TOKENS` 后 slash/top-level 状态线显示 `cost≈$...`。
 - 非法或小于等于 0 的成本配置不显示估算。
-- `qingling statusline` 使用 `runtime.max_token_budget` 作为本地 context 上限。
+- `qling statusline` 使用 `runtime.max_token_budget` 作为本地 context 上限。
 - 测试证明状态线不会泄露 session body 或 secret env。
 - `npm run build`、目标测试、startup smoke、`npm run ci:check` 通过。

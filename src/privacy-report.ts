@@ -24,13 +24,13 @@ export interface LocalPrivacyReportOptions {
 }
 
 function resolveStateDir(env: PrivacyReportOptions["env"], agentLoop: any): string {
-  return env?.QINGLING_FILE_STATE_DIR
+  return env?.QLING_FILE_STATE_DIR
     || agentLoop.getRuntimeRootDir?.()
-    || join(homedir(), ".qingling");
+    || join(homedir(), ".qling");
 }
 
 function resolveCacheDir(env: PrivacyReportOptions["env"], stateDir: string): string {
-  return env?.QINGLING_FILE_CACHE_DIR || join(stateDir, "cache");
+  return env?.QLING_FILE_CACHE_DIR || join(stateDir, "cache");
 }
 
 export async function buildPrivacyReport(

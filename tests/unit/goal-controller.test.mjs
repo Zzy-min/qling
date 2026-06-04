@@ -8,7 +8,7 @@ import { SessionGoalManager } from "../../dist/session/session-goal-manager.js";
 import { SessionGoalController } from "../../dist/session/goal-controller.js";
 
 test("goal controller continues when evaluator says condition is unmet, then stops when achieved", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-goal-controller-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-controller-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-b", clock: () => 1_000 });
   const evaluations = [
     { done: false, reason: "还没有看到测试通过证据" },
@@ -42,7 +42,7 @@ test("goal controller continues when evaluator says condition is unmet, then sto
 });
 
 test("goal controller clears active goal when max auto turns is exceeded", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-goal-controller-max-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-controller-max-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-c", clock: () => 1_000 });
   const controller = new SessionGoalController({
     manager,
@@ -67,7 +67,7 @@ test("goal controller clears active goal when max auto turns is exceeded", async
 });
 
 test("goal controller ignores active goal owned by a different runner", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-goal-controller-runner-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-controller-runner-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-runner", clock: () => 1_000 });
   const localController = new SessionGoalController({
     manager,

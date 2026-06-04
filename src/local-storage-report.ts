@@ -42,13 +42,13 @@ function resolveStateDir(
   env: LocalStorageReportOptions["env"]
 ): string {
   const agentLoop = context.agentLoop as any;
-  return env?.QINGLING_FILE_STATE_DIR
+  return env?.QLING_FILE_STATE_DIR
     || agentLoop.getRuntimeRootDir?.()
-    || join(homedir(), ".qingling");
+    || join(homedir(), ".qling");
 }
 
 function resolveCacheDir(env: LocalStorageReportOptions["env"], stateDir: string): string {
-  return env?.QINGLING_FILE_CACHE_DIR || join(stateDir, "cache");
+  return env?.QLING_FILE_CACHE_DIR || join(stateDir, "cache");
 }
 
 function resolveScanLimit(value: unknown): number {

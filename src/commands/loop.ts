@@ -82,12 +82,12 @@ export const loopCommand: SlashCommand = {
           : process.cwd());
       const isolation = await evaluateIsolationPolicy({
         workspaceDir,
-        mode: process.env.QINGLING_AGENTS_ISOLATION_MODE === "off" ? "off" : "worktree",
-        requireGit: process.env.QINGLING_AGENTS_ISOLATION_REQUIRE_GIT !== "false",
+        mode: process.env.QLING_AGENTS_ISOLATION_MODE === "off" ? "off" : "worktree",
+        requireGit: process.env.QLING_AGENTS_ISOLATION_REQUIRE_GIT !== "false",
         nonGitPolicy:
-          process.env.QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY === "deny"
+          process.env.QLING_AGENTS_ISOLATION_NON_GIT_POLICY === "deny"
             ? "deny"
-            : process.env.QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY === "off"
+            : process.env.QLING_AGENTS_ISOLATION_NON_GIT_POLICY === "off"
               ? "off"
               : "warn",
       });

@@ -1,4 +1,4 @@
-# `qingling config` 顶层本地配置摘要规格（2026-06-01）
+# `qling config` 顶层本地配置摘要规格（2026-06-01）
 
 ## 背景
 
@@ -6,8 +6,8 @@
 
 ## 目标
 
-- 新增顶层命令 `qingling config`。
-- 新增中文别名 `qingling 配置`。
+- 新增顶层命令 `qling config`。
+- 新增中文别名 `qling 配置`。
 - 输出当前生效配置摘要：provider、model、endpoint、workspace、state dir、cache dir、permissions、features、logging、agents isolation。
 - API key 只显示 `set(redacted)` 或 `missing`，不得输出原值或尾号。
 - endpoint 输出时去掉 userinfo、query、hash，避免误泄露 URL 中的 token。
@@ -22,8 +22,8 @@
 
 ## 行为
 
-- `qingling config` 输出摘要后退出。
-- `qingling 配置` 与英文命令行为一致。
+- `qling config` 输出摘要后退出。
+- `qling 配置` 与英文命令行为一致。
 - 如果没有 api key，输出 `Api key : missing`。
 - 如果存在 api key，输出 `Api key : set(redacted)`。
 - 如果 endpoint 非 URL 字符串，仍展示脱敏后的字符串，并对 `key/token/secret/password` 查询片段做兜底替换。

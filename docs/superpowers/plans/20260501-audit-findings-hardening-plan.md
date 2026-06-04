@@ -1,11 +1,11 @@
-# `qingling` 审查发现修复计划（2026-05-01）
+# `qling` 审查发现修复计划（2026-05-01）
 
 ## Step 1: 参数解析与重复调用治理
 - 修改 `src/agent-loop.ts`：
   - 增加 `tool_calls` 参数解析重试函数。
   - 无法解析时产出 `TOOL_INVALID_ARGUMENTS` 错误结果，不中断主循环。
   - 增加同签名工具调用重复限制，接入 `runtime.tool_repeat_limit`。
-  - 接入 `QINGLING_LLM_REQUEST_TIMEOUT_MS` 到 LLM HTTP client timeout。
+  - 接入 `QLING_LLM_REQUEST_TIMEOUT_MS` 到 LLM HTTP client timeout。
 
 ## Step 2: chat 模式生命周期修复
 - 修改 `src/tui/streaming-repl.ts` 与 `src/tui/streaming-tui.ts`：

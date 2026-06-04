@@ -1,4 +1,4 @@
-# `qingling recap` 顶层本地回顾计划（2026-05-31）
+# `qling recap` 顶层本地回顾计划（2026-05-31）
 
 ## Step 1: 测试先行
 
@@ -9,7 +9,7 @@
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `recap` 顶层模式可解析。
   - `回顾` 中文别名可解析。
-  - help 展示 `qingling recap` 和中文别名。
+  - help 展示 `qling recap` 和中文别名。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js --file-state-dir <tmp> recap 1` 能读取本地快照并退出。
 

@@ -29,7 +29,7 @@ async function withEnv(patch, fn) {
 }
 
 async function withTempDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-slash-loop-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-slash-loop-"));
   try {
     await fn(dir);
   } finally {
@@ -690,8 +690,8 @@ test("slash context prints local context report", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
       getMessagesSnapshot: () => [{ role: "user", content: "hello" }],
-      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qingling",
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
     },
     listSavedSessions: async () => [],
   });
@@ -707,8 +707,8 @@ test("slash context chinese alias prints local context report", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
       getMessagesSnapshot: () => [{ role: "user", content: "hello" }],
-      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qingling",
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
     },
     listSavedSessions: async () => [],
   });
@@ -720,9 +720,9 @@ test("slash context chinese alias prints local context report", async () => {
 test("slash mcp prints local mcp report without leaking secrets", async () => {
   await withEnv(
     {
-      QINGLING_MCP_CONNECTION_TIMEOUT_MS: "1234",
-      QINGLING_MCP_CALL_TIMEOUT_MS: "5678",
-      QINGLING_MCP_SERVERS: JSON.stringify({
+      QLING_MCP_CONNECTION_TIMEOUT_MS: "1234",
+      QLING_MCP_CALL_TIMEOUT_MS: "5678",
+      QLING_MCP_SERVERS: JSON.stringify({
         docs: {
           command: "",
           args: [],
@@ -757,7 +757,7 @@ test("slash mcp prints local mcp report without leaking secrets", async () => {
 test("slash mcp chinese alias prints local mcp report", async () => {
   await withEnv(
     {
-      QINGLING_MCP_SERVERS: JSON.stringify({
+      QLING_MCP_SERVERS: JSON.stringify({
         local: {
           command: "node",
           args: ["server.js"],
@@ -786,15 +786,15 @@ test("slash mcp chinese alias prints local mcp report", async () => {
 test("slash hooks prints local hooks report without leaking custom patterns", async () => {
   await withEnv(
     {
-      QINGLING_GUARD_ENABLED: "true",
-      QINGLING_GUARD_RATE_LIMIT_ENABLED: "true",
-      QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE: "7",
-      QINGLING_GUARD_CONTENT_FILTER_ENABLED: "true",
-      QINGLING_GUARD_CONTENT_FILTER_PII: "true",
-      QINGLING_GUARD_CONTENT_FILTER_INJECTION: "false",
-      QINGLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["SECRET_SLASH_PATTERN"]),
-      QINGLING_GUARD_PERMISSIONS_DEFAULT: "ask",
-      QINGLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
+      QLING_GUARD_ENABLED: "true",
+      QLING_GUARD_RATE_LIMIT_ENABLED: "true",
+      QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE: "7",
+      QLING_GUARD_CONTENT_FILTER_ENABLED: "true",
+      QLING_GUARD_CONTENT_FILTER_PII: "true",
+      QLING_GUARD_CONTENT_FILTER_INJECTION: "false",
+      QLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["SECRET_SLASH_PATTERN"]),
+      QLING_GUARD_PERMISSIONS_DEFAULT: "ask",
+      QLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
         { tool_pattern: "bash", decision: "deny", reason: "SECRET_REASON" },
       ]),
     },
@@ -830,7 +830,7 @@ test("slash recap prints local session summary", async () => {
         { role: "user", content: "请实现 recap" },
         { role: "assistant", content: "开始处理" },
       ],
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
     },
     goalController: {
       getGoalStatus: async () => ({ status: "active", condition: "测试通过" }),
@@ -852,7 +852,7 @@ test("slash recap chinese alias prints local session summary", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
       getMessagesSnapshot: () => [{ role: "user", content: "回顾一下" }],
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
     },
   });
   const handled = await handleSlashCommand("/回顾", ctx);
@@ -863,8 +863,8 @@ test("slash recap chinese alias prints local session summary", async () => {
 test("slash privacy prints local data retention report", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
-      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qingling",
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
       getModel: () => "deepseek-chat",
     },
     listSavedSessions: async () => [{ name: "session-1", sessionId: "session-1" }],
@@ -873,7 +873,7 @@ test("slash privacy prints local data retention report", async () => {
   assert.equal(handled, true);
   const joined = lines.join("\n");
   assert.match(joined, /本地数据留存/);
-  assert.match(joined, /C:\\repo\\qingling/);
+  assert.match(joined, /C:\\repo\\qling/);
   assert.match(joined, /已存快照\s*: 1/);
   assert.match(joined, /模型请求仍按 provider 配置发送/);
 });
@@ -881,8 +881,8 @@ test("slash privacy prints local data retention report", async () => {
 test("slash privacy chinese alias prints local data retention report", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
-      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qingling",
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
     },
   });
   const handled = await handleSlashCommand("/隐私", ctx);
@@ -891,20 +891,20 @@ test("slash privacy chinese alias prints local data retention report", async () 
 });
 
 test("slash storage prints local storage report without reading bodies", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-slash-storage-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-slash-storage-"));
   try {
     await mkdir(join(root, "sessions"), { recursive: true });
     await writeFile(join(root, "sessions", "session.json"), "SECRET_STORAGE_BODY", "utf8");
     await withEnv(
       {
-        QINGLING_FILE_STATE_DIR: undefined,
-        QINGLING_FILE_CACHE_DIR: undefined,
+        QLING_FILE_STATE_DIR: undefined,
+        QLING_FILE_CACHE_DIR: undefined,
       },
       async () => {
         const { ctx, lines } = createContext({
           agentLoop: {
             getRuntimeRootDir: () => root,
-            getWorkspaceDir: () => "C:\\repo\\qingling",
+            getWorkspaceDir: () => "C:\\repo\\qling",
           },
         });
         const handled = await handleSlashCommand("/storage", ctx);
@@ -923,12 +923,12 @@ test("slash storage prints local storage report without reading bodies", async (
 });
 
 test("slash storage chinese alias prints local storage report", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-slash-storage-cn-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-slash-storage-cn-"));
   try {
     const { ctx, lines } = createContext({
       agentLoop: {
         getRuntimeRootDir: () => root,
-        getWorkspaceDir: () => "C:\\repo\\qingling",
+        getWorkspaceDir: () => "C:\\repo\\qling",
       },
     });
     const handled = await handleSlashCommand("/存储", ctx);
@@ -961,12 +961,12 @@ test("slash shortcuts chinese alias prints tui shortcut help", async () => {
 });
 
 test("slash export writes local markdown file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-slash-export-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-slash-export-"));
   try {
     const { ctx, lines } = createContext({
       agentLoop: {
         getRuntimeRootDir: () => root,
-        getWorkspaceDir: () => "C:\\repo\\qingling",
+        getWorkspaceDir: () => "C:\\repo\\qling",
         getMessagesSnapshot: () => [{ role: "user", content: "导出 slash 测试" }],
         getSessionStats: () => ({ sessionId: "session-test", turnCount: 1, tokens: 10, compactions: 0 }),
       },
@@ -983,12 +983,12 @@ test("slash export writes local markdown file", async () => {
 });
 
 test("slash export chinese alias writes local markdown file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-slash-export-cn-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-slash-export-cn-"));
   try {
     const { ctx, lines } = createContext({
       agentLoop: {
         getRuntimeRootDir: () => root,
-        getWorkspaceDir: () => "C:\\repo\\qingling",
+        getWorkspaceDir: () => "C:\\repo\\qling",
         getMessagesSnapshot: () => [{ role: "user", content: "中文导出" }],
         getSessionStats: () => ({ sessionId: "session-cn", turnCount: 1, tokens: 10, compactions: 0 }),
       },
@@ -1002,7 +1002,7 @@ test("slash export chinese alias writes local markdown file", async () => {
 });
 
 test("slash exports lists local markdown exports without reading bodies", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-slash-exports-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-slash-exports-"));
   try {
     const exportsDir = join(root, "exports");
     await mkdir(exportsDir, { recursive: true });
@@ -1032,7 +1032,7 @@ test("slash exports lists local markdown exports without reading bodies", async 
 });
 
 test("slash exports chinese alias lists local markdown exports", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-slash-exports-cn-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-slash-exports-cn-"));
   try {
     const exportsDir = join(root, "exports");
     await mkdir(exportsDir, { recursive: true });
@@ -1087,8 +1087,8 @@ test("slash statusline shows current compact status", async () => {
 test("slash statusline fallback shows context usage and local cost estimate without secrets", async () => {
   await withEnv(
     {
-      QINGLING_STATUSLINE_COST_PER_1K_TOKENS: "0.002",
-      QINGLING_LLM_API_KEY: "sk-statusline-secret",
+      QLING_STATUSLINE_COST_PER_1K_TOKENS: "0.002",
+      QLING_LLM_API_KEY: "sk-statusline-secret",
     },
     async () => {
       const { ctx, lines } = createContext({
@@ -1280,9 +1280,9 @@ test("slash loop daemon denies on non-git workspace when isolation policy=deny",
     let call = null;
     await withEnv(
       {
-        QINGLING_AGENTS_ISOLATION_MODE: "worktree",
-        QINGLING_AGENTS_ISOLATION_REQUIRE_GIT: "true",
-        QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY: "deny",
+        QLING_AGENTS_ISOLATION_MODE: "worktree",
+        QLING_AGENTS_ISOLATION_REQUIRE_GIT: "true",
+        QLING_AGENTS_ISOLATION_NON_GIT_POLICY: "deny",
       },
       async () => {
         const { ctx, errors } = createContext({
@@ -1321,9 +1321,9 @@ test("slash loop daemon warns on non-git workspace when isolation policy=warn", 
     let call = null;
     await withEnv(
       {
-        QINGLING_AGENTS_ISOLATION_MODE: "worktree",
-        QINGLING_AGENTS_ISOLATION_REQUIRE_GIT: "true",
-        QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY: "warn",
+        QLING_AGENTS_ISOLATION_MODE: "worktree",
+        QLING_AGENTS_ISOLATION_REQUIRE_GIT: "true",
+        QLING_AGENTS_ISOLATION_NON_GIT_POLICY: "warn",
       },
       async () => {
         const { ctx, lines } = createContext({
@@ -1508,11 +1508,11 @@ test("slash permissions shows current mode", async () => {
 test("slash permissions explain reads local rules without leaking secrets", async () => {
   await withEnv(
     {
-      QINGLING_GUARD_PERMISSIONS_DEFAULT: "allow",
-      QINGLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
+      QLING_GUARD_PERMISSIONS_DEFAULT: "allow",
+      QLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
         { tool_pattern: "bash", decision: "ask", reason: "shell requires review" },
       ]),
-      QINGLING_LLM_API_KEY: "sk-permissions-explain-secret",
+      QLING_LLM_API_KEY: "sk-permissions-explain-secret",
     },
     async () => {
       const { ctx, lines } = createContext();
@@ -1533,8 +1533,8 @@ test("slash permissions explain reads local rules without leaking secrets", asyn
 test("slash permissions chinese explain alias works", async () => {
   await withEnv(
     {
-      QINGLING_GUARD_PERMISSIONS_DEFAULT: "deny",
-      QINGLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
+      QLING_GUARD_PERMISSIONS_DEFAULT: "deny",
+      QLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
         { tool_pattern: "read", decision: "allow" },
       ]),
     },

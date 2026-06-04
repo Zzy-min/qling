@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Session Resume 与 `--continue` 设计（2026-05-16）
+# `qling` 阶段 B：Session Resume 与 `--continue` 设计（2026-05-16）
 
 ## 背景
 
@@ -18,10 +18,10 @@
 ## 目标
 
 1. 新增交互启动参数：
-   - `qingling --continue`
-   - `qingling --resume <session>`
-   - `qingling chat --continue`
-   - `qingling repl --resume <session>`
+   - `qling --continue`
+   - `qling --resume <session>`
+   - `qling chat --continue`
+   - `qling repl --resume <session>`
 2. 让 TUI/REPL 每轮后自动写入当前 session checkpoint。
 3. 恢复旧 session 时保留原始 `sessionId`，从而自动接回该 session 绑定的 `/goal` 与 `/loop` 状态文件。
 4. 新增交互命令：
@@ -148,8 +148,8 @@
 
 ## 验收
 
-1. `qingling --continue` 能恢复最近一次交互 session。
-2. `qingling --resume <session>` 能恢复指定 session。
+1. `qling --continue` 能恢复最近一次交互 session。
+2. `qling --resume <session>` 能恢复指定 session。
 3. `/resume latest` 与 `/resume <id>` 可在 TUI 内切换 session。
 4. 恢复后，原 session 的 `/goal` 与 `/loop` 状态文件会继续被命中。
 5. `npm run build` 与 `npm run ci:check` 全通过。

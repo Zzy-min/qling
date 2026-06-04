@@ -81,12 +81,12 @@ export async function runVisionAnalyze(args: {
   detail?: "low" | "high" | "auto";
 }): Promise<ToolResult> {
   // 1. 优先级：Vision 专用变量 > LLM 通用变量 > 默认值
-  const provider = process.env.QINGLING_VISION_PROVIDER || process.env.QINGLING_LLM_PROVIDER || "openai";
-  const model = process.env.QINGLING_VISION_MODEL || process.env.QINGLING_LLM_MODEL || "gpt-4o";
-  const apiKey = process.env.QINGLING_LLM_API_KEY || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || "";
+  const provider = process.env.QLING_VISION_PROVIDER || process.env.QLING_LLM_PROVIDER || "openai";
+  const model = process.env.QLING_VISION_MODEL || process.env.QLING_LLM_MODEL || "gpt-4o";
+  const apiKey = process.env.QLING_LLM_API_KEY || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || "";
   
   // 2. 解析 Endpoint
-  let endpoint = process.env.QINGLING_VISION_ENDPOINT || process.env.QINGLING_LLM_ENDPOINT;
+  let endpoint = process.env.QLING_VISION_ENDPOINT || process.env.QLING_LLM_ENDPOINT;
   if (!endpoint) {
     endpoint = provider === "openai" 
       ? "https://api.openai.com/v1/chat/completions" 
@@ -117,7 +117,7 @@ export async function runVisionAnalyze(args: {
       const rawPath = args.image_path.replace(/["']/g, "").trim();
       const fullPath = path.isAbsolute(rawPath) 
         ? rawPath 
-        : path.resolve(process.env.QINGLING_WORKSPACE_DIR || process.cwd(), rawPath);
+        : path.resolve(process.env.QLING_WORKSPACE_DIR || process.cwd(), rawPath);
       
       try {
         const buffer = await fs.readFile(fullPath);
@@ -159,7 +159,7 @@ export async function runVisionAnalyze(args: {
           ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
           "Content-Type": "application/json",
         },
-        timeout: Number(process.env.QINGLING_VISION_TIMEOUT_MS) || 60000,
+        timeout: Number(process.env.QLING_VISION_TIMEOUT_MS) || 60000,
       }
     );
 
@@ -183,7 +183,7 @@ export async function runVisionAnalyze(args: {
     if (msg.includes("Incorrect API key") || msg.includes("invalid_api_key") || err.response?.status === 401) {
       userHint = `\n\n💡 提示: 检测到 API Key 鉴权失败。当前 Provider 为: ${provider}。 请确保您的 Key 能够访问该提供商的视觉模型。`;
       if (provider !== "local") {
-         userHint += "\n如果您想使用本地模型，可设置 QINGLING_VISION_PROVIDER=local 并启动 Ollama。";
+         userHint += "\n如果您想使用本地模型，可设置 QLING_VISION_PROVIDER=local 并启动 Ollama。";
       }
     }
     return {

@@ -8,7 +8,7 @@ This is a stability issue in the interactive surface: legacy session listing wor
 
 ## User Journey
 
-As a Qingling user in classic REPL, I want `/sessions` to remain usable even when only the legacy local session list API is available, so that command style changes do not crash the session manager.
+As a Qling user in classic REPL, I want `/sessions` to remain usable even when only the legacy local session list API is available, so that command style changes do not crash the session manager.
 
 ## Requirements
 
@@ -20,7 +20,7 @@ As a Qingling user in classic REPL, I want `/sessions` to remain usable even whe
 
 ## Non-Goals
 
-- Change the top-level `qingling sessions` command.
+- Change the top-level `qling sessions` command.
 - Change session persistence format.
 - Add full metadata recovery for legacy-only session names.
 - Change `/sessions` output when detailed summaries are available.

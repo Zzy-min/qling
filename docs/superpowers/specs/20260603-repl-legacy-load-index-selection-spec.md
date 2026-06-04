@@ -2,11 +2,11 @@
 
 ## Background
 
-Classic REPL now prints numbered saved-session lists for `!sessions` and bare `!load`. However, `!load <target>` still treats every target as a raw session reference. If a user sees `1. alpha` and types `!load 1`, Qingling tries to restore a session literally named `1` instead of restoring the first listed local session.
+Classic REPL now prints numbered saved-session lists for `!sessions` and bare `!load`. However, `!load <target>` still treats every target as a raw session reference. If a user sees `1. alpha` and types `!load 1`, Qling tries to restore a session literally named `1` instead of restoring the first listed local session.
 
 ## User Journey
 
-As a Qingling user in classic REPL, I want to restore a session by the number shown in the local session list, so that listing and resuming sessions is a smooth local workflow instead of requiring manual name or id copying.
+As a Qling user in classic REPL, I want to restore a session by the number shown in the local session list, so that listing and resuming sessions is a smooth local workflow instead of requiring manual name or id copying.
 
 ## Requirements
 

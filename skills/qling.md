@@ -1,5 +1,5 @@
 ---
-name: qingling
+name: qling
 description: 轻灵 Agent 自身使用指南
 ---
 
@@ -7,7 +7,7 @@ description: 轻灵 Agent 自身使用指南
 
 ## 快速开始
 ```bash
-cd C:/Users/Lenovo/projects/qingling
+cd C:/Users/Lenovo/projects/qling
 node dist/index.js "你的任务"       # 一次性执行
 node dist/index.js chat             # 流式 TUI（默认）
 node dist/index.js repl             # 简易 REPL

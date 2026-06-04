@@ -8,7 +8,7 @@ import { buildContextReport, buildLocalContextReport, formatContextReport, forma
 
 function createContext(overrides = {}) {
   return {
-    workspaceDir: "C:\\repo\\qingling",
+    workspaceDir: "C:\\repo\\qling",
     agentLoop: {
       getSessionStats: () => ({
         sessionId: "session-test",
@@ -20,8 +20,8 @@ function createContext(overrides = {}) {
         { role: "user", content: "hello" },
         { role: "assistant", content: "world" },
       ],
-      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qingling",
-      getWorkspaceDir: () => "C:\\repo\\qingling",
+      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qling",
+      getWorkspaceDir: () => "C:\\repo\\qling",
       ...overrides.agentLoop,
     },
     listSavedSessions: overrides.listSavedSessions ?? (async () => [
@@ -42,8 +42,8 @@ function createContext(overrides = {}) {
 test("context report includes local session statistics and paths", async () => {
   const report = await buildContextReport(createContext(), {
     env: {
-      QINGLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qingling",
-      QINGLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qingling\\cache",
+      QLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qling",
+      QLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qling\\cache",
     },
     maxTokens: 120000,
   });
@@ -81,7 +81,7 @@ test("formatTokenUsage degrades for missing or invalid budgets", () => {
 });
 
 test("local context report summarizes saved sessions without exposing message bodies", async () => {
-  const root = mkdtempSync(join(tmpdir(), "qingling-context-"));
+  const root = mkdtempSync(join(tmpdir(), "qling-context-"));
   try {
     const sessionsDir = join(root, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
@@ -91,7 +91,7 @@ test("local context report summarizes saved sessions without exposing message bo
         version: 1,
         name: "older",
         sessionId: "sid-older",
-        workspaceDir: "C:/repo/qingling",
+        workspaceDir: "C:/repo/qling",
         createdAt: "2026-05-31T00:00:00.000Z",
         updatedAt: "2026-05-31T00:01:00.000Z",
         messages: [{ role: "user", content: "SECRET_CONTEXT_OLDER" }],
@@ -107,7 +107,7 @@ test("local context report summarizes saved sessions without exposing message bo
         version: 1,
         name: "latest",
         sessionId: "sid-latest",
-        workspaceDir: "C:/repo/qingling",
+        workspaceDir: "C:/repo/qling",
         createdAt: "2026-05-31T00:00:00.000Z",
         updatedAt: "2026-05-31T00:02:00.000Z",
         messages: [{ role: "assistant", content: "SECRET_CONTEXT_LATEST" }],
@@ -119,7 +119,7 @@ test("local context report summarizes saved sessions without exposing message bo
     );
 
     const report = await buildLocalContextReport({
-      workspaceDir: "C:/repo/qingling",
+      workspaceDir: "C:/repo/qling",
       stateDir: root,
       cacheDir: join(root, "cache"),
       maxTokens: 120000,

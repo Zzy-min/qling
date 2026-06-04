@@ -5,29 +5,29 @@ import { AgentLoop } from "../../dist/agent-loop.js";
 
 function snapshotEnv() {
   return {
-    wal: process.env.QINGLING_MEMORY_WAL_ENABLED,
-    metrics: process.env.QINGLING_METRICS_ENABLED,
-    mcp: process.env.QINGLING_MCP_SERVERS,
-    llmTimeout: process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS,
+    wal: process.env.QLING_MEMORY_WAL_ENABLED,
+    metrics: process.env.QLING_METRICS_ENABLED,
+    mcp: process.env.QLING_MCP_SERVERS,
+    llmTimeout: process.env.QLING_LLM_REQUEST_TIMEOUT_MS,
   };
 }
 
 function restoreEnv(prev) {
-  if (prev.wal === undefined) delete process.env.QINGLING_MEMORY_WAL_ENABLED;
-  else process.env.QINGLING_MEMORY_WAL_ENABLED = prev.wal;
-  if (prev.metrics === undefined) delete process.env.QINGLING_METRICS_ENABLED;
-  else process.env.QINGLING_METRICS_ENABLED = prev.metrics;
-  if (prev.mcp === undefined) delete process.env.QINGLING_MCP_SERVERS;
-  else process.env.QINGLING_MCP_SERVERS = prev.mcp;
-  if (prev.llmTimeout === undefined) delete process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS;
-  else process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS = prev.llmTimeout;
+  if (prev.wal === undefined) delete process.env.QLING_MEMORY_WAL_ENABLED;
+  else process.env.QLING_MEMORY_WAL_ENABLED = prev.wal;
+  if (prev.metrics === undefined) delete process.env.QLING_METRICS_ENABLED;
+  else process.env.QLING_METRICS_ENABLED = prev.metrics;
+  if (prev.mcp === undefined) delete process.env.QLING_MCP_SERVERS;
+  else process.env.QLING_MCP_SERVERS = prev.mcp;
+  if (prev.llmTimeout === undefined) delete process.env.QLING_LLM_REQUEST_TIMEOUT_MS;
+  else process.env.QLING_LLM_REQUEST_TIMEOUT_MS = prev.llmTimeout;
 }
 
 test("agent-loop: tool arguments tolerate loose json within parse retries", async () => {
   const prev = snapshotEnv();
-  process.env.QINGLING_MEMORY_WAL_ENABLED = "false";
-  process.env.QINGLING_METRICS_ENABLED = "false";
-  delete process.env.QINGLING_MCP_SERVERS;
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
 
   const agent = new AgentLoop({
     apiKey: "test-key",
@@ -89,9 +89,9 @@ test("agent-loop: tool arguments tolerate loose json within parse retries", asyn
 
 test("agent-loop: invalid tool arguments become tool error instead of crashing", async () => {
   const prev = snapshotEnv();
-  process.env.QINGLING_MEMORY_WAL_ENABLED = "false";
-  process.env.QINGLING_METRICS_ENABLED = "false";
-  delete process.env.QINGLING_MCP_SERVERS;
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
 
   const agent = new AgentLoop({
     apiKey: "test-key",
@@ -152,9 +152,9 @@ test("agent-loop: invalid tool arguments become tool error instead of crashing",
 
 test("agent-loop: tool repeat limit blocks repeated identical calls", async () => {
   const prev = snapshotEnv();
-  process.env.QINGLING_MEMORY_WAL_ENABLED = "false";
-  process.env.QINGLING_METRICS_ENABLED = "false";
-  delete process.env.QINGLING_MCP_SERVERS;
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
 
   const agent = new AgentLoop({
     apiKey: "test-key",
@@ -224,12 +224,12 @@ test("agent-loop: tool repeat limit blocks repeated identical calls", async () =
   }
 });
 
-test("agent-loop: llm request timeout uses QINGLING_LLM_REQUEST_TIMEOUT_MS", async () => {
+test("agent-loop: llm request timeout uses QLING_LLM_REQUEST_TIMEOUT_MS", async () => {
   const prev = snapshotEnv();
-  process.env.QINGLING_MEMORY_WAL_ENABLED = "false";
-  process.env.QINGLING_METRICS_ENABLED = "false";
-  delete process.env.QINGLING_MCP_SERVERS;
-  process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS = "4321";
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
+  process.env.QLING_LLM_REQUEST_TIMEOUT_MS = "4321";
 
   const agent = new AgentLoop({
     apiKey: "test-key",

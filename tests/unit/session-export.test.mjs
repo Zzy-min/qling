@@ -9,7 +9,7 @@ import { formatSessionExportMarkdown, writeSessionExport } from "../../dist/sess
 test("session export markdown includes metadata and messages", () => {
   const markdown = formatSessionExportMarkdown({
     sessionId: "session-abc",
-    workspaceDir: "C:\\repo\\qingling",
+    workspaceDir: "C:\\repo\\qling",
     exportedAt: "2026-05-31T00:00:00.000Z",
     turnCount: 2,
     tokens: 1234,
@@ -22,7 +22,7 @@ test("session export markdown includes metadata and messages", () => {
 
   assert.match(markdown, /# qling Session Export/);
   assert.match(markdown, /session-abc/);
-  assert.match(markdown, /C:\\repo\\qingling/);
+  assert.match(markdown, /C:\\repo\\qling/);
   assert.match(markdown, /turns: 2/);
   assert.match(markdown, /tokens: 1,234/);
   assert.match(markdown, /## user/);
@@ -46,13 +46,13 @@ test("session export markdown degrades when there are no messages", () => {
 });
 
 test("session export writes markdown under local exports directory", async () => {
-  const root = await mkdtemp(join(tmpdir(), "qingling-export-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-export-"));
   try {
     const result = await writeSessionExport(
       {
         agentLoop: {
           getRuntimeRootDir: () => root,
-          getWorkspaceDir: () => "C:\\repo\\qingling",
+          getWorkspaceDir: () => "C:\\repo\\qling",
           getMessagesSnapshot: () => [{ role: "user", content: "导出测试" }],
           getSessionStats: () => ({ sessionId: "session-test", turnCount: 1, tokens: 10, compactions: 0 }),
         },

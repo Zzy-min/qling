@@ -6,7 +6,7 @@
 
 2026 年初，Claude Code 的出现让我第一次真正感受到「AI 在终端里写代码」的生产力。但作为一个想深入理解 Agent 原理的开发者，我更想**自己造一个**——从最底层的 ReAct 循环、Tool Calling、到终端 UI 渲染，每一步都亲手实现。
 
-轻灵（Qingling）就是这样诞生的。它是一个从零搭建的 TypeScript CLI Agent 框架，目标是：
+轻灵（Qling）就是这样诞生的。它是一个从零搭建的 TypeScript CLI Agent 框架，目标是：
 
 1. **理解原理**：不封装黑盒 API，而是自己实现 Agent 循环的每个环节
 2. **极致轻量**：核心依赖只有 axios + zod，没有 React/Ink 等重型 UI 库
@@ -62,8 +62,8 @@ v0.5  Mission 系统 + Browser Fetch + Daemon 守护进程
 如果你想先跑起来看看效果：
 
 ```bash
-git clone https://github.com/Zzy-min/qingling.git
-cd qingling
+git clone https://github.com/Zzy-min/qling.git
+cd qling
 npm install
 npm run build
 

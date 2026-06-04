@@ -1,4 +1,4 @@
-# `qingling` 启动契约改造实施计划
+# `qling` 启动契约改造实施计划
 
 ## Step 1: CLI 解析与分流
 - 在 `src/index.ts` 引入显式解析逻辑：

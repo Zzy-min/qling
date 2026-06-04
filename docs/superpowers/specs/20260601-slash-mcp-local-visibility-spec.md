@@ -1,8 +1,8 @@
-# `qingling` 交互体验：本地 `/mcp` 可视化规格（2026-06-01）
+# `qling` 交互体验：本地 `/mcp` 可视化规格（2026-06-01）
 
 ## 背景
 
-顶层 `qingling mcp` 已能在启动前查看本地 MCP 配置摘要，但用户进入交互会话后仍需要不中断会话地检查 MCP server 配置、timeout 与敏感字段脱敏状态。为了贴近 Claude Code 的 `/mcp` 可观测入口，需要把同一套只读报告接入 slash command。
+顶层 `qling mcp` 已能在启动前查看本地 MCP 配置摘要，但用户进入交互会话后仍需要不中断会话地检查 MCP server 配置、timeout 与敏感字段脱敏状态。为了贴近 Claude Code 的 `/mcp` 可观测入口，需要把同一套只读报告接入 slash command。
 
 ## 目标
 
@@ -27,7 +27,7 @@
 - `/mcp` 在当前会话输出本地 MCP 摘要，不改变会话状态。
 - `/外部工具` 与 `/mcp` 行为一致。
 - 无 MCP server 时输出 `(无 MCP server)`。
-- 在交互会话中读取 `QINGLING_MCP_SERVERS`、`QINGLING_MCP_CONNECTION_TIMEOUT_MS`、`QINGLING_MCP_CALL_TIMEOUT_MS`，这些值由启动配置注入当前进程。
+- 在交互会话中读取 `QLING_MCP_SERVERS`、`QLING_MCP_CONNECTION_TIMEOUT_MS`、`QLING_MCP_CALL_TIMEOUT_MS`，这些值由启动配置注入当前进程。
 
 ## 验收
 

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
 
@@ -25,26 +27,34 @@ function waitForExit(child, timeoutMs = 8_000) {
 }
 
 test("repl smoke: exit command shuts down agent and process exits", async () => {
-  const child = spawn(
-    process.execPath,
-    [ENTRY, "repl", "--api-key", "test-key"],
-    {
-      env: { ...process.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    }
-  );
+  const stateDir = mkdtempSync(join(tmpdir(), "qling-repl-history-"));
+  try {
+    const child = spawn(
+      process.execPath,
+      [ENTRY, "repl", "--api-key", "test-key", "--file-state-dir", stateDir],
+      {
+        env: {
+          ...process.env,
+          QLING_MEMORY_WAL_ENABLED: "false",
+          QLING_METRICS_ENABLED: "false",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
 
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
 
-  setTimeout(() => {
-    child.stdin.write("exit\n");
-  }, 300);
+    setTimeout(() => {
+      child.stdin.write("exit\n");
+    }, 300);
 
-  const { code, signal } = await waitForExit(child);
-  assert.equal(signal, null, `unexpected signal: ${signal ?? "none"}, stderr=${stderr}`);
-  assert.equal(code, 0, `unexpected exit code: ${code}, stderr=${stderr}`);
+    const { code, signal } = await waitForExit(child);
+    assert.equal(signal, null, `unexpected signal: ${signal ?? "none"}, stderr=${stderr}`);
+    assert.equal(code, 0, `unexpected exit code: ${code}, stderr=${stderr}`);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
 });
-

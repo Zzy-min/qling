@@ -1,10 +1,10 @@
-# `qingling storage` 顶层命令计划（2026-05-31）
+# `qling storage` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["storage"])` 返回 `mode=storage`。
-  - `buildHelpText()` 包含 `qingling storage`。
+  - `buildHelpText()` 包含 `qling storage`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js storage` 以 0 退出。
   - stdout 包含“本地存储盘点”和 state/sessions/cache 等关键词。

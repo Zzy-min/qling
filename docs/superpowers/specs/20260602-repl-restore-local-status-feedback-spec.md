@@ -8,7 +8,7 @@ Streaming REPL already returns restore metadata with `activeTaskCount` and `acti
 
 ## User Journey
 
-As a Qingling user resuming a local session in classic REPL, I want the restore output to show restored local loop and goal state, so that I know whether local automation and goal tracking came back with the session.
+As a Qling user resuming a local session in classic REPL, I want the restore output to show restored local loop and goal state, so that I know whether local automation and goal tracking came back with the session.
 
 ## Requirements
 

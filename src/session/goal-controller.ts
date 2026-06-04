@@ -32,7 +32,7 @@ export class SessionGoalController {
   constructor(options: SessionGoalControllerOptions) {
     this.manager = options.manager;
     this.evaluator = options.evaluator ?? new GoalEvaluator();
-    this.maxAutoTurns = options.maxAutoTurns ?? Number(process.env.QINGLING_GOAL_MAX_AUTO_TURNS ?? "12");
+    this.maxAutoTurns = options.maxAutoTurns ?? Number(process.env.QLING_GOAL_MAX_AUTO_TURNS ?? "12");
     this.runner = options.runner ?? "session";
   }
 

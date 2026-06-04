@@ -5,7 +5,7 @@
 ## 项目结构
 
 ```
-qingling/
+qling/
 ├── src/
 │   ├── index.ts              # CLI 入口（模式路由）
 │   ├── agent-loop.ts         # 核心：Agent 主循环
@@ -133,7 +133,7 @@ CLI 参数 > 环境变量 > 配置文件 > 默认值
 
 ```typescript
 // config.ts 的加载顺序
-const envPaths = findEnvPaths(); // 项目 .env → ~/.qingling/.env → cwd/.env
+const envPaths = findEnvPaths(); // 项目 .env → ~/.qling/.env → cwd/.env
 for (const p of envPaths) {
   dotenv.config({ path: p });
 }

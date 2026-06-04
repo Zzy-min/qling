@@ -31,11 +31,11 @@ test("url_fetch: missing url returns coded error", async () => {
 test("url_fetch: prefix policy denies non-allowlisted target", async () => {
   await withEnv(
     {
-      QINGLING_GUARD_ENABLED: "true",
-      QINGLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES: JSON.stringify([
+      QLING_GUARD_ENABLED: "true",
+      QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES: JSON.stringify([
         "https://allowlisted.example/",
       ]),
-      QINGLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS: "true",
+      QLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS: "true",
     },
     async () => {
       const result = await runUrlFetch({ url: "https://example.com/data" });
@@ -48,9 +48,9 @@ test("url_fetch: prefix policy denies non-allowlisted target", async () => {
 test("url_fetch: private host is blocked before network call", async () => {
   await withEnv(
     {
-      QINGLING_GUARD_ENABLED: "true",
-      QINGLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES: JSON.stringify(["http://"]),
-      QINGLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS: "true",
+      QLING_GUARD_ENABLED: "true",
+      QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES: JSON.stringify(["http://"]),
+      QLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS: "true",
     },
     async () => {
       const result = await runUrlFetch({ url: "http://127.0.0.1:65535/ping" });

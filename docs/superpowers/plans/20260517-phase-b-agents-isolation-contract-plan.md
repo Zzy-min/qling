@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：`agents.isolation.*` 契约收敛计划（2026-05-17）
+# `qling` 阶段 B：`agents.isolation.*` 契约收敛计划（2026-05-17）
 
 ## Step 1: 测试先行
 

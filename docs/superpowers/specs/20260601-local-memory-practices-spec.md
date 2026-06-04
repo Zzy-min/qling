@@ -10,10 +10,10 @@
 - `/memory practice [count]`
 - `/记忆 实践 [count]`
 - `/记忆 经验 [count]`
-- `qingling memory practices [count]`
-- `qingling memory practice [count]`
-- `qingling 记忆 实践 [count]`
-- `qingling 记忆 经验 [count]`
+- `qling memory practices [count]`
+- `qling memory practice [count]`
+- `qling 记忆 实践 [count]`
+- `qling 记忆 经验 [count]`
 
 ## Behavior
 - 默认显示最近/最高置信度 10 条，最多 50 条。

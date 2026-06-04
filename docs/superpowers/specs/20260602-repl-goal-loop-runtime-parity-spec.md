@@ -2,7 +2,7 @@
 
 ## Problem
 
-The classic `qingling repl` now routes slash commands through local scheduler and goal context, but it still falls short of the streaming TUI runtime semantics:
+The classic `qling repl` now routes slash commands through local scheduler and goal context, but it still falls short of the streaming TUI runtime semantics:
 
 - `/goal <condition>` starts the first generated prompt, but does not run the goal evaluator after each model turn and therefore cannot auto-continue until the goal is reached.
 - `/loop <interval> <prompt>` persists a local task, but the classic REPL does not start the scheduler poller, so due tasks do not run while the REPL is waiting for input.

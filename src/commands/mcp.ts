@@ -15,8 +15,8 @@ export const mcpCommand: SlashCommand = {
     const report = buildLocalMcpReport(
       {
         servers: {},
-        connection_timeout_ms: parseTimeoutEnv("QINGLING_MCP_CONNECTION_TIMEOUT_MS"),
-        call_timeout_ms: parseTimeoutEnv("QINGLING_MCP_CALL_TIMEOUT_MS"),
+        connection_timeout_ms: parseTimeoutEnv("QLING_MCP_CONNECTION_TIMEOUT_MS"),
+        call_timeout_ms: parseTimeoutEnv("QLING_MCP_CALL_TIMEOUT_MS"),
       },
       process.env
     );

@@ -1,4 +1,4 @@
-# `qingling storage` 顶层本地存储盘点规格（2026-05-31）
+# `qling storage` 顶层本地存储盘点规格（2026-05-31）
 
 ## 背景
 
@@ -6,7 +6,7 @@
 
 ## 目标
 
-- 新增顶层命令 `qingling storage`。
+- 新增顶层命令 `qling storage`。
 - 复用 `/storage` 的只读本地存储盘点报告。
 - 在 `AgentLoop` 初始化前执行并退出，避免因为缺少 API key 或模型配置阻断本地诊断。
 - 输出本地路径、文件数、目录数、占用大小、扫描上限和元数据边界说明。
@@ -21,14 +21,14 @@
 
 ## 行为
 
-- `qingling storage` 输出“本地存储盘点”并以 exit code 0 退出。
+- `qling storage` 输出“本地存储盘点”并以 exit code 0 退出。
 - 支持全局 `--file-state-dir`、`--file-cache-dir`、`--workspace` 配置解析。
-- `qingling --help` 展示 `qingling storage`。
+- `qling --help` 展示 `qling storage`。
 - 与 `--continue` 或 `--resume` 组合时报模式冲突错误，保持管理命令一致性。
 
 ## 验收
 
 - 单测覆盖 CLI parser 识别 `storage`。
-- 单测覆盖帮助文案包含 `qingling storage`。
-- smoke 覆盖 `qingling storage` 可直接退出并输出本地盘点。
+- 单测覆盖帮助文案包含 `qling storage`。
+- smoke 覆盖 `qling storage` 可直接退出并输出本地盘点。
 - `npm run build`、相关测试和 `npm run ci:check` 通过。

@@ -1,4 +1,4 @@
-# `qingling config` 顶层本地配置摘要计划（2026-06-01）
+# `qling config` 顶层本地配置摘要计划（2026-06-01）
 
 ## Step 1: 测试先行
 
@@ -10,7 +10,7 @@
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `config` 顶层模式可解析。
   - `配置` 中文别名可解析。
-  - help 展示 `qingling config` 和中文别名。
+  - help 展示 `qling config` 和中文别名。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js 配置` 在 env model/api key 下输出配置摘要并退出。
   - stdout 不包含 secret 原文。

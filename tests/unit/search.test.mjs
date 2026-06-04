@@ -7,22 +7,22 @@ import { join } from "node:path";
 import { runSearch } from "../../dist/tools/search.js";
 
 async function withTempDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-search-test-"));
-  const prevWorkspace = process.env.QINGLING_WORKSPACE_DIR;
-  const prevState = process.env.QINGLING_FILE_STATE_DIR;
-  const prevCache = process.env.QINGLING_FILE_CACHE_DIR;
+  const dir = await mkdtemp(join(tmpdir(), "qling-search-test-"));
+  const prevWorkspace = process.env.QLING_WORKSPACE_DIR;
+  const prevState = process.env.QLING_FILE_STATE_DIR;
+  const prevCache = process.env.QLING_FILE_CACHE_DIR;
   try {
-    process.env.QINGLING_WORKSPACE_DIR = dir;
-    process.env.QINGLING_FILE_STATE_DIR = join(dir, ".state");
-    process.env.QINGLING_FILE_CACHE_DIR = join(dir, ".cache");
+    process.env.QLING_WORKSPACE_DIR = dir;
+    process.env.QLING_FILE_STATE_DIR = join(dir, ".state");
+    process.env.QLING_FILE_CACHE_DIR = join(dir, ".cache");
     await fn(dir);
   } finally {
-    if (prevWorkspace === undefined) delete process.env.QINGLING_WORKSPACE_DIR;
-    else process.env.QINGLING_WORKSPACE_DIR = prevWorkspace;
-    if (prevState === undefined) delete process.env.QINGLING_FILE_STATE_DIR;
-    else process.env.QINGLING_FILE_STATE_DIR = prevState;
-    if (prevCache === undefined) delete process.env.QINGLING_FILE_CACHE_DIR;
-    else process.env.QINGLING_FILE_CACHE_DIR = prevCache;
+    if (prevWorkspace === undefined) delete process.env.QLING_WORKSPACE_DIR;
+    else process.env.QLING_WORKSPACE_DIR = prevWorkspace;
+    if (prevState === undefined) delete process.env.QLING_FILE_STATE_DIR;
+    else process.env.QLING_FILE_STATE_DIR = prevState;
+    if (prevCache === undefined) delete process.env.QLING_FILE_CACHE_DIR;
+    else process.env.QLING_FILE_CACHE_DIR = prevCache;
     await rm(dir, { recursive: true, force: true });
   }
 }

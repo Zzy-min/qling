@@ -5,7 +5,7 @@ import { buildDoctorReport, formatDoctorReport } from "../../dist/doctor.js";
 
 function createContext(overrides = {}) {
   return {
-    workspaceDir: "C:\\repo\\qingling",
+    workspaceDir: "C:\\repo\\qling",
     agentLoop: {
       getSessionId: () => "session-test",
       getSessionStats: () => ({ sessionId: "session-test", turnCount: 2, tokens: 100 }),
@@ -19,12 +19,12 @@ function createContext(overrides = {}) {
 test("doctor report summarizes healthy local checks", async () => {
   const report = await buildDoctorReport(createContext(), {
     env: {
-      QINGLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qingling",
-      QINGLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qingling\\cache",
-      QINGLING_LLM_PROVIDER: "deepseek",
-      QINGLING_LLM_MODEL: "deepseek-chat",
-      QINGLING_LLM_ENDPOINT: "https://api.deepseek.com",
-      QINGLING_LLM_API_KEY: "sk-test",
+      QLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qling",
+      QLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qling\\cache",
+      QLING_LLM_PROVIDER: "deepseek",
+      QLING_LLM_MODEL: "deepseek-chat",
+      QLING_LLM_ENDPOINT: "https://api.deepseek.com",
+      QLING_LLM_API_KEY: "sk-test",
     },
     exists: () => true,
     gitBranch: () => "main",
@@ -41,15 +41,15 @@ test("doctor report summarizes healthy local checks", async () => {
 test("doctor report includes config mcp and hooks summaries without leaking secrets", async () => {
   const report = await buildDoctorReport(createContext(), {
     env: {
-      QINGLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qingling",
-      QINGLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qingling\\cache",
-      QINGLING_LLM_PROVIDER: "deepseek",
-      QINGLING_LLM_MODEL: "doctor-model",
-      QINGLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=DOCTOR_ENDPOINT_SECRET#frag",
-      QINGLING_LLM_API_KEY: "sk-doctor-secret",
-      QINGLING_MCP_CONNECTION_TIMEOUT_MS: "1111",
-      QINGLING_MCP_CALL_TIMEOUT_MS: "2222",
-      QINGLING_MCP_SERVERS: JSON.stringify({
+      QLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qling",
+      QLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qling\\cache",
+      QLING_LLM_PROVIDER: "deepseek",
+      QLING_LLM_MODEL: "doctor-model",
+      QLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=DOCTOR_ENDPOINT_SECRET#frag",
+      QLING_LLM_API_KEY: "sk-doctor-secret",
+      QLING_MCP_CONNECTION_TIMEOUT_MS: "1111",
+      QLING_MCP_CALL_TIMEOUT_MS: "2222",
+      QLING_MCP_SERVERS: JSON.stringify({
         docs: {
           enabled: true,
           transport: "http",
@@ -59,15 +59,15 @@ test("doctor report includes config mcp and hooks summaries without leaking secr
           args: [],
         },
       }),
-      QINGLING_GUARD_ENABLED: "true",
-      QINGLING_GUARD_PERMISSIONS_DEFAULT: "ask",
-      QINGLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
+      QLING_GUARD_ENABLED: "true",
+      QLING_GUARD_PERMISSIONS_DEFAULT: "ask",
+      QLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
         { tool_pattern: "bash", decision: "deny", reason: "DOCTOR_PERMISSION_REASON" },
       ]),
-      QINGLING_GUARD_RATE_LIMIT_ENABLED: "true",
-      QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE: "9",
-      QINGLING_GUARD_CONTENT_FILTER_ENABLED: "true",
-      QINGLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["DOCTOR_CUSTOM_PATTERN"]),
+      QLING_GUARD_RATE_LIMIT_ENABLED: "true",
+      QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE: "9",
+      QLING_GUARD_CONTENT_FILTER_ENABLED: "true",
+      QLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["DOCTOR_CUSTOM_PATTERN"]),
     },
     exists: () => true,
     gitBranch: () => "main",
@@ -101,8 +101,8 @@ test("doctor report includes config mcp and hooks summaries without leaking secr
 test("doctor report warns for missing local data directories", async () => {
   const report = await buildDoctorReport(createContext(), {
     env: {
-      QINGLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qingling",
-      QINGLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qingling\\cache",
+      QLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qling",
+      QLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qling\\cache",
     },
     exists: (path) => !String(path).includes("cache"),
     gitBranch: () => "main",
@@ -130,10 +130,10 @@ test("doctor report treats daemon probe failure as warn", async () => {
 test("doctor config check warns when api key is missing", async () => {
   const report = await buildDoctorReport(createContext(), {
     env: {
-      QINGLING_LLM_PROVIDER: "deepseek",
-      QINGLING_LLM_MODEL: "deepseek-chat",
-      QINGLING_LLM_ENDPOINT: "https://api.deepseek.com",
-      QINGLING_LLM_API_KEY: undefined,
+      QLING_LLM_PROVIDER: "deepseek",
+      QLING_LLM_MODEL: "deepseek-chat",
+      QLING_LLM_ENDPOINT: "https://api.deepseek.com",
+      QLING_LLM_API_KEY: undefined,
     },
     exists: () => true,
     gitBranch: () => "main",

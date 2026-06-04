@@ -16,11 +16,11 @@
    - 对缺失/非法 max token 与成本配置安全降级
 3. `collectStatusLineSnapshot`：
    - 从 `agentLoop.getTokenBudget()?.maxTokens` 或 `agentLoop.tokenBudget.maxTokens` 读取 max token
-   - 从 `process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS` 读取估算单价
+   - 从 `process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS` 读取估算单价
 4. `collectLocalStatusLineSnapshot`：
    - 接收 `maxTokens` 与 `costPer1kTokens`
 5. 顶层 CLI `src/index.ts`：
-   - `qingling statusline` 传入 `loaded.config.runtime.max_token_budget`
+   - `qling statusline` 传入 `loaded.config.runtime.max_token_budget`
    - 传入本地 env 成本估算
 6. Slash command：
    - 使用 `buildStatusLine(context)` 的增强输出

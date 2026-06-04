@@ -1,4 +1,4 @@
-# `qingling` REPL 退出挂起修复计划（2026-05-01）
+# `qling` REPL 退出挂起修复计划（2026-05-01）
 
 ## Step 1: 代码修复
 - 修改 `src/repl.ts`：在 `q/quit/exit` 分支补充 `await agent.shutdown()`，再关闭 readline。

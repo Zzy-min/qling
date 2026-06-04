@@ -1,4 +1,4 @@
-# `qingling` P1 Follow-up Findings 修复设计（2026-04-30）
+# `qling` P1 Follow-up Findings 修复设计（2026-04-30）
 
 ## 背景
 本轮针对 4 个 code review finding 做闭环修复：
@@ -19,10 +19,10 @@
 
 2. 配置接线修复
 - 扩展 `applyConfigToProcessEnv()`，新增写入：
-  - `QINGLING_MEMORY_*`
-  - `QINGLING_MCP_*`
-  - `QINGLING_METRICS_*`
-  - `QINGLING_CHANNEL_*`
+  - `QLING_MEMORY_*`
+  - `QLING_MCP_*`
+  - `QLING_METRICS_*`
+  - `QLING_CHANNEL_*`
 - `AgentLoop` 从上述 env 实际读取并应用：
   - memory: WAL/projection/dream/max entries
   - mcp: servers + timeouts
@@ -44,6 +44,6 @@
 2. `npm test`
 3. `npm run test:smoke`
 4. 手工验证：
-- `qingling run "..."` 能正常退出
+- `qling run "..."` 能正常退出
 - Telegram 通道 `sendText` 请求可达（token/chat 配置正确时）
 - `subtask` 出现在工具列表且可被 dispatch

@@ -27,7 +27,7 @@ function createContext(rootDir, scheduler) {
 }
 
 test("session loop smoke: create, list, cancel", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-loop-smoke-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-loop-smoke-"));
   const workspaceDir = path.join(root, "workspace");
   await fs.mkdir(path.join(workspaceDir, ".claude"), { recursive: true });
   await fs.writeFile(path.join(workspaceDir, ".claude", "loop.md"), "maintenance prompt", "utf-8");

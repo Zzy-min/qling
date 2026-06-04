@@ -2,7 +2,7 @@
 
 ## 背景
 
-轻灵已经有顶层 `qingling mission ...` 与会话内 `/agents` 视图，但用户在 TUI 中看到后台任务后，仍缺少就地查看详情、查看日志、执行安全控制动作的入口。为了接近 Claude Code 类“会话中管理后台 Agent”的体验，需要把 mission 的常用本地管理能力补到 slash commands。
+轻灵已经有顶层 `qling mission ...` 与会话内 `/agents` 视图，但用户在 TUI 中看到后台任务后，仍缺少就地查看详情、查看日志、执行安全控制动作的入口。为了接近 Claude Code 类“会话中管理后台 Agent”的体验，需要把 mission 的常用本地管理能力补到 slash commands。
 
 ## 目标
 

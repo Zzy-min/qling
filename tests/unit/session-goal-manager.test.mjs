@@ -7,7 +7,7 @@ import path from "node:path";
 import { SessionGoalManager } from "../../dist/session/session-goal-manager.js";
 
 test("session goal manager sets, clears, and marks achieved goal", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-goal-manager-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-manager-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-a", clock: () => 1_000 });
   await manager.init();
 

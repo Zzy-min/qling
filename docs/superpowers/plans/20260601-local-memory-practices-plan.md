@@ -3,7 +3,7 @@
 ## User Journey
 - 用户在 TUI 内输入 `/memory practices`，快速查看本地经验蒸馏结果。
 - 用户输入 `/记忆 经验 5`，看到高置信度实践及其动作/文件预览。
-- 用户在任意终端执行 `qingling memory practices`，无需启动 AgentLoop 即可审计本地实践索引。
+- 用户在任意终端执行 `qling memory practices`，无需启动 AgentLoop 即可审计本地实践索引。
 
 ## Implementation Steps
 1. 扩展 `src/memory-report.ts`：
@@ -18,7 +18,7 @@
    - 保持 `memory reindex` 原行为。
 4. 更新 help：
    - slash help 展示 `/memory practices`。
-   - `qingling --help` 展示 `memory practices`。
+   - `qling --help` 展示 `memory practices`。
 5. 写 RED 测试：
    - memory-report 单元测试覆盖 DB/table 缺失、排序、count、JSON 降级。
    - slash command 测试覆盖英文/中文。

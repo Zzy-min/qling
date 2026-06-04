@@ -1,7 +1,7 @@
 # 本地记忆浏览 `/memory`
 
 ## Summary
-- 新增只读本地记忆浏览能力：slash `/memory`、中文 `/记忆`，以及顶层 `qingling memory status|list|show` 与中文 `qingling 记忆 ...`。
+- 新增只读本地记忆浏览能力：slash `/memory`、中文 `/记忆`，以及顶层 `qling memory status|list|show` 与中文 `qling 记忆 ...`。
 - 数据源仅限 `<stateDir>/memory/memory.json` 与本地认知索引数据库元数据。
 - 不读取 session 正文、不联网、不调用模型、不重建索引。
 
@@ -10,12 +10,12 @@
 - `/memory show <id>`
 - `/记忆 [count]`
 - `/记忆 查看 <id>`
-- `qingling memory status [count]`
-- `qingling memory list [count]`
-- `qingling memory show <id>`
-- `qingling 记忆 [count]`
-- `qingling 记忆 查看 <id>`
-- 兼容保留：`qingling memory reindex [--full]`
+- `qling memory status [count]`
+- `qling memory list [count]`
+- `qling memory show <id>`
+- `qling 记忆 [count]`
+- `qling 记忆 查看 <id>`
+- 兼容保留：`qling memory reindex [--full]`
 
 ## Behavior
 - 默认展示最近 10 条 persisted memory，最多 50 条。
@@ -34,7 +34,7 @@
 
 ## Acceptance
 - `/help` 展示 `/memory` 与 `/记忆`。
-- `qingling --help` 展示 `memory status|list|show` 与中文别名。
+- `qling --help` 展示 `memory status|list|show` 与中文别名。
 - 单元测试覆盖缺失目录、排序/count、show、认知索引元数据、session 正文不泄露。
 - Slash 测试覆盖 `/memory` 和 `/记忆 查看 <id>`。
 - Smoke 测试覆盖顶层 `memory status` 与中文 `记忆 查看 <id>`。

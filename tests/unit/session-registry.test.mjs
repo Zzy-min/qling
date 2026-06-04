@@ -7,7 +7,7 @@ import path from "node:path";
 import { SessionRegistry } from "../../dist/session/session-registry.js";
 
 test("session registry: save, list, load by name/sessionId, and resolve latest", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-session-registry-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-session-registry-"));
   const registry = new SessionRegistry({ stateDir });
 
   await registry.save({

@@ -27,7 +27,7 @@ export interface DiscoveryManifest {
   }>;
   /** 兼容的最低轻灵版本 */
   engines?: {
-    qingling: string;
+    qling: string;
   };
   /** 签名摘要 (安全校验) */
   signature?: string;

@@ -54,7 +54,7 @@ function waitForExit(child, timeoutMs = 20_000) {
 }
 
 test("mission attach smoke: follows logs until mission reaches terminal state", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-attach-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-attach-"));
   const daemonPort = await getFreePort();
   const llmPort = await getFreePort();
   const baseUrl = `http://127.0.0.1:${daemonPort}`;
@@ -91,14 +91,15 @@ test("mission attach smoke: follows logs until mission reaches terminal state", 
     env: {
       ...process.env,
       OPENAI_API_KEY: "test-key",
-      QINGLING_LLM_PROVIDER: "openai",
-      QINGLING_LLM_ENDPOINT: `http://127.0.0.1:${llmPort}`,
-      QINGLING_LLM_MODEL: "gpt-test",
-      QINGLING_DAEMON_PORT: String(daemonPort),
-      QINGLING_FILE_STATE_DIR: stateDir,
-      QINGLING_MEMORY_WAL_ENABLED: "false",
-      QINGLING_METRICS_ENABLED: "false",
-      QINGLING_FEATURES_DYNAMIC_DISCOVERY: "false",
+      QLING_LLM_API_KEY: "test-key",
+      QLING_LLM_PROVIDER: "openai",
+      QLING_LLM_ENDPOINT: `http://127.0.0.1:${llmPort}`,
+      QLING_LLM_MODEL: "gpt-test",
+      QLING_DAEMON_PORT: String(daemonPort),
+      QLING_FILE_STATE_DIR: stateDir,
+      QLING_MEMORY_WAL_ENABLED: "false",
+      QLING_METRICS_ENABLED: "false",
+      QLING_FEATURES_DYNAMIC_DISCOVERY: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -122,11 +123,11 @@ test("mission attach smoke: follows logs until mission reaches terminal state", 
     const attach = spawn(process.execPath, [ENTRY, "mission", "attach", payload.missionId], {
       env: {
         ...process.env,
-        QINGLING_DAEMON_PORT: String(daemonPort),
-        QINGLING_FILE_STATE_DIR: stateDir,
+        QLING_DAEMON_PORT: String(daemonPort),
+        QLING_FILE_STATE_DIR: stateDir,
         OPENAI_API_KEY: "",
         DEEPSEEK_API_KEY: "",
-        QINGLING_LLM_API_KEY: "",
+        QLING_LLM_API_KEY: "",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -148,8 +149,8 @@ test("mission attach smoke: follows logs until mission reaches terminal state", 
     spawnSync(process.execPath, [ENTRY, "daemon", "stop"], {
       env: {
         ...process.env,
-        QINGLING_DAEMON_PORT: String(daemonPort),
-        QINGLING_FILE_STATE_DIR: stateDir,
+        QLING_DAEMON_PORT: String(daemonPort),
+        QLING_FILE_STATE_DIR: stateDir,
       },
       encoding: "utf-8",
     });

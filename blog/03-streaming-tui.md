@@ -86,7 +86,7 @@ private printHeader(): void {
 效果：
 ```
 >_ 轻灵 Agent CLI    deepseek-chat    online    tools 11
-/mnt/c/Users/Lenovo/projects/qingling
+/mnt/c/Users/Lenovo/projects/qling
 ```
 
 ### 工具执行渲染

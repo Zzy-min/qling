@@ -1,4 +1,4 @@
-# `qingling hooks` / `/hooks` 本地 Hooks 可视化规格（2026-06-01）
+# `qling hooks` / `/hooks` 本地 Hooks 可视化规格（2026-06-01）
 
 ## 背景
 
@@ -6,8 +6,8 @@
 
 ## 目标
 
-- 新增顶层命令 `qingling hooks`。
-- 新增中文顶层别名 `qingling 钩子`。
+- 新增顶层命令 `qling hooks`。
+- 新增中文顶层别名 `qling 钩子`。
 - 新增 slash command `/hooks`。
 - 新增中文 slash 别名 `/钩子`。
 - 输出当前本地 hooks/guard 摘要：
@@ -32,8 +32,8 @@
 
 ## 行为
 
-- `qingling hooks` 输出本地 hooks 摘要后退出。
-- `qingling 钩子` 与英文顶层命令行为一致。
+- `qling hooks` 输出本地 hooks 摘要后退出。
+- `qling 钩子` 与英文顶层命令行为一致。
 - `/hooks` 在当前会话输出同一类摘要，不改变会话状态。
 - `/钩子` 与 `/hooks` 行为一致。
 - 缺省配置下也必须输出稳定摘要，而不是报错。

@@ -1,4 +1,4 @@
-# `qingling` P1 Follow-up Findings 修复计划（2026-04-30）
+# `qling` P1 Follow-up Findings 修复计划（2026-04-30）
 
 ## Step 1: 退出生命周期
 - 修改 `src/index.ts`：

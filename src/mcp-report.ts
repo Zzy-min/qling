@@ -1,6 +1,6 @@
-import type { QinglingConfig } from "./config.js";
+import type { QlingConfig } from "./config.js";
 
-type McpConfig = QinglingConfig["mcp"];
+type McpConfig = QlingConfig["mcp"];
 
 export interface LocalMcpServerReport {
   name: string;
@@ -73,7 +73,7 @@ export function buildLocalMcpReport(
   config: McpConfig,
   env: Record<string, string | undefined> = {}
 ): LocalMcpReport {
-  const envServers = parseEnvServers(env.QINGLING_MCP_SERVERS);
+  const envServers = parseEnvServers(env.QLING_MCP_SERVERS);
   const serversConfig = envServers ?? config.servers ?? {};
   const serverEntries = Object.entries(serversConfig);
   const servers = serverEntries

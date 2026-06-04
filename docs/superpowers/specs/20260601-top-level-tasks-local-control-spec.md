@@ -1,18 +1,18 @@
-# 顶层任务控制面 `qingling tasks`
+# 顶层任务控制面 `qling tasks`
 
 ## Summary
-- 新增顶层本地命令 `qingling tasks list|cancel` 与中文别名 `qingling 任务 ...`。
+- 新增顶层本地命令 `qling tasks list|cancel` 与中文别名 `qling 任务 ...`。
 - 目标是让用户不用进入当前 TUI session，也能查看和停止本机已持久化的 `/loop` 任务。
 - 命令只访问 `<stateDir>/session-tasks/*.json`，不读取 session 正文、不联网、不调用模型。
 
 ## Public Interface
-- `qingling tasks`
-- `qingling tasks list`
-- `qingling tasks list [count]`
-- `qingling tasks cancel <taskId>`
-- `qingling 任务`
-- `qingling 任务 列表 [count]`
-- `qingling 任务 取消 <taskId>`
+- `qling tasks`
+- `qling tasks list`
+- `qling tasks list [count]`
+- `qling tasks cancel <taskId>`
+- `qling 任务`
+- `qling 任务 列表 [count]`
+- `qling 任务 取消 <taskId>`
 
 ## Behavior
 - `tasks` 无子命令等价于 `tasks list`。
@@ -35,5 +35,5 @@
 - parser 能识别 `tasks` 和 `任务` 为管理命令并保留后续参数。
 - help 展示英文主命令和中文别名。
 - 单元测试覆盖缺失目录、排序、count 截断、取消持久化和未读取 session 正文。
-- smoke 测试覆盖 `qingling tasks list` 和 `qingling 任务 取消 <id>` 的顶层执行。
+- smoke 测试覆盖 `qling tasks list` 和 `qling 任务 取消 <id>` 的顶层执行。
 - `npm run ci:check` 通过。

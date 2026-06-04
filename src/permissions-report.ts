@@ -91,8 +91,8 @@ export function buildLocalPermissionsReport(input: LocalPermissionsReportInput):
       reason: rule.reason || null,
     })),
     env: {
-      guardDefault: safeText(env.QINGLING_GUARD_PERMISSIONS_DEFAULT, "") || null,
-      compatMode: safeText(env.QINGLING_PERMISSIONS_MODE, "") || null,
+      guardDefault: safeText(env.QLING_GUARD_PERMISSIONS_DEFAULT, "") || null,
+      compatMode: safeText(env.QLING_PERMISSIONS_MODE, "") || null,
     },
   };
 }
@@ -118,8 +118,8 @@ export function explainLocalPermissionDecision(
     defaultMode,
     ruleCount: rules.length,
     env: {
-      guardDefault: safeText(env.QINGLING_GUARD_PERMISSIONS_DEFAULT, "") || null,
-      compatMode: safeText(env.QINGLING_PERMISSIONS_MODE, "") || null,
+      guardDefault: safeText(env.QLING_GUARD_PERMISSIONS_DEFAULT, "") || null,
+      compatMode: safeText(env.QLING_PERMISSIONS_MODE, "") || null,
     },
   };
 }
@@ -131,8 +131,8 @@ export function formatLocalPermissionsReport(report: LocalPermissionsReport): st
     "-----------------------------------------",
     `Default   : ${formatPermissionMode(report.defaultMode)}`,
     `Rules     : ${report.rules.length}`,
-    `Env       : QINGLING_GUARD_PERMISSIONS_DEFAULT=${report.env.guardDefault ?? "-"}`,
-    `Compat    : QINGLING_PERMISSIONS_MODE=${report.env.compatMode ?? "-"}`,
+    `Env       : QLING_GUARD_PERMISSIONS_DEFAULT=${report.env.guardDefault ?? "-"}`,
+    `Compat    : QLING_PERMISSIONS_MODE=${report.env.compatMode ?? "-"}`,
     "说明      : allow=自动放行, ask=询问确认, deny=默认拒绝",
     "",
   ];
@@ -164,8 +164,8 @@ export function formatPermissionExplanationReport(report: PermissionExplanationR
     `Effect    : ${report.effect}`,
     `Default   : ${formatPermissionMode(report.defaultMode)}`,
     `Rules     : ${report.ruleCount}`,
-    `Env       : QINGLING_GUARD_PERMISSIONS_DEFAULT=${report.env.guardDefault ?? "-"}`,
-    `Compat    : QINGLING_PERMISSIONS_MODE=${report.env.compatMode ?? "-"}`,
+    `Env       : QLING_GUARD_PERMISSIONS_DEFAULT=${report.env.guardDefault ?? "-"}`,
+    `Compat    : QLING_PERMISSIONS_MODE=${report.env.compatMode ?? "-"}`,
     "-----------------------------------------",
     "边界      : 只读取当前本地配置与环境变量；不执行工具、不修改配置、不调用模型、不联网。",
     "",

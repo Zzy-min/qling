@@ -30,7 +30,7 @@ export interface DoctorOptions {
   daemonProbe?: () => Promise<{ ok: boolean; detail: string }>;
 }
 
-const DEFAULT_STATE_DIR = join(homedir(), ".qingling");
+const DEFAULT_STATE_DIR = join(homedir(), ".qling");
 const DEFAULT_DAEMON_HEALTH_URL = "http://127.0.0.1:39871/health";
 
 function summarize(checks: DoctorCheck[]): Record<DoctorStatus, number> {
@@ -71,10 +71,10 @@ function boolText(value: boolean): "on" | "off" {
 }
 
 function buildConfigCheck(env: DoctorOptions["env"]): DoctorCheck {
-  const provider = envText(env, "QINGLING_LLM_PROVIDER") || "unset";
-  const model = envText(env, "QINGLING_LLM_MODEL") || "unset";
-  const endpoint = sanitizeEndpoint(envText(env, "QINGLING_LLM_ENDPOINT"));
-  const apiKeyStatus = envText(env, "QINGLING_LLM_API_KEY") ? "set(redacted)" : "missing";
+  const provider = envText(env, "QLING_LLM_PROVIDER") || "unset";
+  const model = envText(env, "QLING_LLM_MODEL") || "unset";
+  const endpoint = sanitizeEndpoint(envText(env, "QLING_LLM_ENDPOINT"));
+  const apiKeyStatus = envText(env, "QLING_LLM_API_KEY") ? "set(redacted)" : "missing";
 
   return {
     id: "config",
@@ -88,8 +88,8 @@ function buildMcpCheck(env: DoctorOptions["env"]): DoctorCheck {
   const report = buildLocalMcpReport(
     {
       servers: {},
-      connection_timeout_ms: envNumber(env, "QINGLING_MCP_CONNECTION_TIMEOUT_MS"),
-      call_timeout_ms: envNumber(env, "QINGLING_MCP_CALL_TIMEOUT_MS"),
+      connection_timeout_ms: envNumber(env, "QLING_MCP_CONNECTION_TIMEOUT_MS"),
+      call_timeout_ms: envNumber(env, "QLING_MCP_CALL_TIMEOUT_MS"),
     },
     env as Record<string, string | undefined>
   );
@@ -114,7 +114,7 @@ function buildHooksCheck(env: DoctorOptions["env"]): DoctorCheck {
 }
 
 async function probeDaemon(env: DoctorOptions["env"]): Promise<{ ok: boolean; detail: string }> {
-  const url = env?.QINGLING_DAEMON_HEALTH_URL ?? DEFAULT_DAEMON_HEALTH_URL;
+  const url = env?.QLING_DAEMON_HEALTH_URL ?? DEFAULT_DAEMON_HEALTH_URL;
   if (!isLoopbackUrl(url)) {
     return { ok: false, detail: "跳过：daemon health URL 不是本机 loopback。生产诊断不会访问公网。" };
   }
@@ -144,15 +144,15 @@ export async function buildDoctorReport(
   const exists = options.exists ?? existsSync;
   const gitBranch = options.gitBranch ?? resolveGitBranch;
   const nodeVersion = options.nodeVersion ?? process.versions.node;
-  const stateDir = env.QINGLING_FILE_STATE_DIR || join(homedir(), ".qingling");
-  const cacheDir = env.QINGLING_FILE_CACHE_DIR || join(stateDir, "cache");
+  const stateDir = env.QLING_FILE_STATE_DIR || join(homedir(), ".qling");
+  const cacheDir = env.QLING_FILE_CACHE_DIR || join(stateDir, "cache");
   const workspaceDir = context.workspaceDir || (context.agentLoop as any).getWorkspaceDir?.() || process.cwd();
   const stats = typeof (context.agentLoop as any).getSessionStats === "function"
     ? await (context.agentLoop as any).getSessionStats()
     : { sessionId: (context.agentLoop as any).getSessionId?.() ?? "" };
   const permissionMode = typeof (context.agentLoop as any).getPermissionMode === "function"
     ? (context.agentLoop as any).getPermissionMode()
-    : env.QINGLING_GUARD_PERMISSIONS_DEFAULT;
+    : env.QLING_GUARD_PERMISSIONS_DEFAULT;
   const branch = gitBranch(workspaceDir);
   const daemon = options.daemonProbe ? await options.daemonProbe() : await probeDaemon(env);
 

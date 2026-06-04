@@ -12,7 +12,7 @@ import {
 import { SessionRegistry } from "../../dist/session/session-registry.js";
 
 async function withTempState(fn) {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-session-list-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-session-list-"));
   try {
     await fn(stateDir);
   } finally {
@@ -70,7 +70,7 @@ test("session list formatter outputs summaries without message bodies", async ()
     await registry.save({
       name: "session-visible",
       sessionId: "sid-visible",
-      workspaceDir: "C:/repo/qingling",
+      workspaceDir: "C:/repo/qling",
       createdAt: "2026-05-31T00:00:00.000Z",
       updatedAt: "2026-05-31T00:01:00.000Z",
       messages: [{ role: "user", content: "SECRET_MESSAGE_BODY_SHOULD_NOT_APPEAR" }],
@@ -88,7 +88,7 @@ test("session list formatter outputs summaries without message bodies", async ()
     assert.match(output, /turns=3/);
     assert.match(output, /messages=1/);
     assert.match(output, /tokens=1,234/);
-    assert.match(output, /C:\/repo\/qingling/);
+    assert.match(output, /C:\/repo\/qling/);
     assert.doesNotMatch(output, /SECRET_MESSAGE_BODY_SHOULD_NOT_APPEAR/);
   });
 });

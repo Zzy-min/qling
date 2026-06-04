@@ -66,7 +66,7 @@ export function buildToolsSection(tools: AgentConfig["tools"]): PromptSection {
   let content = `你可用的工具：\n\n${toolList}`;
 
   // v0.3 Tool Spec Boost
-  if (process.env.QINGLING_FEATURES_TOOL_SPEC_BOOST === "true") {
+  if (process.env.QLING_FEATURES_TOOL_SPEC_BOOST === "true") {
     content += "\n\n" + buildToolSpecBoostPrompt(tools);
   }
 
@@ -145,7 +145,7 @@ export function buildMemorySection(): PromptSection {
   return {
     id: SECTION_IDS.MEMORY,
     title: "记忆",
-    content: `【长期记忆】（从 ~/.qingling/memory/ 加载）
+    content: `【长期记忆】（从 ~/.qling/memory/ 加载）
 如无记忆则忽略此节。`,
     cacheable: false,
     dynamic: true,
@@ -240,9 +240,9 @@ export function buildSystemPrompt(
 
   const memorySec = registry.get(SECTION_IDS.MEMORY);
   if (memorySec && dynamicSections?.memory) {
-    memorySec.content = `【长期记忆】（从 ~/.qingling/memory/ 加载）\n${dynamicSections.memory}`;
+    memorySec.content = `【长期记忆】（从 ~/.qling/memory/ 加载）\n${dynamicSections.memory}`;
   } else if (memorySec) {
-    memorySec.content = `【长期记忆】（从 ~/.qingling/memory/ 加载）\n如无记忆则忽略此节。`;
+    memorySec.content = `【长期记忆】（从 ~/.qling/memory/ 加载）\n如无记忆则忽略此节。`;
   }
 
   // 按顺序拼装

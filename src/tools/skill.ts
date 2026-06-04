@@ -18,7 +18,7 @@ import { listSkills, searchSkills, parseSkillFile } from "../skills/registry.js"
 export function getSkillDirs(): string[] {
   const dirs = [
     resolve(process.cwd(), "skills"),
-    resolve(process.cwd(), ".qingling/skills"),
+    resolve(process.cwd(), ".qling/skills"),
   ];
   const hermesHome = process.env.HERMES_HOME;
   if (hermesHome && hermesHome.trim()) {

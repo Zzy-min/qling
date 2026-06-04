@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Session Resume 与 `--continue` 计划（2026-05-16）
+# `qling` 阶段 B：Session Resume 与 `--continue` 计划（2026-05-16）
 
 ## Step 1: 测试先行
 

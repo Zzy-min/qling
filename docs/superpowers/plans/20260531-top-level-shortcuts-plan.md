@@ -1,11 +1,11 @@
-# `qingling shortcuts` 顶层命令计划（2026-05-31）
+# `qling shortcuts` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["shortcuts"])` 返回 `mode=shortcuts`。
   - `parseCliArgs(["快捷键"])` 返回 `mode=shortcuts`。
-  - help 包含 `qingling shortcuts` 和 `快捷键`。
+  - help 包含 `qling shortcuts` 和 `快捷键`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js 快捷键` 以 0 退出。
   - stdout 包含“TUI 快捷键”、`Ctrl+N`、`Ctrl+R` 和本地说明。

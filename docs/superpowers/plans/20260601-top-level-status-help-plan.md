@@ -11,7 +11,7 @@
   - `status` 顶层模式可解析。
   - `状态` 中文别名可解析。
   - `help` 与 `帮助` 输出 help mode。
-  - help 文本展示 `qingling status`、`qingling help` 与中文别名。
+  - help 文本展示 `qling status`、`qling help` 与中文别名。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js status` 输出本地状态并退出，且不泄露 secret。
 

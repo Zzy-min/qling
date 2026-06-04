@@ -1,4 +1,4 @@
-# `qingling shortcuts` 顶层快捷键帮助规格（2026-05-31）
+# `qling shortcuts` 顶层快捷键帮助规格（2026-05-31）
 
 ## 背景
 
@@ -6,8 +6,8 @@
 
 ## 目标
 
-- 新增顶层命令 `qingling shortcuts`。
-- 新增中文别名 `qingling 快捷键`。
+- 新增顶层命令 `qling shortcuts`。
+- 新增中文别名 `qling 快捷键`。
 - 顶层命令复用 `/shortcuts` 的文案，避免 shell 与 TUI 帮助漂移。
 - 在 `AgentLoop` 初始化前执行并退出，不要求 API key/provider 可用。
 - 输出只包含本地 TUI 快捷键说明，不读取本地会话正文、不联网、不调用模型。
@@ -21,14 +21,14 @@
 
 ## 行为
 
-- `qingling shortcuts` 输出“ TUI 快捷键”并以 exit code 0 退出。
-- `qingling 快捷键` 等价于 `qingling shortcuts`。
-- `qingling --help` 展示英文主命令和中文别名。
+- `qling shortcuts` 输出“ TUI 快捷键”并以 exit code 0 退出。
+- `qling 快捷键` 等价于 `qling shortcuts`。
+- `qling --help` 展示英文主命令和中文别名。
 - 与 `--continue` 或 `--resume` 组合时报模式冲突错误，保持管理命令一致性。
 
 ## 验收
 
 - 单测覆盖 `shortcuts` 与 `快捷键` 顶层解析。
-- 单测覆盖 help 文案包含 `qingling shortcuts` 和 `快捷键`。
-- smoke 覆盖 `qingling 快捷键` 可直接退出并输出快捷键帮助。
+- 单测覆盖 help 文案包含 `qling shortcuts` 和 `快捷键`。
+- smoke 覆盖 `qling 快捷键` 可直接退出并输出快捷键帮助。
 - `npm run build`、相关测试和 `npm run ci:check` 通过。

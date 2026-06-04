@@ -1,4 +1,4 @@
-# `qingling` 全量提升蓝图实施设计（Foundation v1）
+# `qling` 全量提升蓝图实施设计（Foundation v1）
 
 ## 目标
 - 将“全量蓝图”转化为可运行的第一阶段工程基座，覆盖 Phase 0-2 的核心交付。
@@ -7,7 +7,7 @@
 
 ## 本轮范围（落地）
 1. 统一配置模型（优先级固定）：
-   - `CLI flags > QINGLING_* 环境变量 > config 文件 > 默认值`
+   - `CLI flags > QLING_* 环境变量 > config 文件 > 默认值`
    - 支持 `--config`，支持 JSON/YAML 配置文件。
    - 支持配置内 `${ENV_VAR}` 展开与缺失变量 warning。
 2. 统一运行根目录：

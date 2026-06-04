@@ -21,7 +21,7 @@ import {
 } from "../../dist/memory-report.js";
 
 async function withTempDir(fn) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-memory-report-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-memory-report-"));
   try {
     return await fn(dir);
   } finally {

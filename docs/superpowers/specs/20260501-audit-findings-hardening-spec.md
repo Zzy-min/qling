@@ -1,4 +1,4 @@
-# `qingling` 审查发现修复设计（2026-05-01）
+# `qling` 审查发现修复设计（2026-05-01）
 
 ## 背景
 本轮代码审查确认 4 个问题：
@@ -36,7 +36,7 @@
 - 审批请求加本地 TTL，超时自动 deny 并清理 pending。
 
 ### D. 配置项落地
-- LLM HTTP 请求超时改为优先使用 `QINGLING_LLM_REQUEST_TIMEOUT_MS`（来自配置映射）。
+- LLM HTTP 请求超时改为优先使用 `QLING_LLM_REQUEST_TIMEOUT_MS`（来自配置映射）。
 - `runtime.tool_repeat_limit` 用于限制同签名工具调用重复次数，超限返回结构化错误而非无限重复。
 
 ## 验收

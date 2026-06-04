@@ -1,9 +1,9 @@
 # 本地记忆搜索实施计划
 
 ## User Journey
-- 用户在 TUI 内输入 `/memory search qingling 5`，快速看到本地持久记忆中与 qingling 相关的条目。
+- 用户在 TUI 内输入 `/memory search qling 5`，快速看到本地持久记忆中与 qling 相关的条目。
 - 用户看到每条结果的 `matched via` 标签，知道命中来自 content、source 还是 id。
-- 用户在任意终端执行 `qingling memory search "权限模式"`，无需启动 AgentLoop 即可本地检索记忆。
+- 用户在任意终端执行 `qling memory search "权限模式"`，无需启动 AgentLoop 即可本地检索记忆。
 
 ## Implementation Steps
 1. 扩展 `src/memory-report.ts`：
@@ -18,7 +18,7 @@
    - 保持 `memory reindex` 原路径不变。
 4. 更新 help：
    - slash help 展示 `/memory search`。
-   - `qingling --help` 展示 `memory search`。
+   - `qling --help` 展示 `memory search`。
 5. 写 RED 测试：
    - memory report 单元测试。
    - slash command 测试。

@@ -1,10 +1,10 @@
-# `qingling` 交互体验：本地 `/mcp` 可视化实施计划（2026-06-01）
+# `qling` 交互体验：本地 `/mcp` 可视化实施计划（2026-06-01）
 
 ## Step 1: 测试先行
 
 - 扩展 `tests/unit/slash-commands.test.mjs`：
   - `/help` 包含 `/mcp` 与 `/外部工具`。
-  - `/mcp` 从 `QINGLING_MCP_SERVERS` 输出本地 MCP 摘要。
+  - `/mcp` 从 `QLING_MCP_SERVERS` 输出本地 MCP 摘要。
   - `/mcp` 不输出 URL userinfo/query/header secret。
   - `/外部工具` 中文别名可用。
 

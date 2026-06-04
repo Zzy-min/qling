@@ -18,7 +18,7 @@ import { AgentLoop } from "./agent-loop.js";
 import { Repl } from "./repl.js";
 import { StreamingREPL } from "./tui/streaming-repl.js";
 import { buildHelpText, formatCliError, parseCliArgs } from "./cli/startup-contract.js";
-import { applyConfigToProcessEnv, loadQinglingConfig } from "./config.js";
+import { applyConfigToProcessEnv, loadQlingConfig } from "./config.js";
 import {
   CliChannelBootstrapError,
   resolveRunModeChannel,
@@ -73,8 +73,8 @@ function findEnvPaths(): string[] {
     dir = parent;
   }
 
-  // 2. 全局配置 (~/.qingling/.env，作为回退)
-  const globalEnv = path.join(os.homedir(), ".qingling", ".env");
+  // 2. 全局配置 (~/.qling/.env，作为回退)
+  const globalEnv = path.join(os.homedir(), ".qling", ".env");
   if (fs.existsSync(globalEnv)) {
     paths.push(globalEnv);
   }
@@ -348,7 +348,7 @@ async function main() {
 
   // v0.4 Onboarding Tutorial (仅在交互模式下触发)
   if (decision.mode === "chat" || decision.mode === "repl") {
-    await checkOnboarding();
+    await checkOnboarding({ stateDir: decision.global.fileStateDir });
   }
 
   for (const warning of decision.warnings) {
@@ -357,7 +357,7 @@ async function main() {
 
   let loaded;
   try {
-    loaded = await loadQinglingConfig(decision.global);
+    loaded = await loadQlingConfig(decision.global);
   } catch (err) {
     console.error(
       formatCliError("CONFIG_LOAD_FAILED", err instanceof Error ? err.message : String(err))
@@ -368,10 +368,10 @@ async function main() {
   for (const warning of loaded.warnings) {
     console.error(`Warning: ${warning}`);
   }
-  const originalMcpServersEnv = process.env.QINGLING_MCP_SERVERS;
+  const originalMcpServersEnv = process.env.QLING_MCP_SERVERS;
   applyConfigToProcessEnv(loaded.config);
   const stateDir = loaded.config.runtime.file_state_dir;
-  const DAEMON_PORT = process.env.QINGLING_DAEMON_PORT || "9998";
+  const DAEMON_PORT = process.env.QLING_DAEMON_PORT || "9998";
   const daemonUrl = `http://localhost:${DAEMON_PORT}`;
   let standaloneMissionManagerPromise: Promise<MissionManager> | null = null;
   const getStandaloneMissionManager = async (): Promise<MissionManager> => {
@@ -420,8 +420,8 @@ async function main() {
     }, {
       env: {
         ...process.env,
-        QINGLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
-        QINGLING_FILE_CACHE_DIR: loaded.config.runtime.file_cache_dir,
+        QLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
+        QLING_FILE_CACHE_DIR: loaded.config.runtime.file_cache_dir,
       },
     });
     console.log(formatLocalStorageReport(report).join("\n"));
@@ -441,7 +441,7 @@ async function main() {
       count: parseSessionExportCount(decision.subArgs[0]),
       env: {
         ...process.env,
-        QINGLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
+        QLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
       },
     });
     console.log(formatSessionExportIndex(report).join("\n"));
@@ -616,7 +616,7 @@ async function main() {
       model: loaded.config.llm.model,
       permissionMode: loaded.config.guard.permissions.default,
       maxTokens: loaded.config.runtime.max_token_budget,
-      costPer1kTokens: parseStatusLineCostPer1k(process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS),
+      costPer1kTokens: parseStatusLineCostPer1k(process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS),
     });
     console.log("");
     console.log("◎ statusline");
@@ -667,7 +667,7 @@ async function main() {
   if (decision.mode === "mcp") {
     console.log(formatLocalMcpReport(buildLocalMcpReport(loaded.config.mcp, {
       ...process.env,
-      QINGLING_MCP_SERVERS: originalMcpServersEnv ?? process.env.QINGLING_MCP_SERVERS,
+      QLING_MCP_SERVERS: originalMcpServersEnv ?? process.env.QLING_MCP_SERVERS,
     })).join("\n"));
     return;
   }
@@ -680,8 +680,8 @@ async function main() {
   if (decision.mode === "daemon") {
     const [sub] = decision.subArgs;
     const daemonOptions = {
-      stateDir: process.env.QINGLING_FILE_STATE_DIR || loaded.config.runtime.file_state_dir || path.join(os.homedir(), ".qingling"),
-      port: Number(process.env.QINGLING_DAEMON_PORT || "9998"),
+      stateDir: process.env.QLING_FILE_STATE_DIR || loaded.config.runtime.file_state_dir || path.join(os.homedir(), ".qling"),
+      port: Number(process.env.QLING_DAEMON_PORT || "9998"),
       daemonEntry: path.join(DIST_DIR, "daemon.js"),
       cwd: process.cwd(),
       env: process.env,
@@ -973,7 +973,7 @@ async function main() {
     if (decision.mode === "dashboard") {
       const [sub] = decision.subArgs;
       if (sub === "start") {
-        const port = process.env.QINGLING_DASHBOARD_PORT || "9999";
+        const port = process.env.QLING_DASHBOARD_PORT || "9999";
         const ds = (agent as any).dashboardServer;
         // 检查是否真正成功开启监听
         if (!ds || !ds.listening) {

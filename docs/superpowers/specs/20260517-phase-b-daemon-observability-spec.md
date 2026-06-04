@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Daemon Observability for Goal/Tasks（2026-05-17）
+# `qling` 阶段 B：Daemon Observability for Goal/Tasks（2026-05-17）
 
 ## 背景
 
@@ -23,7 +23,7 @@ durable runner 已可用，但交互层仍有两个可观测缺口：
 ## 非目标
 
 1. 本轮不新增 Dashboard 页面。
-2. 本轮不新增 top-level `qingling session` 子命令。
+2. 本轮不新增 top-level `qling session` 子命令。
 3. 本轮不改默认行为（local runner 仍是默认）。
 
 ## 方案

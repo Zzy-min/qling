@@ -4,14 +4,20 @@ import * as os from "os";
 import { stdin as input, stdout as output } from "process";
 import * as readline from "readline/promises";
 
-export async function checkOnboarding(): Promise<void> {
-  const onboardedFile = path.join(os.homedir(), ".qingling", ".onboarded");
+export async function checkOnboarding(options: { stateDir?: string | null } = {}): Promise<void> {
+  if (!input.isTTY) {
+    return;
+  }
+
+  const stateDir = options.stateDir ? path.resolve(options.stateDir) : path.join(os.homedir(), ".qling");
+  const onboardedFile = path.join(stateDir, ".onboarded");
   
   try {
     await fs.access(onboardedFile);
     return; // Already onboarded
   } catch {
     await startOnboarding();
+    await fs.mkdir(stateDir, { recursive: true });
     await fs.writeFile(onboardedFile, "true", "utf-8");
   }
 }

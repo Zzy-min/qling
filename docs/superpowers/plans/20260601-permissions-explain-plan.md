@@ -14,7 +14,7 @@
 2. 增强 slash command `src/commands/permissions.ts`：
    - 支持 `explain|解释 <tool>`
    - 从 `context.agentLoop` 或 env 读取 default mode
-   - 从 `QINGLING_GUARD_PERMISSIONS_RULES` 解析本地规则
+   - 从 `QLING_GUARD_PERMISSIONS_RULES` 解析本地规则
 3. 增强 top-level CLI `src/index.ts`：
    - `permissions explain <tool>`
    - 中文 `权限 解释 <tool>`

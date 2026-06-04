@@ -7,7 +7,7 @@ export class DaemonSessionApi {
   private readonly client: AxiosInstance;
 
   constructor(baseUrl?: string) {
-    const port = process.env.QINGLING_DAEMON_PORT || "9998";
+    const port = process.env.QLING_DAEMON_PORT || "9998";
     this.client = axios.create({
       baseURL: baseUrl ?? `http://127.0.0.1:${port}`,
       timeout: 3_000,

@@ -429,7 +429,7 @@ class MCPClient {
     await this.sendRequest("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "qingling", version: "0.5.0" },
+      clientInfo: { name: "qling", version: "0.5.0" },
     });
   }
 
@@ -448,7 +448,7 @@ class MCPClient {
 
 ```bash
 # .env
-QINGLING_MCP_SERVERS='{
+QLING_MCP_SERVERS='{
   "filesystem": {
     "command": "npx",
     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
@@ -488,7 +488,7 @@ QINGLING_MCP_SERVERS='{
 - 接入自己的 LLM API
 - 把 TUI 改成你喜欢的风格
 
-代码在 https://github.com/Zzy-min/qingling，欢迎 Star 和 PR。
+代码在 https://github.com/Zzy-min/qling，欢迎 Star 和 PR。
 
 ---
 

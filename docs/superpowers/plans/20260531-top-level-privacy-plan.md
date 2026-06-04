@@ -1,4 +1,4 @@
-# `qingling privacy` 顶层命令计划（2026-05-31）
+# `qling privacy` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
@@ -6,7 +6,7 @@
   - 新增本地 builder 测试，临时 state dir 内有会话快照时只统计摘要数量，不暴露正文。
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["privacy"])` 返回 `mode=privacy`。
-  - `buildHelpText()` 包含 `qingling privacy`。
+  - `buildHelpText()` 包含 `qling privacy`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js --file-state-dir <tmp> privacy` 以 0 退出。
   - stdout 包含“本地数据留存”和会话数量，不包含会话正文。

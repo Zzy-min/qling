@@ -7,7 +7,7 @@ import path from "node:path";
 import { SessionScheduler } from "../../dist/session/session-scheduler.js";
 
 test("session scheduler creates, lists, and cancels loop tasks", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-scheduler-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-scheduler-"));
   const calls = [];
   const scheduler = new SessionScheduler({
     stateDir,
@@ -39,7 +39,7 @@ test("session scheduler creates, lists, and cancels loop tasks", async () => {
 });
 
 test("session scheduler marks due tasks as pending when busy, then runs once after idle", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-scheduler-busy-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-scheduler-busy-"));
   const fired = [];
   let now = 0;
   const scheduler = new SessionScheduler({
@@ -77,7 +77,7 @@ test("session scheduler marks due tasks as pending when busy, then runs once aft
 });
 
 test("session scheduler filters execution by runner", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-scheduler-runner-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-scheduler-runner-"));
   const sessionCalls = [];
   const daemonCalls = [];
   let now = 0;

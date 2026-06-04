@@ -12,7 +12,7 @@
 
 - 新增 `src/commands/agents.ts`：
   - 从 `context.agentLoop.getRuntimeRootDir()` 获取 state dir。
-  - 缺失时使用 `QINGLING_FILE_STATE_DIR` 或本机默认 `.qingling`。
+  - 缺失时使用 `QLING_FILE_STATE_DIR` 或本机默认 `.qling`。
   - 使用 `MissionManager` 只读加载 mission。
   - 使用 `renderAgentsView()` 格式化输出。
 

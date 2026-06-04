@@ -1,4 +1,4 @@
-# `qingling` REPL 退出挂起修复设计（2026-05-01）
+# `qling` REPL 退出挂起修复设计（2026-05-01）
 
 ## 背景
 - 当前 `src/repl.ts` 在 `q/quit/exit` 分支仅关闭 readline，不关闭 Agent 运行时。
@@ -15,7 +15,7 @@
    - `await agent.shutdown()`（使用 try/catch 防止清理异常阻断退出）
    - `this.rl.close()`
    - `return`
-2. 新增 smoke 测试：启动 `qingling repl` 子进程，输入 `exit`，要求在限定时间内自然退出。
+2. 新增 smoke 测试：启动 `qling repl` 子进程，输入 `exit`，要求在限定时间内自然退出。
 
 ## 验收
 - `npm run ci:check` 全通过。

@@ -4,12 +4,12 @@ import assert from "node:assert/strict";
 import { AgentLoop } from "../../dist/agent-loop.js";
 
 test("agent-loop smoke: preserves user -> assistant(tool_calls) -> tool -> assistant chain", async () => {
-  const prevWal = process.env.QINGLING_MEMORY_WAL_ENABLED;
-  const prevMetrics = process.env.QINGLING_METRICS_ENABLED;
-  const prevMcp = process.env.QINGLING_MCP_SERVERS;
-  process.env.QINGLING_MEMORY_WAL_ENABLED = "false";
-  process.env.QINGLING_METRICS_ENABLED = "false";
-  delete process.env.QINGLING_MCP_SERVERS;
+  const prevWal = process.env.QLING_MEMORY_WAL_ENABLED;
+  const prevMetrics = process.env.QLING_METRICS_ENABLED;
+  const prevMcp = process.env.QLING_MCP_SERVERS;
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
 
   const agent = new AgentLoop({
     apiKey: "test-key",
@@ -71,11 +71,11 @@ test("agent-loop smoke: preserves user -> assistant(tool_calls) -> tool -> assis
     assert.ok(finalAssistantIdx > toolIdx, "final assistant message should appear after tool output");
   } finally {
     await agent.shutdown();
-    if (prevWal === undefined) delete process.env.QINGLING_MEMORY_WAL_ENABLED;
-    else process.env.QINGLING_MEMORY_WAL_ENABLED = prevWal;
-    if (prevMetrics === undefined) delete process.env.QINGLING_METRICS_ENABLED;
-    else process.env.QINGLING_METRICS_ENABLED = prevMetrics;
-    if (prevMcp === undefined) delete process.env.QINGLING_MCP_SERVERS;
-    else process.env.QINGLING_MCP_SERVERS = prevMcp;
+    if (prevWal === undefined) delete process.env.QLING_MEMORY_WAL_ENABLED;
+    else process.env.QLING_MEMORY_WAL_ENABLED = prevWal;
+    if (prevMetrics === undefined) delete process.env.QLING_METRICS_ENABLED;
+    else process.env.QLING_METRICS_ENABLED = prevMetrics;
+    if (prevMcp === undefined) delete process.env.QLING_MCP_SERVERS;
+    else process.env.QLING_MCP_SERVERS = prevMcp;
   }
 });

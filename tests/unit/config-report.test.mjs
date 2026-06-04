@@ -17,7 +17,7 @@ function createConfig(overrides = {}) {
       request_timeout_ms: 120000,
     },
     runtime: {
-      workspace_dir: "C:/repo/qingling",
+      workspace_dir: "C:/repo/qling",
       file_cache_dir: "C:/state/cache",
       file_state_dir: "C:/state",
       max_steps: 20,
@@ -97,7 +97,7 @@ test("config report includes runtime permissions features and local boundary", (
 
   assert.match(text, /Provider\s*: deepseek/);
   assert.match(text, /Model\s*: deepseek-chat/);
-  assert.match(text, /Workspace\s*: C:\/repo\/qingling/);
+  assert.match(text, /Workspace\s*: C:\/repo\/qling/);
   assert.match(text, /State dir\s*: C:\/state/);
   assert.match(text, /Cache dir\s*: C:\/state\/cache/);
   assert.match(text, /Permissions\s*: ask\(确认\)/);

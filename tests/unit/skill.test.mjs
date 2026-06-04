@@ -12,7 +12,7 @@ import { parseFrontmatter, scanSkillDirs, searchSkills, clearSkillCache } from "
 import { runSkill } from "../../dist/tools/skill.js";
 
 async function withSkillDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-skill-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-skill-"));
   const prevCwd = process.cwd();
   try {
     process.chdir(dir);

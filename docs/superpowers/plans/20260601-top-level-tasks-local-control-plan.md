@@ -1,9 +1,9 @@
 # 顶层任务控制面实施计划
 
 ## User Journey
-- 用户在任意终端执行 `qingling tasks list`，看到本机持久化的 loop/daemon 任务状态。
-- 用户发现后台任务不再需要，执行 `qingling tasks cancel <taskId>`，不用重新附着 TUI 也能停止后续调度。
-- 中文用户可执行 `qingling 任务 列表` 与 `qingling 任务 取消 <taskId>`。
+- 用户在任意终端执行 `qling tasks list`，看到本机持久化的 loop/daemon 任务状态。
+- 用户发现后台任务不再需要，执行 `qling tasks cancel <taskId>`，不用重新附着 TUI 也能停止后续调度。
+- 中文用户可执行 `qling 任务 列表` 与 `qling 任务 取消 <taskId>`。
 
 ## Implementation Steps
 1. 新增 `src/session-task-report.ts`，读取 `<stateDir>/session-tasks/*.json` 并格式化本地任务报告。

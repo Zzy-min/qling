@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Agents 视图与后台任务管理体验设计（2026-05-16）
+# `qling` 阶段 B：Agents 视图与后台任务管理体验设计（2026-05-16）
 
 ## 背景
 
@@ -6,19 +6,19 @@
 
 当前缺口：
 
-1. 没有 `qingling agents` 总览入口。
+1. 没有 `qling agents` 总览入口。
 2. `mission logs` 只能一次性打印，不支持“跟随当前任务直到结束”的 attach 体验。
 3. `cancel/retry` 已有实现，但缺少 `stop/respawn` 这种更贴近后台任务心智的别名。
 4. `mission list/show/logs/...` 等纯管理命令仍依赖 `AgentLoop` 初始化，缺 API key 时体验不合理。
 
 ## 目标
 
-1. 新增 `qingling agents`，按任务状态分组展示后台任务。
-2. 新增 `qingling mission attach <id>`，以轮询方式跟随 mission 日志直到终态或用户中断。
+1. 新增 `qling agents`，按任务状态分组展示后台任务。
+2. 新增 `qling mission attach <id>`，以轮询方式跟随 mission 日志直到终态或用户中断。
 3. 新增易懂别名：
   - `mission stop <id>` -> `mission cancel <id>`
   - `mission respawn <id>` -> `mission retry <id>`
-  - `qingling logs <id>` -> `mission logs <id>`
+  - `qling logs <id>` -> `mission logs <id>`
 4. 让纯管理命令在无 API key 场景下仍可用。
 
 ## 非目标
@@ -32,8 +32,8 @@
 ### A. 命令面
 
 - 新增顶层命令：
-  - `qingling agents`
-  - `qingling logs <id>`
+  - `qling agents`
+  - `qling logs <id>`
 - 扩展 `mission` 子命令：
   - `attach <id>`
   - `stop <id>`（`cancel` 别名）
@@ -86,11 +86,11 @@
   - `help` 文案包含 `agents`、`attach`、`stop`、`respawn`。
   - agents 视图渲染按 bucket 正确分组。
 2. Smoke 测试：
-  - `qingling agents` 可展示 seeded mission。
+  - `qling agents` 可展示 seeded mission。
   - `mission attach` 在 daemon 在线时能跟随到成功日志并自动退出。
 
 ## 验收
 
-1. 无 API key 时，`qingling agents` / `mission list|show|logs|attach` 仍可用。
+1. 无 API key 时，`qling agents` / `mission list|show|logs|attach` 仍可用。
 2. `mission attach` 能在任务结束时自动退出。
 3. `stop/respawn` 与 `cancel/retry` 行为一致。

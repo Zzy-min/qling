@@ -6,7 +6,7 @@
 
 ## 目标
 
-- 扩展 `qingling doctor` 与 `/doctor` 输出。
+- 扩展 `qling doctor` 与 `/doctor` 输出。
 - 新增 Doctor checks：
   - `config`：provider、model、endpoint、api key 是否设置。
   - `mcp`：server 总数、启用数、connect/call timeout。
@@ -34,5 +34,5 @@
 
 - 单测覆盖新增 `config`、`mcp`、`hooks` checks。
 - 单测覆盖 endpoint/MCP/hook pattern/permission reason 脱敏。
-- Smoke 覆盖 `qingling doctor` 输出新 checks。
+- Smoke 覆盖 `qling doctor` 输出新 checks。
 - `npm run build`、目标测试和 `npm run ci:check` 通过。

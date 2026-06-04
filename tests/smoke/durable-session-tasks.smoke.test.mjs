@@ -33,7 +33,7 @@ async function getFreePort() {
 }
 
 test("durable session tasks smoke: daemon executes durable loop and durable goal from session snapshot", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-durable-session-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-durable-session-"));
   const daemonPort = await getFreePort();
   const baseUrl = `http://127.0.0.1:${daemonPort}`;
   const sessionId = "session-durable-smoke";
@@ -101,13 +101,14 @@ test("durable session tasks smoke: daemon executes durable loop and durable goal
     env: {
       ...process.env,
       OPENAI_API_KEY: "test-key",
-      QINGLING_LLM_PROVIDER: "openai",
-      QINGLING_LLM_ENDPOINT: llmEndpoint,
-      QINGLING_FILE_STATE_DIR: stateDir,
-      QINGLING_DAEMON_PORT: String(daemonPort),
-      QINGLING_RUNTIME_MAX_STEPS: "2",
+      QLING_LLM_API_KEY: "test-key",
+      QLING_LLM_PROVIDER: "openai",
+      QLING_LLM_ENDPOINT: llmEndpoint,
+      QLING_FILE_STATE_DIR: stateDir,
+      QLING_DAEMON_PORT: String(daemonPort),
+      QLING_RUNTIME_MAX_STEPS: "2",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: "ignore",
   });
 
   try {
@@ -152,7 +153,16 @@ test("durable session tasks smoke: daemon executes durable loop and durable goal
     assert.equal(goalPayload.status, "achieved");
   } finally {
     daemon.kill("SIGTERM");
-    await new Promise((resolve) => daemon.once("exit", () => resolve(undefined)));
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        daemon.kill("SIGKILL");
+        resolve(undefined);
+      }, 2_000);
+      daemon.once("exit", () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      });
+    });
     await new Promise((resolve) => llmServer.close(() => resolve(undefined)));
   }
 });

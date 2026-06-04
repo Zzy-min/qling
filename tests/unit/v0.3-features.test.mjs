@@ -16,7 +16,7 @@ import { generateExamplesFromSchema } from "../../dist/pipeline/example-generato
 import { DiscoveryRegistry } from "../../dist/discovery-registry.js";
 
 async function withTempDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-v03-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-v03-test-"));
   try {
     await fn(dir);
   } finally {
@@ -24,7 +24,7 @@ async function withTempDir(fn) {
   }
 }
 
-test("Qingling v0.3 - Semantic Memory", async () => {
+test("Qling v0.3 - Semantic Memory", async () => {
   await withTempDir(async (dir) => {
     const index = new SemanticMemoryIndex(dir);
     await index.init();
@@ -51,7 +51,7 @@ test("Qingling v0.3 - Semantic Memory", async () => {
   });
 });
 
-test("Qingling v0.3 - Workflow & Checkpoints", async () => {
+test("Qling v0.3 - Workflow & Checkpoints", async () => {
   await withTempDir(async (dir) => {
     const builder = new WorkflowBuilder("test-wf", "Test Workflow");
     builder.addState({
@@ -82,7 +82,7 @@ test("Qingling v0.3 - Workflow & Checkpoints", async () => {
   });
 });
 
-test("Qingling v0.3 - Tool Spec Boost", () => {
+test("Qling v0.3 - Tool Spec Boost", () => {
   const tool = {
     name: "test_tool",
     description: "A test tool",
@@ -97,7 +97,7 @@ test("Qingling v0.3 - Tool Spec Boost", () => {
   assert.ok(examples[0].includes("path="));
 });
 
-test("Qingling v0.3 - Dynamic Discovery", async () => {
+test("Qling v0.3 - Dynamic Discovery", async () => {
   await withTempDir(async (dir) => {
     const myPluginDir = join(dir, "my-plugin");
     await mkdir(myPluginDir, { recursive: true });

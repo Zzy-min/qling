@@ -2,7 +2,7 @@
 
 ## Problem
 
-Classic `qingling repl` accepts startup restore options through `--resume <id>` and `--continue`. The startup path restores and checkpoints the session, but it does not hydrate the local session scheduler and goal controller.
+Classic `qling repl` accepts startup restore options through `--resume <id>` and `--continue`. The startup path restores and checkpoints the session, but it does not hydrate the local session scheduler and goal controller.
 
 As a result, a restored session with active local loop tasks or an active goal does not continue running until the user enters another local-control slash command. This weakens local-first session continuity compared with the streaming TUI and with explicit in-REPL `/resume` or `!load`.
 

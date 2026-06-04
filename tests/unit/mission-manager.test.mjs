@@ -7,7 +7,7 @@ import path from "node:path";
 import { MissionManager } from "../../dist/mission/manager.js";
 
 async function withTempDir(run) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-mission-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-mission-"));
   try {
     await run(dir);
   } finally {

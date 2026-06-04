@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import { resolve } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 
-const TODO_FILE = resolve(process.cwd(), ".qingling-todos.json");
+const TODO_FILE = resolve(process.cwd(), ".qling-todos.json");
 
 interface TodoItem {
   id: string;
@@ -23,7 +23,7 @@ async function readTodos(): Promise<TodoItem[]> {
 }
 
 async function saveTodos(todos: TodoItem[]): Promise<void> {
-  await mkdir(resolve(process.cwd(), ".qingling-todos.json").replace(/[/\\][^/\\]+$/, ""), {
+  await mkdir(resolve(process.cwd(), ".qling-todos.json").replace(/[/\\][^/\\]+$/, ""), {
     recursive: true,
   });
   await writeFile(TODO_FILE, JSON.stringify(todos, null, 2), "utf-8");
@@ -32,8 +32,8 @@ async function saveTodos(todos: TodoItem[]): Promise<void> {
 export const todoTool: ToolDefinition = {
   name: "todo",
   description:
-    "Manage a persistent task list (stored in .qingling-todos.json). Create, update, list, or remove tasks. Use for planning multi-step tasks and tracking session progress.",
-  longDescription: `管理持久化任务列表，存储在 .qingling-todos.json 中。**不会直接执行任何操作**。
+    "Manage a persistent task list (stored in .qling-todos.json). Create, update, list, or remove tasks. Use for planning multi-step tasks and tracking session progress.",
+  longDescription: `管理持久化任务列表，存储在 .qling-todos.json 中。**不会直接执行任何操作**。
 
 **Action 类型**:
 - list: 列出所有任务（默认）

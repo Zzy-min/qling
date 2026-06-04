@@ -1,14 +1,14 @@
 # Help Flag Topic Routing
 
 ## Summary
-- 让 CLI 帮助入口更贴近常见命令行习惯：`qingling --help exports` 和 `qingling exports --help` 都进入同一个聚焦帮助。
+- 让 CLI 帮助入口更贴近常见命令行习惯：`qling --help exports` 和 `qling exports --help` 都进入同一个聚焦帮助。
 - 该能力只改变启动参数解析，不读取本地运行态、不调用模型、不联网。
-- 弱化记忆负担：用户不必只记住 `qingling help <topic>` 这一种写法。
+- 弱化记忆负担：用户不必只记住 `qling help <topic>` 这一种写法。
 
 ## User Journey
-- 作为 CLI 用户，我输入 `qingling --help exports` 时，希望看到 `exports` 聚焦帮助，而不是总帮助。
-- 作为 CLI 用户，我输入 `qingling exports --help` 时，希望看到该本地命令的帮助，而不是把 `--help` 当作 count 参数。
-- 作为输错命令的用户，我输入 `qingling expors --help` 时，希望进入聚焦帮助的错拼建议，而不是丢失 `expors` 这个上下文。
+- 作为 CLI 用户，我输入 `qling --help exports` 时，希望看到 `exports` 聚焦帮助，而不是总帮助。
+- 作为 CLI 用户，我输入 `qling exports --help` 时，希望看到该本地命令的帮助，而不是把 `--help` 当作 count 参数。
+- 作为输错命令的用户，我输入 `qling expors --help` 时，希望进入聚焦帮助的错拼建议，而不是丢失 `expors` 这个上下文。
 
 ## Requirements
 - `--help <topic>` / `-h <topic>` 必须把非 option 的 topic 保留到 `decision.subArgs`。

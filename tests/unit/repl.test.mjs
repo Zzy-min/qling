@@ -53,7 +53,7 @@ async function closeRepl(repl) {
 }
 
 async function withTempDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-repl-local-control-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-repl-local-control-"));
   try {
     await fn(dir);
   } finally {
@@ -135,13 +135,13 @@ function createLocalGoalAgent(stateDir, overrides = {}) {
 
 async function withGoalEvaluator(results, fn) {
   const originalFetch = globalThis.fetch;
-  const originalProvider = process.env.QINGLING_GOAL_EVALUATOR_PROVIDER;
-  const originalEndpoint = process.env.QINGLING_GOAL_EVALUATOR_ENDPOINT;
+  const originalProvider = process.env.QLING_GOAL_EVALUATOR_PROVIDER;
+  const originalEndpoint = process.env.QLING_GOAL_EVALUATOR_ENDPOINT;
   const queue = [...results];
   const fetchCalls = [];
 
-  process.env.QINGLING_GOAL_EVALUATOR_PROVIDER = "local";
-  process.env.QINGLING_GOAL_EVALUATOR_ENDPOINT = "http://goal-evaluator.local/v1";
+  process.env.QLING_GOAL_EVALUATOR_PROVIDER = "local";
+  process.env.QLING_GOAL_EVALUATOR_ENDPOINT = "http://goal-evaluator.local/v1";
   globalThis.fetch = async (_url, init) => {
     fetchCalls.push(init);
     const result = queue.shift() ?? results.at(-1) ?? { done: true, reason: "done" };
@@ -168,14 +168,14 @@ async function withGoalEvaluator(results, fn) {
       globalThis.fetch = originalFetch;
     }
     if (originalProvider === undefined) {
-      delete process.env.QINGLING_GOAL_EVALUATOR_PROVIDER;
+      delete process.env.QLING_GOAL_EVALUATOR_PROVIDER;
     } else {
-      process.env.QINGLING_GOAL_EVALUATOR_PROVIDER = originalProvider;
+      process.env.QLING_GOAL_EVALUATOR_PROVIDER = originalProvider;
     }
     if (originalEndpoint === undefined) {
-      delete process.env.QINGLING_GOAL_EVALUATOR_ENDPOINT;
+      delete process.env.QLING_GOAL_EVALUATOR_ENDPOINT;
     } else {
-      process.env.QINGLING_GOAL_EVALUATOR_ENDPOINT = originalEndpoint;
+      process.env.QLING_GOAL_EVALUATOR_ENDPOINT = originalEndpoint;
     }
   }
 }

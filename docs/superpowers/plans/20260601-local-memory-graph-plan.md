@@ -44,7 +44,7 @@ RED:
 - Slash `/memory graph` lists local nodes and hides session body
 - Slash `/记忆 图谱` aliases English behavior
 - Top-level parser/help exposes `memory graph`
-- Startup smoke `qingling memory graph 5` exits 0 and hides session body
+- Startup smoke `qling memory graph 5` exits 0 and hides session body
 
 GREEN:
 

@@ -1,15 +1,15 @@
 # 本地记忆搜索 `/memory search`
 
 ## Summary
-- 在现有本地记忆浏览基础上新增只读搜索：slash `/memory search <query> [count]`、中文 `/记忆 搜索 <query> [count]`，以及顶层 `qingling memory search <query> [count]`。
+- 在现有本地记忆浏览基础上新增只读搜索：slash `/memory search <query> [count]`、中文 `/记忆 搜索 <query> [count]`，以及顶层 `qling memory search <query> [count]`。
 - 搜索仅扫描 `<stateDir>/memory/memory.json` 中的 persisted memory 条目，不读取 session 正文、不调用模型、不联网。
 - 每条命中输出可解释召回标签，说明匹配路径来自 `content`、`source` 或 `id`。
 
 ## Public Interface
 - `/memory search <query> [count]`
 - `/记忆 搜索 <query> [count]`
-- `qingling memory search <query> [count]`
-- `qingling 记忆 搜索 <query> [count]`
+- `qling memory search <query> [count]`
+- `qling 记忆 搜索 <query> [count]`
 
 ## Behavior
 - `query` 为空时不执行搜索，输出用法错误。

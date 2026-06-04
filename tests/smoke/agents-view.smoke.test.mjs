@@ -10,7 +10,7 @@ import { MissionManager } from "../../dist/mission/manager.js";
 const ENTRY = path.join(process.cwd(), "dist/index.js");
 
 test("agents view smoke: agents and logs work without AgentLoop init", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-agents-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-agents-"));
   try {
     const manager = new MissionManager(stateDir);
     await manager.init();
@@ -19,10 +19,10 @@ test("agents view smoke: agents and logs work without AgentLoop init", async () 
 
     const env = {
       ...process.env,
-      QINGLING_FILE_STATE_DIR: stateDir,
+      QLING_FILE_STATE_DIR: stateDir,
       OPENAI_API_KEY: "",
       DEEPSEEK_API_KEY: "",
-      QINGLING_LLM_API_KEY: "",
+      QLING_LLM_API_KEY: "",
     };
 
     let result = spawnSync(process.execPath, [ENTRY, "agents"], {

@@ -1,4 +1,4 @@
-import type { QinglingConfig } from "./config.js";
+import type { QlingConfig } from "./config.js";
 import { formatPermissionMode } from "./statusline.js";
 
 export interface LocalConfigReport {
@@ -63,7 +63,7 @@ export function sanitizeEndpoint(value: string | null | undefined): string {
   return redactQueryLikeSecrets(raw);
 }
 
-function countEnabledMcpServers(config: QinglingConfig): { total: number; enabled: number } {
+function countEnabledMcpServers(config: QlingConfig): { total: number; enabled: number } {
   const servers = Object.values(config.mcp?.servers ?? {});
   return {
     total: servers.length,
@@ -71,7 +71,7 @@ function countEnabledMcpServers(config: QinglingConfig): { total: number; enable
   };
 }
 
-export function buildLocalConfigReport(config: QinglingConfig): LocalConfigReport {
+export function buildLocalConfigReport(config: QlingConfig): LocalConfigReport {
   const mcp = countEnabledMcpServers(config);
   return {
     provider: safeText(config.llm.provider),

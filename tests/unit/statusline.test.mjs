@@ -149,8 +149,8 @@ test("statusline snapshot collects input queue metadata from slash context", asy
 });
 
 test("statusline snapshot reads local cost estimate from env", async () => {
-  const previous = process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS;
-  process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS = "0.002";
+  const previous = process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS;
+  process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS = "0.002";
   try {
     const snapshot = await collectStatusLineSnapshot({
       agentLoop: {
@@ -174,8 +174,8 @@ test("statusline snapshot reads local cost estimate from env", async () => {
     assert.match(line, /ctx=12,000\/120,000\(10%\)/);
     assert.match(line, /cost≈\$0\.0240/);
   } finally {
-    if (previous === undefined) delete process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS;
-    else process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS = previous;
+    if (previous === undefined) delete process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS;
+    else process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS = previous;
   }
 });
 
@@ -194,7 +194,7 @@ test("statusline permission mode formatter explains local tool behavior", () => 
 });
 
 test("local statusline snapshot uses config model, permission mode, and git branch", () => {
-  const root = mkdtempSync(join(tmpdir(), "qingling-statusline-"));
+  const root = mkdtempSync(join(tmpdir(), "qling-statusline-"));
   try {
     mkdirSync(join(root, ".git"), { recursive: true });
     writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");

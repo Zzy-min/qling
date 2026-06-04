@@ -47,16 +47,16 @@ export class GoalEvaluator {
   private readonly fetchImpl: GoalFetch;
 
   constructor(options: GoalEvaluatorOptions = {}) {
-    this.provider = options.provider ?? process.env.QINGLING_GOAL_EVALUATOR_PROVIDER ?? process.env.QINGLING_LLM_PROVIDER ?? "deepseek";
+    this.provider = options.provider ?? process.env.QLING_GOAL_EVALUATOR_PROVIDER ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
     const endpoint =
       options.endpoint ??
-      process.env.QINGLING_GOAL_EVALUATOR_ENDPOINT ??
-      process.env.QINGLING_LLM_ENDPOINT ??
+      process.env.QLING_GOAL_EVALUATOR_ENDPOINT ??
+      process.env.QLING_LLM_ENDPOINT ??
       (this.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com");
     this.endpoint = resolveChatEndpoint(endpoint);
-    this.apiKey = options.apiKey ?? process.env.QINGLING_GOAL_EVALUATOR_API_KEY ?? process.env.QINGLING_LLM_API_KEY ?? "";
-    this.model = options.model ?? process.env.QINGLING_GOAL_EVALUATOR_MODEL ?? process.env.QINGLING_LLM_MODEL ?? "deepseek-chat";
-    this.timeoutMs = options.timeoutMs ?? Number(process.env.QINGLING_GOAL_EVALUATOR_TIMEOUT_MS ?? "30000");
+    this.apiKey = options.apiKey ?? process.env.QLING_GOAL_EVALUATOR_API_KEY ?? process.env.QLING_LLM_API_KEY ?? "";
+    this.model = options.model ?? process.env.QLING_GOAL_EVALUATOR_MODEL ?? process.env.QLING_LLM_MODEL ?? "deepseek-chat";
+    this.timeoutMs = options.timeoutMs ?? Number(process.env.QLING_GOAL_EVALUATOR_TIMEOUT_MS ?? "30000");
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 

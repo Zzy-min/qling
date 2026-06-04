@@ -1,4 +1,4 @@
-# `qingling hooks` / `/hooks` 本地 Hooks 可视化实施计划（2026-06-01）
+# `qling hooks` / `/hooks` 本地 Hooks 可视化实施计划（2026-06-01）
 
 ## Step 1: 测试先行
 
@@ -9,7 +9,7 @@
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `hooks` 顶层模式可解析。
   - `钩子` 顶层中文别名可解析。
-  - help 展示 `qingling hooks` 与 `钩子`。
+  - help 展示 `qling hooks` 与 `钩子`。
 - 扩展 `tests/unit/slash-commands.test.mjs`：
   - `/help` 展示 `/hooks` 与 `/钩子`。
   - `/hooks` 输出本地 hooks 摘要且不泄露 custom pattern。
@@ -37,13 +37,13 @@
 ## Step 4: 配置环境映射
 
 - 在 `applyConfigToProcessEnv` 中补齐：
-  - `QINGLING_GUARD_RATE_LIMIT_ENABLED`
-  - `QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE`
-  - `QINGLING_GUARD_CONTENT_FILTER_ENABLED`
-  - `QINGLING_GUARD_CONTENT_FILTER_PII`
-  - `QINGLING_GUARD_CONTENT_FILTER_INJECTION`
-  - `QINGLING_GUARD_CONTENT_FILTER_CUSTOM`
-  - `QINGLING_GUARD_PERMISSIONS_RULES`
+  - `QLING_GUARD_RATE_LIMIT_ENABLED`
+  - `QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE`
+  - `QLING_GUARD_CONTENT_FILTER_ENABLED`
+  - `QLING_GUARD_CONTENT_FILTER_PII`
+  - `QLING_GUARD_CONTENT_FILTER_INJECTION`
+  - `QLING_GUARD_CONTENT_FILTER_CUSTOM`
+  - `QLING_GUARD_PERMISSIONS_RULES`
 
 ## Step 5: 验证
 

@@ -1,6 +1,6 @@
 import { readdir } from "fs/promises";
 import { join } from "path";
-import type { QinglingConfig } from "./config.js";
+import type { QlingConfig } from "./config.js";
 import { sanitizeEndpoint } from "./config-report.js";
 import { buildLocalHooksReport } from "./hooks-report.js";
 import { buildLocalMcpReport } from "./mcp-report.js";
@@ -41,7 +41,7 @@ async function countFilesByExtension(dir: string, extension: string): Promise<nu
 }
 
 export async function buildLocalStatusReport(
-  config: QinglingConfig,
+  config: QlingConfig,
   options: LocalStatusOptions = {}
 ): Promise<LocalStatusReport> {
   const workspaceDir = safeText(config.runtime.workspace_dir, process.cwd());

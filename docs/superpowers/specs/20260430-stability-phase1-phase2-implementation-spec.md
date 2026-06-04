@@ -1,4 +1,4 @@
-# `qingling` 稳定性优先落地设计（实施版）
+# `qling` 稳定性优先落地设计（实施版）
 
 ## 目标
 - 将已识别的 `search` 与 `context-compactor` 高风险回归固化为自动化测试。

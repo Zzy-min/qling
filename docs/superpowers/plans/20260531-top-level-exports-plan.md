@@ -1,10 +1,10 @@
-# `qingling exports` 顶层命令计划（2026-05-31）
+# `qling exports` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["exports", "2"])` 返回 `mode=exports` 和 `subArgs=["2"]`。
-  - `buildHelpText()` 包含 `qingling exports [count]`。
+  - `buildHelpText()` 包含 `qling exports [count]`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - 使用临时 state dir 创建 `exports/*.md`。
   - `node dist/index.js --file-state-dir <dir> exports 1` 以 0 退出。

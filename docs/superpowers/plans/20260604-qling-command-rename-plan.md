@@ -2,7 +2,7 @@
 
 ## Scope
 
-Unify the current official English CLI command surface from `qingling` to `qling` while preserving the Chinese name `轻灵` and local data compatibility.
+Unify the current official English CLI command surface from `qling` to `qling` while preserving the Chinese name `轻灵` and local data compatibility.
 
 ## Steps
 
@@ -22,8 +22,8 @@ Unify the current official English CLI command surface from `qingling` to `qling
 4. Update current product docs:
    - README and non-archival command examples such as CHANGELOG/blog snippets.
 5. Keep local data and config stable:
-   - do not rename `.qingling`;
-   - do not rename `QINGLING_*` env vars.
+   - do not rename `.qling`;
+   - do not rename `QLING_*` env vars.
 6. Verify:
    - `npm run build`;
    - targeted unit tests for CLI/help/package surfaces;
@@ -32,5 +32,5 @@ Unify the current official English CLI command surface from `qingling` to `qling
 
 ## Risks
 
-- Removing the `qingling` bin may break existing shell muscle memory after relink. This is intentional for command unification, but user-facing docs and errors must consistently point to `qling`.
-- Broad text replacement can accidentally rename env vars or local state paths. Search/replace must avoid `QINGLING_*`, `.qingling`, and archival specs/plans unless they are current acceptance docs for this rename.
+- Removing the `qling` bin may break existing shell muscle memory after relink. This is intentional for command unification, but user-facing docs and errors must consistently point to `qling`.
+- Broad text replacement can accidentally rename env vars or local state paths. Search/replace must avoid `QLING_*`, `.qling`, and archival specs/plans unless they are current acceptance docs for this rename.

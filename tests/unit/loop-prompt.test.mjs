@@ -7,7 +7,7 @@ import path from "node:path";
 import { resolveLoopPrompt, DEFAULT_MAINTENANCE_PROMPT } from "../../dist/session/loop-prompt.js";
 
 test("loop prompt prefers project .claude/loop.md over home config", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-loop-prompt-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-loop-prompt-"));
   const projectDir = path.join(root, "workspace");
   const homeDir = path.join(root, "home");
   await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
@@ -21,7 +21,7 @@ test("loop prompt prefers project .claude/loop.md over home config", async () =>
 });
 
 test("loop prompt falls back to built-in maintenance prompt", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-loop-default-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-loop-default-"));
   const result = await resolveLoopPrompt({ workspaceDir: root, homeDir: root });
   assert.equal(result.source, "builtin");
   assert.equal(result.prompt, DEFAULT_MAINTENANCE_PROMPT);

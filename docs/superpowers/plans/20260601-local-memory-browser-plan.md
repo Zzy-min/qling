@@ -3,7 +3,7 @@
 ## User Journey
 - 用户在 TUI 内输入 `/memory`，快速看到本地持久记忆和索引健康度。
 - 用户输入 `/memory show mem_xxx`，审计某条本地记忆的来源和内容。
-- 用户在任意终端执行 `qingling memory status`，不用启动 AgentLoop 也能检查本地 memory 状态。
+- 用户在任意终端执行 `qling memory status`，不用启动 AgentLoop 也能检查本地 memory 状态。
 
 ## Implementation Steps
 1. 新增 `src/memory-report.ts`，读取 `<stateDir>/memory/memory.json` 和 cognitive db 只读计数。

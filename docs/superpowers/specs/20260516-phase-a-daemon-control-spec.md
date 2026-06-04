@@ -1,19 +1,19 @@
-# `qingling` 阶段 A：Daemon 控制命令设计（2026-05-16）
+# `qling` 阶段 A：Daemon 控制命令设计（2026-05-16）
 
 ## 背景
 
-当前 `qingling` 已有 `dist/daemon.js` 可直接运行，但用户仍需要手动执行 `node dist/daemon.js`，这和阶段 A 计划中要求的 `qingling daemon start|status|stop` 不一致。
+当前 `qling` 已有 `dist/daemon.js` 可直接运行，但用户仍需要手动执行 `node dist/daemon.js`，这和阶段 A 计划中要求的 `qling daemon start|status|stop` 不一致。
 
 现有缺口：
 
 1. CLI 没有 `daemon` 命令族。
 2. 没有 PID 文件与“是否已运行”的最小治理。
-3. `detach` 失败提示仍要求用户手动运行 `qinglingd` / `node dist/daemon.js`。
+3. `detach` 失败提示仍要求用户手动运行 `qlingd` / `node dist/daemon.js`。
 4. daemon 管理命令不应依赖 `AgentLoop` 或 API key，但当前 `index.ts` 会在大多数管理命令之前先实例化 agent。
 
 ## 目标
 
-1. 增加 `qingling daemon start|status|stop`。
+1. 增加 `qling daemon start|status|stop`。
 2. 为 daemon 增加最小 PID 文件治理，默认落在 `runtime.file_state_dir` 下的 `daemon.pid`。
 3. daemon 管理命令支持无 API key 使用。
 4. `status` 能返回 daemon 是否在线、是否健康、是否受当前 CLI 管理。
@@ -30,9 +30,9 @@
 
 - 在 `startup-contract` 中新增 `daemon` 模式。
 - 帮助文案增加：
-  - `qingling daemon start`
-  - `qingling daemon status`
-  - `qingling daemon stop`
+  - `qling daemon start`
+  - `qling daemon status`
+  - `qling daemon stop`
 
 ### B. 控制实现
 
@@ -63,7 +63,7 @@
 
 ### D. 用户提示对齐
 
-- `detach` 失败提示改为优先建议 `qingling daemon start`。
+- `detach` 失败提示改为优先建议 `qling daemon start`。
 - 帮助文案与实际能力同步更新。
 
 ## 测试策略
@@ -78,6 +78,6 @@
 
 ## 验收
 
-1. `qingling daemon start` 可重复调用，重复启动时不生成第二实例。
-2. `qingling daemon status` 在已启动、未启动、PID 残留三种场景下给出可信结果。
-3. `qingling daemon stop` 可停止由 CLI 启动的 daemon。
+1. `qling daemon start` 可重复调用，重复启动时不生成第二实例。
+2. `qling daemon status` 在已启动、未启动、PID 残留三种场景下给出可信结果。
+3. `qling daemon stop` 可停止由 CLI 启动的 daemon。

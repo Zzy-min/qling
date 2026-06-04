@@ -6,7 +6,7 @@
 import * as http from "http";
 import { MissionManager } from "./mission/manager.js";
 import { AgentLoop } from "./agent-loop.js";
-import { loadQinglingConfig, applyConfigToProcessEnv } from "./config.js";
+import { loadQlingConfig, applyConfigToProcessEnv } from "./config.js";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
@@ -17,7 +17,7 @@ import { SessionGoalManager } from "./session/session-goal-manager.js";
 import { DurableSessionSupervisor } from "./session/durable-session-supervisor.js";
 
 const HOME_DIR = os.homedir();
-const DEFAULT_STATE_DIR = path.join(HOME_DIR, ".qingling");
+const DEFAULT_STATE_DIR = path.join(HOME_DIR, ".qling");
 
 function loadEnv() {
   // 1. 项目配置
@@ -33,7 +33,7 @@ function loadEnv() {
     dir = parent;
   }
   // 2. 全局配置
-  const globalEnv = path.join(HOME_DIR, ".qingling", ".env");
+  const globalEnv = path.join(HOME_DIR, ".qling", ".env");
   if (fs.existsSync(globalEnv)) {
     dotenv.config({ path: globalEnv });
   }
@@ -42,7 +42,7 @@ function loadEnv() {
 async function main() {
   loadEnv();
   
-  const stateDir = process.env.QINGLING_FILE_STATE_DIR || DEFAULT_STATE_DIR;
+  const stateDir = process.env.QLING_FILE_STATE_DIR || DEFAULT_STATE_DIR;
   const manager = new MissionManager(stateDir);
   await manager.init();
   const startedAt = Date.now();
@@ -53,13 +53,13 @@ async function main() {
 
   // 尝试预加载配置并应用到环境变量
   try {
-    const { config } = await loadQinglingConfig({});
+    const { config } = await loadQlingConfig({});
     applyConfigToProcessEnv(config);
   } catch (err) {
     console.error(`[qlingd] Warning: Failed to load config: ${(err as Error).message}`);
   }
 
-  const PORT = Number(process.env.QINGLING_DAEMON_PORT) || 9998;
+  const PORT = Number(process.env.QLING_DAEMON_PORT) || 9998;
   supervisor.start();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${PORT}`);
@@ -237,6 +237,14 @@ async function main() {
   server.listen(PORT, () => {
     console.log(`[qlingd] 守护进程已启动，监听端口: ${PORT}`);
   });
+
+  const shutdown = () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2_000).unref();
+  };
+
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 
 /** 后台执行使命逻辑 */
@@ -254,7 +262,7 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
     await manager.appendLog(id, "使命开始执行", { source: "daemon" });
     
     // 重新加载配置
-    const { config: loadedConfig } = await loadQinglingConfig({});
+    const { config: loadedConfig } = await loadQlingConfig({});
     const { buildToolRegistry } = await import("./tools/index.js");
 
     const staticEnabled: Record<string, boolean> = {};
@@ -264,7 +272,7 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
     const tools = buildToolRegistry({ staticEnabled });
 
     const agentConfig: any = {
-      apiKey: loadedConfig.llm.api_key || process.env.QINGLING_LLM_API_KEY || "",
+      apiKey: loadedConfig.llm.api_key || process.env.QLING_LLM_API_KEY || "",
       provider: loadedConfig.llm.provider,
       endpoint: loadedConfig.llm.endpoint,
       model: loadedConfig.llm.model,

@@ -8,7 +8,7 @@ import { SessionGoalManager } from "../../dist/session/session-goal-manager.js";
 import { SessionGoalController } from "../../dist/session/goal-controller.js";
 
 test("session goal smoke: persists state and reaches achieved after evaluator turns true", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-goal-smoke-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-smoke-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-smoke" });
   const results = [
     { done: false, reason: "还缺测试成功证据" },

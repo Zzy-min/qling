@@ -84,9 +84,9 @@ test("cli run smoke: one-shot mode exits cleanly after response", async () => {
     {
       env: {
         ...process.env,
-        QINGLING_MEMORY_WAL_ENABLED: "true",
-        QINGLING_MEMORY_PROJECTION_INTERVAL_MS: "30",
-        QINGLING_METRICS_ENABLED: "false",
+        QLING_MEMORY_WAL_ENABLED: "true",
+        QLING_MEMORY_PROJECTION_INTERVAL_MS: "30",
+        QLING_METRICS_ENABLED: "false",
       },
       stdio: ["ignore", "pipe", "pipe"],
     }

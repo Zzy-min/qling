@@ -5,16 +5,16 @@
 - 新增 `tests/unit/help-topics.test.mjs`：
   - 英文、slash、中文别名都能解析到同一主题。
   - slash 输出包含 slash 用法和中文别名。
-  - top-level 输出包含 `qingling ...` 示例。
+  - top-level 输出包含 `qling ...` 示例。
   - 未知主题输出可读降级提示。
 - 扩展 `tests/unit/slash-commands.test.mjs`：
   - `/help exports` 输出聚焦帮助。
   - `/? 权限` 输出权限聚焦帮助。
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `help exports` 和 `帮助 权限` 路由为 help mode 且保留 subArgs。
-  - `buildHelpText("qingling", "exports")` 输出聚焦帮助。
+  - `buildHelpText("qling", "exports")` 输出聚焦帮助。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
-  - `qingling help exports` 退出码为 0，输出聚焦帮助，不泄露 env secret。
+  - `qling help exports` 退出码为 0，输出聚焦帮助，不泄露 env secret。
 
 ## Step 2: 静态帮助主题模块
 

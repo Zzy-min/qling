@@ -27,8 +27,8 @@
   - `/记忆 graph [count]`
   - `/记忆 图谱 [count]`
 - Top-level CLI:
-  - `qingling memory graph [count]`
-  - `qingling 记忆 图谱 [count]`
+  - `qling memory graph [count]`
+  - `qling 记忆 图谱 [count]`
 
 ## Count Rules
 

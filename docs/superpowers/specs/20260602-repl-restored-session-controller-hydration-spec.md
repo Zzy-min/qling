@@ -2,7 +2,7 @@
 
 ## Problem
 
-Classic `qingling repl` can restore sessions through slash `/resume` and legacy `!load <name>`. It now stops old local controllers when switching sessions, but it does not hydrate controllers for the restored session.
+Classic `qling repl` can restore sessions through slash `/resume` and legacy `!load <name>`. It now stops old local controllers when switching sessions, but it does not hydrate controllers for the restored session.
 
 That means a restored session with active local loop tasks or an active goal remains inert until another local-control slash command happens to initialize the scheduler and goal controller. The streaming TUI rebuilds these controllers on restore, so the classic REPL still has weaker session continuity.
 

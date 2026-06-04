@@ -2,7 +2,7 @@
 
 ## Problem
 
-`qingling repl` now routes slash commands locally, but it passes only `{ agentLoop }` into the slash dispatcher. Session commands therefore rely on fallback behavior instead of the same explicit context used by the streaming TUI.
+`qling repl` now routes slash commands locally, but it passes only `{ agentLoop }` into the slash dispatcher. Session commands therefore rely on fallback behavior instead of the same explicit context used by the streaming TUI.
 
 The important gap is `/resume`: fallback restore can update in-memory state without checkpointing the restored session, which is weaker than the streaming TUI session switch path.
 

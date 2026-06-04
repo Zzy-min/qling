@@ -2,7 +2,7 @@
 
 ## Problem
 
-`qingling repl` can now route slash commands, but it still lacks the local scheduler and goal controller context that the streaming TUI provides. Commands such as `/loop`, `/tasks`, and `/goal` therefore report "not enabled" or cannot persist local control state from the classic REPL.
+`qling repl` can now route slash commands, but it still lacks the local scheduler and goal controller context that the streaming TUI provides. Commands such as `/loop`, `/tasks`, and `/goal` therefore report "not enabled" or cannot persist local control state from the classic REPL.
 
 This leaves two interactive surfaces with different capabilities and weakens the Claude Code-like operator-console experience.
 

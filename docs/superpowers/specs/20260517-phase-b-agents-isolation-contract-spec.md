@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：`agents.isolation.*` 契约收敛规格（2026-05-17）
+# `qling` 阶段 B：`agents.isolation.*` 契约收敛规格（2026-05-17）
 
 ## 背景
 

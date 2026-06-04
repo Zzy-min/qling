@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：`/permissions` 命令补齐计划（2026-05-17）
+# `qling` 阶段 B：`/permissions` 命令补齐计划（2026-05-17）
 
 ## Step 1: 测试先行
 

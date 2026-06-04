@@ -1,4 +1,4 @@
-# `qingling` TUI 本地持久输入历史实施计划（2026-06-01）
+# `qling` TUI 本地持久输入历史实施计划（2026-06-01）
 
 ## Step 1: 测试先行
 
@@ -9,7 +9,7 @@
   - 重复输入去重并移动到末尾。
   - 多行输入保持换行。
   - 明显敏感输入不写入。
-  - `QINGLING_TUI_HISTORY_ENABLED=false` 禁用读写。
+  - `QLING_TUI_HISTORY_ENABLED=false` 禁用读写。
 - 扩展 `tests/unit/input-buffer.test.mjs`：
   - 预加载历史后，上方向键和 `searchHistory()` 可恢复历史。
 

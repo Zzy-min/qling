@@ -40,7 +40,7 @@ test("cli startup smoke: focused help exits with code 0 and keeps secrets privat
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_API_KEY: "sk-focused-help-secret",
+      QLING_LLM_API_KEY: "sk-focused-help-secret",
     },
   });
 
@@ -58,7 +58,7 @@ test("cli startup smoke: help flag before topic prints focused local help", () =
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_API_KEY: "sk-help-flag-topic-secret",
+      QLING_LLM_API_KEY: "sk-help-flag-topic-secret",
     },
   });
 
@@ -75,7 +75,7 @@ test("cli startup smoke: help flag after command prints focused local help", () 
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_API_KEY: "sk-command-help-flag-secret",
+      QLING_LLM_API_KEY: "sk-command-help-flag-secret",
     },
   });
 
@@ -93,7 +93,7 @@ test("cli startup smoke: focused help typo suggests local topic without model ru
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_API_KEY: "sk-focused-help-typo-secret",
+      QLING_LLM_API_KEY: "sk-focused-help-typo-secret",
     },
   });
 
@@ -111,7 +111,7 @@ test("cli startup smoke: top-level typo suggests local command without model run
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_API_KEY: "sk-cli-typo-secret",
+      QLING_LLM_API_KEY: "sk-cli-typo-secret",
     },
   });
 
@@ -130,8 +130,8 @@ test("cli startup smoke: doctor exits with code 0 and prints local diagnostics",
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_API_KEY: "sk-doctor-smoke-secret",
-      QINGLING_MCP_SERVERS: JSON.stringify({
+      QLING_LLM_API_KEY: "sk-doctor-smoke-secret",
+      QLING_MCP_SERVERS: JSON.stringify({
         docs: {
           command: "",
           args: [],
@@ -166,9 +166,9 @@ test("cli startup smoke: status exits with code 0 and prints local status withou
       encoding: "utf-8",
       env: {
         ...process.env,
-        QINGLING_LLM_MODEL: "smoke-status-model",
-        QINGLING_LLM_API_KEY: "sk-status-smoke-secret",
-        QINGLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=status-smoke-secret",
+        QLING_LLM_MODEL: "smoke-status-model",
+        QLING_LLM_API_KEY: "sk-status-smoke-secret",
+        QLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=status-smoke-secret",
       },
     });
 
@@ -198,8 +198,8 @@ test("cli startup smoke: storage exits with code 0 and prints local storage repo
       encoding: "utf-8",
       env: {
         ...process.env,
-        QINGLING_FILE_STATE_DIR: root,
-        QINGLING_FILE_CACHE_DIR: join(root, "cache"),
+        QLING_FILE_STATE_DIR: root,
+        QLING_FILE_CACHE_DIR: join(root, "cache"),
       },
     });
     assert.equal(result.status, 0);
@@ -856,8 +856,8 @@ test("cli startup smoke: chinese statusline alias exits with code 0 and prints l
       encoding: "utf-8",
       env: {
         ...process.env,
-        QINGLING_STATUSLINE_COST_PER_1K_TOKENS: "0.002",
-        QINGLING_LLM_API_KEY: "sk-statusline-smoke-secret",
+        QLING_STATUSLINE_COST_PER_1K_TOKENS: "0.002",
+        QLING_LLM_API_KEY: "sk-statusline-smoke-secret",
       },
     });
 
@@ -923,15 +923,15 @@ test("cli startup smoke: permissions exits with code 0 and prints local permissi
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_PERMISSIONS_MODE: "ask",
-      QINGLING_GUARD_PERMISSIONS_DEFAULT: undefined,
+      QLING_PERMISSIONS_MODE: "ask",
+      QLING_GUARD_PERMISSIONS_DEFAULT: undefined,
     },
   });
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /本地权限状态/);
   assert.match(result.stdout, /Default\s*: ask\(确认\)/);
-  assert.match(result.stdout, /QINGLING_PERMISSIONS_MODE=ask/);
+  assert.match(result.stdout, /QLING_PERMISSIONS_MODE=ask/);
   assert.match(result.stdout, /不修改配置/);
 });
 
@@ -945,11 +945,11 @@ test("cli startup smoke: permissions explain exits with code 0 and keeps secrets
       encoding: "utf-8",
       env: {
         ...process.env,
-        QINGLING_GUARD_PERMISSIONS_DEFAULT: "allow",
-        QINGLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
+        QLING_GUARD_PERMISSIONS_DEFAULT: "allow",
+        QLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
           { tool_pattern: "bash", decision: "ask", reason: "shell requires review" },
         ]),
-        QINGLING_LLM_API_KEY: "sk-permissions-explain-smoke-secret",
+        QLING_LLM_API_KEY: "sk-permissions-explain-smoke-secret",
       },
     });
 
@@ -971,9 +971,9 @@ test("cli startup smoke: config exits with code 0 and redacts local secrets", ()
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_LLM_MODEL: "local-config-model",
-      QINGLING_LLM_API_KEY: "sk-smoke-secret",
-      QINGLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=smoke-secret",
+      QLING_LLM_MODEL: "local-config-model",
+      QLING_LLM_API_KEY: "sk-smoke-secret",
+      QLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=smoke-secret",
     },
   });
 
@@ -992,7 +992,7 @@ test("cli startup smoke: mcp exits with code 0 and redacts local mcp secrets", (
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_MCP_SERVERS: JSON.stringify({
+      QLING_MCP_SERVERS: JSON.stringify({
         docs: {
           command: "",
           args: [],
@@ -1022,12 +1022,12 @@ test("cli startup smoke: hooks exits with code 0 and redacts local hook patterns
     encoding: "utf-8",
     env: {
       ...process.env,
-      QINGLING_GUARD_ENABLED: "true",
-      QINGLING_GUARD_RATE_LIMIT_ENABLED: "true",
-      QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE: "9",
-      QINGLING_GUARD_CONTENT_FILTER_ENABLED: "true",
-      QINGLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["SECRET_HOOK_PATTERN"]),
-      QINGLING_GUARD_REDACTION_PATTERNS: JSON.stringify(["SECRET_REDACTION_PATTERN"]),
+      QLING_GUARD_ENABLED: "true",
+      QLING_GUARD_RATE_LIMIT_ENABLED: "true",
+      QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE: "9",
+      QLING_GUARD_CONTENT_FILTER_ENABLED: "true",
+      QLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["SECRET_HOOK_PATTERN"]),
+      QLING_GUARD_REDACTION_PATTERNS: JSON.stringify(["SECRET_REDACTION_PATTERN"]),
     },
   });
 

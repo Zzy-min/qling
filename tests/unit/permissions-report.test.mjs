@@ -57,8 +57,8 @@ test("permissions report lists configured rules", () => {
 
 test("permissions report shows env override sources without changing env", () => {
   const env = {
-    QINGLING_GUARD_PERMISSIONS_DEFAULT: "deny",
-    QINGLING_PERMISSIONS_MODE: "ask",
+    QLING_GUARD_PERMISSIONS_DEFAULT: "deny",
+    QLING_PERMISSIONS_MODE: "ask",
   };
   const report = buildLocalPermissionsReport({
     defaultMode: "deny",
@@ -67,9 +67,9 @@ test("permissions report shows env override sources without changing env", () =>
   });
   const text = formatLocalPermissionsReport(report).join("\n");
 
-  assert.match(text, /QINGLING_GUARD_PERMISSIONS_DEFAULT=deny/);
-  assert.match(text, /QINGLING_PERMISSIONS_MODE=ask/);
-  assert.equal(env.QINGLING_GUARD_PERMISSIONS_DEFAULT, "deny");
+  assert.match(text, /QLING_GUARD_PERMISSIONS_DEFAULT=deny/);
+  assert.match(text, /QLING_PERMISSIONS_MODE=ask/);
+  assert.equal(env.QLING_GUARD_PERMISSIONS_DEFAULT, "deny");
 });
 
 test("permissions explain shows matching rule and effect", () => {

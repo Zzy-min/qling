@@ -54,7 +54,7 @@ export async function runSubtask(args: {
   }
 
   const apiKey =
-    process.env.QINGLING_LLM_API_KEY ??
+    process.env.QLING_LLM_API_KEY ??
     process.env.DEEPSEEK_API_KEY ??
     process.env.OPENAI_API_KEY ??
     "";
@@ -74,13 +74,13 @@ export async function runSubtask(args: {
 
   const runner = new SubtaskRunner({
     apiKey,
-    provider: process.env.QINGLING_LLM_PROVIDER ?? "deepseek",
+    provider: process.env.QLING_LLM_PROVIDER ?? "deepseek",
     endpoint:
-      process.env.QINGLING_LLM_ENDPOINT ??
+      process.env.QLING_LLM_ENDPOINT ??
       process.env.OPENAI_BASE_URL ??
       process.env.DEEPSEEK_BASE_URL ??
       "https://api.deepseek.com",
-    model: process.env.QINGLING_LLM_MODEL ?? "deepseek-chat",
+    model: process.env.QLING_LLM_MODEL ?? "deepseek-chat",
     tools: [
       bashTool,
       readTool,

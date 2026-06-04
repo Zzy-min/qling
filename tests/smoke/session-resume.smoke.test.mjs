@@ -9,14 +9,14 @@ import { SessionScheduler } from "../../dist/session/session-scheduler.js";
 import { SessionGoalManager } from "../../dist/session/session-goal-manager.js";
 
 test("session resume smoke: checkpoint restores the same session identity for goal/task state", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-session-resume-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-session-resume-"));
   const registry = new SessionRegistry({ stateDir });
   const sessionId = "session-resume-smoke";
 
   await registry.save({
     name: sessionId,
     sessionId,
-    workspaceDir: "C:/workspace/qingling",
+    workspaceDir: "C:/workspace/qling",
     createdAt: "2026-05-16T00:00:00.000Z",
     updatedAt: "2026-05-16T00:03:00.000Z",
     messages: [{ role: "user", content: "继续修复 build" }],

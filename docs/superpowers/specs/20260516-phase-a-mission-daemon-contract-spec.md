@@ -1,8 +1,8 @@
-# `qingling` 阶段 A：Mission / Daemon / CLI 契约收敛设计（2026-05-16）
+# `qling` 阶段 A：Mission / Daemon / CLI 契约收敛设计（2026-05-16）
 
 ## 背景
 
-当前 `qingling` 已有 `mission`、`daemon` 和 Dashboard 雏形，但阶段 A 的主问题不是“没有能力”，而是“帮助文案、CLI、daemon API 和持久化状态不一致”：
+当前 `qling` 已有 `mission`、`daemon` 和 Dashboard 雏形，但阶段 A 的主问题不是“没有能力”，而是“帮助文案、CLI、daemon API 和持久化状态不一致”：
 
 1. `--help` 已声明 `mission logs <id>`，但 CLI 只真正支持 `mission start|list`。
 2. `daemon` 只暴露 `GET /missions`、`POST /missions` 与 `/health`，缺少详情、日志和控制动作接口。

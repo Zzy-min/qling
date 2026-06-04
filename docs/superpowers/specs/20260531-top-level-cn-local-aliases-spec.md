@@ -7,13 +7,13 @@
 ## 目标
 
 - 为顶层本地只读管理命令新增中文别名：
-  - `qingling 诊断` -> `qingling doctor`
-  - `qingling 存储` -> `qingling storage`
-  - `qingling 导出列表 [count]` -> `qingling exports [count]`
-  - `qingling 会话列表 [count]` -> `qingling sessions [count]`
-  - `qingling 隐私` -> `qingling privacy`
+  - `qling 诊断` -> `qling doctor`
+  - `qling 存储` -> `qling storage`
+  - `qling 导出列表 [count]` -> `qling exports [count]`
+  - `qling 会话列表 [count]` -> `qling sessions [count]`
+  - `qling 隐私` -> `qling privacy`
 - 中文别名只做 parser 归一化，后续执行路径复用英文主命令。
-- `qingling --help` 显示这些中文别名，降低发现成本。
+- `qling --help` 显示这些中文别名，降低发现成本。
 - 保持只读本地边界：不读取正文、不联网、不调用模型、不初始化 AgentLoop。
 
 ## 非目标
@@ -26,9 +26,9 @@
 ## 行为
 
 - 顶层第一个非 option 参数命中中文别名时，内部归一化为对应英文 `CliMode`。
-- 中文别名后的参数完整保留为 `subArgs`，例如 `qingling 导出列表 5` 等价于 `qingling exports 5`。
+- 中文别名后的参数完整保留为 `subArgs`，例如 `qling 导出列表 5` 等价于 `qling exports 5`。
 - 与 `--continue` 或 `--resume` 组合时报模式冲突错误，保持管理命令一致性。
-- 中文别名出现在 `qingling --help` 的“中文别名”区域。
+- 中文别名出现在 `qling --help` 的“中文别名”区域。
 
 ## 验收
 

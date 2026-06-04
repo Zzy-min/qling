@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { evaluateIsolationPolicy } from "../../dist/agents/isolation-policy.js";
 
 async function withTempDir(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "qingling-isolation-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "qling-isolation-test-"));
   try {
     await fn(dir);
   } finally {

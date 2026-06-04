@@ -18,7 +18,7 @@ export function resolveInputHistoryPath(stateDir: string): string {
 }
 
 function isHistoryEnabled(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): boolean {
-  return String(env.QINGLING_TUI_HISTORY_ENABLED ?? "true").toLowerCase() !== "false";
+  return String(env.QLING_TUI_HISTORY_ENABLED ?? "true").toLowerCase() !== "false";
 }
 
 function resolveLimit(value: number | undefined, fallback: number): number {

@@ -50,7 +50,7 @@ function createUiRecorder() {
 }
 
 test("streaming repl restores prompt after queued input settles with idle statusline", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-"));
   try {
     const repl = new StreamingREPL(createAgent(stateDir));
     const ui = createUiRecorder();
@@ -75,7 +75,7 @@ test("streaming repl restores prompt after queued input settles with idle status
 });
 
 test("streaming repl restores prompt once after all queued inputs drain", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-drain-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-drain-"));
   try {
     const repl = new StreamingREPL(createAgent(stateDir));
     const ui = createUiRecorder();
@@ -128,7 +128,7 @@ test("streaming repl restores prompt once after all queued inputs drain", async 
 });
 
 test("streaming repl immediate queue status tolerates extra whitespace while input is running", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-status-spaces-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-status-spaces-"));
   const firstGate = deferred();
   const tracked = [];
   try {
@@ -174,7 +174,7 @@ test("streaming repl immediate queue status tolerates extra whitespace while inp
 });
 
 test("streaming repl immediate queue clear tolerates extra whitespace without leaking body", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-clear-spaces-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-clear-spaces-"));
   const firstGate = deferred();
   const tracked = [];
   try {
@@ -224,7 +224,7 @@ test("streaming repl immediate queue clear tolerates extra whitespace without le
 });
 
 test("streaming repl accepts chinese queue clear shorthand without running pending input", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-clear-cn-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-clear-cn-"));
   const firstGate = deferred();
   const tracked = [];
   try {
@@ -274,7 +274,7 @@ test("streaming repl accepts chinese queue clear shorthand without running pendi
 });
 
 test("streaming repl handles unknown queue subcommand locally with usage", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-usage-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-usage-"));
   try {
     const repl = new StreamingREPL(createAgent(stateDir));
     const ui = createUiRecorder();
@@ -301,7 +301,7 @@ test("streaming repl handles unknown queue subcommand locally with usage", async
 });
 
 test("streaming repl immediate queue clear removes pending input without leaking body", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "qingling-repl-queue-clear-"));
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-clear-"));
   try {
     const repl = new StreamingREPL(createAgent(stateDir));
     const ui = createUiRecorder();

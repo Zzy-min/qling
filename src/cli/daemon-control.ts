@@ -82,8 +82,8 @@ export async function startDaemon(options: DaemonControlOptions): Promise<StartD
     cwd: options.cwd,
     env: {
       ...options.env,
-      QINGLING_FILE_STATE_DIR: options.stateDir,
-      QINGLING_DAEMON_PORT: String(options.port),
+      QLING_FILE_STATE_DIR: options.stateDir,
+      QLING_DAEMON_PORT: String(options.port),
     },
     detached: true,
     stdio: ["ignore", logFd, logFd],

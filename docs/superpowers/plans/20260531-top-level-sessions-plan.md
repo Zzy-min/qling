@@ -1,4 +1,4 @@
-# `qingling sessions` 顶层命令计划（2026-05-31）
+# `qling sessions` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
@@ -8,7 +8,7 @@
   - formatter 不输出消息正文。
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["sessions", "2"])` 返回 `mode=sessions`。
-  - `buildHelpText()` 包含 `qingling sessions [count]`。
+  - `buildHelpText()` 包含 `qling sessions [count]`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - 临时 state dir 写入 session snapshot。
   - `node dist/index.js --file-state-dir <dir> sessions 1` 输出会话摘要且不泄露消息正文。

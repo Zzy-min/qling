@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Session Goal 与自动续跑设计（2026-05-16）
+# `qling` 阶段 B：Session Goal 与自动续跑设计（2026-05-16）
 
 ## 背景
 
@@ -61,8 +61,8 @@
   - `{"done": true|false, "reason": "..."}`
 - evaluator 不运行工具，只读 transcript。
 - provider/model 选择：
-  - 优先读 `QINGLING_GOAL_EVALUATOR_*`
-  - 否则回退主 session 的 `QINGLING_LLM_*`
+  - 优先读 `QLING_GOAL_EVALUATOR_*`
+  - 否则回退主 session 的 `QLING_LLM_*`
 - 诚实边界：
   - 当前不会像 Claude Code 一样自动路由到“small fast model”。
   - 如果用户没有额外配置，goal evaluator 默认复用当前 provider/model。
@@ -85,7 +85,7 @@
 ### D. 安全收敛
 
 - 内部增加硬上限：
-  - `QINGLING_GOAL_MAX_AUTO_TURNS`
+  - `QLING_GOAL_MAX_AUTO_TURNS`
   - 默认 `12`
 - 超过上限后自动清除 goal，并在 transcript/状态里记录停止原因。
 - 这是本轮对抗失控循环的保护措施。

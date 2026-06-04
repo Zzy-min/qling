@@ -2,7 +2,7 @@
 
 ## Problem
 
-Classic `qingling repl` supports both slash `/resume` and legacy `!load <name>` session switching. Slash `/resume` resets local session controllers after restoring a session, but legacy `!load` only restores and checkpoints.
+Classic `qling repl` supports both slash `/resume` and legacy `!load <name>` session switching. Slash `/resume` resets local session controllers after restoring a session, but legacy `!load` only restores and checkpoints.
 
 After local `/loop` support starts a scheduler timer in classic REPL, this creates a stability leak: a loop created in the previous session can keep running after `!load <name>` restores another session.
 

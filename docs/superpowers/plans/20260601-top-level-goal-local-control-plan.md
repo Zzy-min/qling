@@ -1,9 +1,9 @@
 # 顶层目标控制面实施计划
 
 ## User Journey
-- 用户执行 `qingling goal status`，快速看到本机所有持久化目标的状态，不需要重新进入 TUI。
-- 用户执行 `qingling goal set "完成 ci:check"`，把最近会话交给 daemon goal 状态机后续推进。
-- 用户执行 `qingling goal clear latest` 或 `qingling 目标 清除`，停止最近会话的本地 goal。
+- 用户执行 `qling goal status`，快速看到本机所有持久化目标的状态，不需要重新进入 TUI。
+- 用户执行 `qling goal set "完成 ci:check"`，把最近会话交给 daemon goal 状态机后续推进。
+- 用户执行 `qling goal clear latest` 或 `qling 目标 清除`，停止最近会话的本地 goal。
 
 ## Implementation Steps
 1. 新增 `src/session-goal-report.ts`，提供本地 goal 列表、latest session 解析、set、clear、格式化输出。

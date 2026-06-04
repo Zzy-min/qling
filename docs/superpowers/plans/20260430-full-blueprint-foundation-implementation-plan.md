@@ -1,9 +1,9 @@
-# `qingling` 全量蓝图实施计划（Foundation v1）
+# `qling` 全量蓝图实施计划（Foundation v1）
 
 ## Step 1: 配置平面
 - 新增统一配置模块：默认值、配置文件读取、环境变量映射、CLI 覆盖合并。
 - 新增 `${ENV_VAR}` 展开器和缺失变量告警。
-- 新增 `QINGLING_*` 映射规则并固化测试。
+- 新增 `QLING_*` 映射规则并固化测试。
 
 ## Step 2: 运行模式平面
 - 扩展 CLI 为 `run|chat|repl` 子命令。

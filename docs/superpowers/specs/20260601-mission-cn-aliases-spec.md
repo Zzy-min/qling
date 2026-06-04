@@ -7,9 +7,9 @@
 ## 目标
 
 - 新增顶层中文别名：
-  - `qingling 使命 ...` -> `qingling mission ...`
-  - `qingling 代理` -> `qingling agents`
-  - `qingling 日志 <id>` -> `qingling logs <id>`
+  - `qling 使命 ...` -> `qling mission ...`
+  - `qling 代理` -> `qling agents`
+  - `qling 日志 <id>` -> `qling logs <id>`
 - 新增 mission 子命令中文别名：
   - `开始` -> `start`
   - `列表` -> `list`
@@ -33,12 +33,12 @@
 
 ## 行为
 
-- `qingling 使命 列表` 等价于 `qingling mission list`。
-- `qingling 使命 终止 <id>` 等价于 `qingling mission cancel <id>`。
-- `qingling mission terminate <id>` 等价于 `qingling mission cancel <id>`。
-- `qingling 代理` 等价于 `qingling agents`。
-- `qingling 日志 <id>` 等价于 `qingling logs <id>`。
-- `qingling --help` 展示这些中文别名和 `terminate` 别名。
+- `qling 使命 列表` 等价于 `qling mission list`。
+- `qling 使命 终止 <id>` 等价于 `qling mission cancel <id>`。
+- `qling mission terminate <id>` 等价于 `qling mission cancel <id>`。
+- `qling 代理` 等价于 `qling agents`。
+- `qling 日志 <id>` 等价于 `qling logs <id>`。
+- `qling --help` 展示这些中文别名和 `terminate` 别名。
 
 ## 验收
 

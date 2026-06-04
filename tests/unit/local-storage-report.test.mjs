@@ -19,7 +19,7 @@ function createContext(root) {
 }
 
 async function withTempRoot(fn) {
-  const root = await mkdtemp(join(tmpdir(), "qingling-storage-report-"));
+  const root = await mkdtemp(join(tmpdir(), "qling-storage-report-"));
   try {
     await fn(root);
   } finally {
@@ -39,8 +39,8 @@ test("local storage report marks missing local data directories without failing"
     const stateDir = join(root, "missing-state");
     const report = await buildLocalStorageReport(createContext(root), {
       env: {
-        QINGLING_FILE_STATE_DIR: stateDir,
-        QINGLING_FILE_CACHE_DIR: join(stateDir, "cache"),
+        QLING_FILE_STATE_DIR: stateDir,
+        QLING_FILE_CACHE_DIR: join(stateDir, "cache"),
       },
     });
 
@@ -66,8 +66,8 @@ test("local storage report scans metadata for state buckets", async () => {
 
     const report = await buildLocalStorageReport(createContext(root), {
       env: {
-        QINGLING_FILE_STATE_DIR: root,
-        QINGLING_FILE_CACHE_DIR: cacheDir,
+        QLING_FILE_STATE_DIR: root,
+        QLING_FILE_CACHE_DIR: cacheDir,
       },
     });
     const sessions = report.buckets.find((bucket) => bucket.id === "sessions");
@@ -102,8 +102,8 @@ test("local storage report marks buckets truncated at scan limit", async () => {
     const report = await buildLocalStorageReport(createContext(root), {
       maxEntries: 1,
       env: {
-        QINGLING_FILE_STATE_DIR: root,
-        QINGLING_FILE_CACHE_DIR: join(root, "cache"),
+        QLING_FILE_STATE_DIR: root,
+        QLING_FILE_CACHE_DIR: join(root, "cache"),
       },
     });
 

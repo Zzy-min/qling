@@ -28,15 +28,15 @@ function withGuardEnv(overrides, fn) {
 }
 
 test("e2e guard m2: permission deny blocks bash tool", withGuardEnv({
-  QINGLING_MEMORY_WAL_ENABLED: "false",
-  QINGLING_METRICS_ENABLED: "false",
-  QINGLING_GUARD_ENABLED: "true",
-  QINGLING_GUARD_PERMISSIONS_DEFAULT: "allow",
-  QINGLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
+  QLING_MEMORY_WAL_ENABLED: "false",
+  QLING_METRICS_ENABLED: "false",
+  QLING_GUARD_ENABLED: "true",
+  QLING_GUARD_PERMISSIONS_DEFAULT: "allow",
+  QLING_GUARD_PERMISSIONS_RULES: JSON.stringify([
     { tool_pattern: "bash", decision: "deny", reason: "bash is forbidden in this session" },
   ]),
-  QINGLING_GUARD_RATE_LIMIT_ENABLED: "false",
-  QINGLING_GUARD_CONTENT_FILTER_ENABLED: "false",
+  QLING_GUARD_RATE_LIMIT_ENABLED: "false",
+  QLING_GUARD_CONTENT_FILTER_ENABLED: "false",
 }, async () => {
   const agent = new AgentLoop({
     apiKey: "test-key",
@@ -82,13 +82,13 @@ test("e2e guard m2: permission deny blocks bash tool", withGuardEnv({
 }));
 
 test("e2e guard m2: content filter blocks PII in tool output", withGuardEnv({
-  QINGLING_MEMORY_WAL_ENABLED: "false",
-  QINGLING_METRICS_ENABLED: "false",
-  QINGLING_GUARD_ENABLED: "true",
-  QINGLING_GUARD_CONTENT_FILTER_ENABLED: "true",
-  QINGLING_GUARD_CONTENT_FILTER_PII: "true",
-  QINGLING_GUARD_CONTENT_FILTER_INJECTION: "true",
-  QINGLING_GUARD_RATE_LIMIT_ENABLED: "false",
+  QLING_MEMORY_WAL_ENABLED: "false",
+  QLING_METRICS_ENABLED: "false",
+  QLING_GUARD_ENABLED: "true",
+  QLING_GUARD_CONTENT_FILTER_ENABLED: "true",
+  QLING_GUARD_CONTENT_FILTER_PII: "true",
+  QLING_GUARD_CONTENT_FILTER_INJECTION: "true",
+  QLING_GUARD_RATE_LIMIT_ENABLED: "false",
 }, async () => {
   const agent = new AgentLoop({
     apiKey: "test-key",

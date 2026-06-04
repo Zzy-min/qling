@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Agents 视图与后台任务管理体验计划（2026-05-16）
+# `qling` 阶段 B：Agents 视图与后台任务管理体验计划（2026-05-16）
 
 ## Step 1: 测试先行
 
@@ -9,8 +9,8 @@
 - 新增 `tests/unit/mission-views.test.mjs`：
   - 按状态分组渲染 agents 视图
 - 新增 `tests/smoke/agents-view.smoke.test.mjs`：
-  - `qingling agents` 展示 seeded mission
-  - `qingling logs <id>` 能读取 seeded 日志
+  - `qling agents` 展示 seeded mission
+  - `qling logs <id>` 能读取 seeded 日志
 - 新增 `tests/smoke/mission-attach.smoke.test.mjs`：
   - daemon 创建一个短任务
   - `mission attach <id>` 跟随日志直到终态并退出

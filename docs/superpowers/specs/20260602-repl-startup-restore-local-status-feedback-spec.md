@@ -6,7 +6,7 @@ Classic REPL now hydrates local session controllers after startup `--resume` and
 
 ## User Journey
 
-As a Qingling user starting the REPL with `--resume` or `--continue`, I want the initial restore banner to show restored local loop and goal state, so that the CLI gives immediate confidence that local automation and goal tracking were restored.
+As a Qling user starting the REPL with `--resume` or `--continue`, I want the initial restore banner to show restored local loop and goal state, so that the CLI gives immediate confidence that local automation and goal tracking were restored.
 
 ## Requirements
 

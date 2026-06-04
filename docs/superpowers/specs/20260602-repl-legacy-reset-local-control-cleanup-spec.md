@@ -2,7 +2,7 @@
 
 ## Problem
 
-Classic `qingling repl` still advertises the legacy `!reset` command. After local `/loop` and `/goal` support was added to the classic REPL, `!reset` only resets the in-memory conversation and checkpoints the session.
+Classic `qling repl` still advertises the legacy `!reset` command. After local `/loop` and `/goal` support was added to the classic REPL, `!reset` only resets the in-memory conversation and checkpoints the session.
 
 That creates a stability mismatch: a user can reset the conversation through the documented legacy path while local loop tasks or an active goal remain enabled in the same session.
 

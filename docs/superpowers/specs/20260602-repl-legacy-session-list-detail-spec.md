@@ -6,7 +6,7 @@ Classic REPL supports both slash commands and legacy commands. `/sessions` alrea
 
 ## User Journey
 
-As a Qingling user staying in classic REPL muscle memory, I want `!sessions` and bare `!load` to show the same useful local session summary as `/sessions`, so that I can choose the right local session without switching command styles or guessing from filenames.
+As a Qling user staying in classic REPL muscle memory, I want `!sessions` and bare `!load` to show the same useful local session summary as `/sessions`, so that I can choose the right local session without switching command styles or guessing from filenames.
 
 ## Requirements
 

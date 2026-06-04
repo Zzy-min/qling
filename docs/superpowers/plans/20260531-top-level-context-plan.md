@@ -1,4 +1,4 @@
-# `qingling context` 顶层命令计划（2026-05-31）
+# `qling context` 顶层命令计划（2026-05-31）
 
 ## Step 1: 测试先行
 
@@ -8,7 +8,7 @@
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `parseCliArgs(["context"])` 返回 `mode=context`。
   - `parseCliArgs(["上下文"])` 返回 `mode=context`。
-  - help 包含 `qingling context` 和 `上下文`。
+  - help 包含 `qling context` 和 `上下文`。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
   - `node dist/index.js --file-state-dir <tmp> 上下文` 以 0 退出。
   - stdout 包含“本地上下文”和保存快照数量，不包含 session 正文。

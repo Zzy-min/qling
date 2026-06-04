@@ -8,7 +8,7 @@ dist/
 .env
 
 # Runtime data
-.qingling-todos.json
+.qling-todos.json
 
 # Temp / debug files
 *.ps1
@@ -25,4 +25,4 @@ Thumbs.db
 *.swo
 
 # Memory persistence (runtime)
-.qingling/
+.qling/

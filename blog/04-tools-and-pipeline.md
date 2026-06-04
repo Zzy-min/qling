@@ -127,7 +127,7 @@ export async function bashExecute(args: { command: string }): Promise<ToolResult
       encoding: "utf-8",
       timeout: 30_000,
       maxBuffer: 1024 * 1024, // 1MB
-      cwd: process.env.QINGLING_WORKSPACE_DIR ?? process.cwd(),
+      cwd: process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
     });
     return { output: output.trim(), is_error: false };
   } catch (err: any) {

@@ -1,4 +1,4 @@
-# `qingling recap` 顶层本地回顾规格（2026-05-31）
+# `qling recap` 顶层本地回顾规格（2026-05-31）
 
 ## 背景
 
@@ -6,8 +6,8 @@
 
 ## 目标
 
-- 新增顶层命令 `qingling recap [session|latest] [count]`。
-- 新增中文别名 `qingling 回顾 [session|latest] [count]`。
+- 新增顶层命令 `qling recap [session|latest] [count]`。
+- 新增中文别名 `qling 回顾 [session|latest] [count]`。
 - 默认读取最近保存的本地会话快照；传入 session name 或 sessionId 时读取指定快照。
 - 输出会话 id、turns、tokens、compactions、workspace 和最近消息摘录。
 - 默认显示最近 6 条消息，非法数量使用 6，最大 20。
@@ -23,10 +23,10 @@
 
 ## 行为
 
-- `qingling recap` 等价于 `qingling recap latest`。
-- `qingling recap 3` 表示查看最近快照的最近 3 条消息。
-- `qingling recap latest 3` 表示查看最近快照的最近 3 条消息。
-- `qingling recap <session> 3` 表示查看指定 session/name 的最近 3 条消息。
+- `qling recap` 等价于 `qling recap latest`。
+- `qling recap 3` 表示查看最近快照的最近 3 条消息。
+- `qling recap latest 3` 表示查看最近快照的最近 3 条消息。
+- `qling recap <session> 3` 表示查看指定 session/name 的最近 3 条消息。
 - 本地没有快照时输出空态提示，建议先完成一次交互会话或使用 `/sessions` 查看快照。
 - 指定 session 不存在时输出未找到提示，不报错崩溃。
 

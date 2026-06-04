@@ -16,7 +16,7 @@
 1. 在 `src/help-topics.ts` 内基于 `TOPICS` 和 `aliases` 构建本地主题候选。
 2. 用 code point 级相似度进行高置信匹配，阈值与顶层 CLI typo 建议保持同一量级。
 3. 在未知主题 fallback 中按 surface 输出建议：
-   - CLI: `qingling help <topic-id>` 和 `Usage     : <cliUsage>`；
+   - CLI: `qling help <topic-id>` 和 `Usage     : <cliUsage>`；
    - Slash: `/help <topic-id>` 和 `Usage     : <slashUsage>`。
 4. 保持精确 topic 输出路径不变。
 
@@ -27,5 +27,5 @@
 
 ## Risk Controls
 - 不改变 parser 错误码或 help 退出码。
-- 不读取 `.qingling` 运行态文件，避免把帮助建议和私密本地数据耦合。
+- 不读取 `.qling` 运行态文件，避免把帮助建议和私密本地数据耦合。
 - 弱匹配不输出建议，降低误导率。

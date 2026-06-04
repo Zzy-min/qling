@@ -40,18 +40,18 @@ async function waitForHealth(baseUrl, expectedUp, timeoutMs = 10_000) {
 }
 
 test("daemon control smoke: start, status, stop manage detached daemon", async () => {
-  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qingling-daemonctl-"));
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-daemonctl-"));
   const daemonPort = await getFreePort();
   const baseUrl = `http://127.0.0.1:${daemonPort}`;
   const pidFile = path.join(stateDir, "daemon.pid");
 
   const env = {
     ...process.env,
-    QINGLING_FILE_STATE_DIR: stateDir,
-    QINGLING_DAEMON_PORT: String(daemonPort),
-    QINGLING_FEATURES_DYNAMIC_DISCOVERY: "false",
-    QINGLING_MEMORY_WAL_ENABLED: "false",
-    QINGLING_METRICS_ENABLED: "false",
+    QLING_FILE_STATE_DIR: stateDir,
+    QLING_DAEMON_PORT: String(daemonPort),
+    QLING_FEATURES_DYNAMIC_DISCOVERY: "false",
+    QLING_MEMORY_WAL_ENABLED: "false",
+    QLING_METRICS_ENABLED: "false",
   };
 
   try {

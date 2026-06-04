@@ -43,7 +43,7 @@ import {
 } from "./session/session-registry.js";
 
 const HOME_DIR = os.homedir();
-const DEFAULT_QINGLING_DIR = path.join(HOME_DIR, ".qingling");
+const DEFAULT_QLING_DIR = path.join(HOME_DIR, ".qling");
 
 interface TurnTelemetry {
   turn: number;
@@ -164,17 +164,17 @@ export class AgentLoop extends AgentEventEmitter {
       throw new Error("Missing API key (expected config.apiKey / DEEPSEEK_API_KEY / OPENAI_API_KEY)");
     }
 
-    const provider = config.provider ?? process.env.QINGLING_LLM_PROVIDER ?? "deepseek";
+    const provider = config.provider ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
     const endpoint =
       config.endpoint ??
-      process.env.QINGLING_LLM_ENDPOINT ??
+      process.env.QLING_LLM_ENDPOINT ??
       process.env.OPENAI_BASE_URL ??
       process.env.DEEPSEEK_BASE_URL ??
       (provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com");
     this.runtimeRootDir = path.resolve(
       config.runtime?.fileStateDir ??
-        process.env.QINGLING_FILE_STATE_DIR ??
-        DEFAULT_QINGLING_DIR
+        process.env.QLING_FILE_STATE_DIR ??
+        DEFAULT_QLING_DIR
     );
     this.memoryDir = path.join(this.runtimeRootDir, "memory");
     this.loggingConfig = {
@@ -199,10 +199,10 @@ export class AgentLoop extends AgentEventEmitter {
         totalBudget: 120_000,
       },
       runtime: {
-        workspaceDir: config.runtime?.workspaceDir ?? process.env.QINGLING_WORKSPACE_DIR ?? process.cwd(),
+        workspaceDir: config.runtime?.workspaceDir ?? process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
         fileCacheDir:
           config.runtime?.fileCacheDir ??
-          process.env.QINGLING_FILE_CACHE_DIR ??
+          process.env.QLING_FILE_CACHE_DIR ??
           path.join(this.runtimeRootDir, "cache"),
         fileStateDir: this.runtimeRootDir,
         maxSteps: config.runtime?.maxSteps ?? 50,
@@ -241,11 +241,11 @@ export class AgentLoop extends AgentEventEmitter {
     // v0.3 Discovery Registry
     const discoverySources: DiscoverySource[] = [];
     try {
-      const localDirs = JSON.parse(process.env.QINGLING_DISCOVERY_LOCAL_DIRS || "[]");
+      const localDirs = JSON.parse(process.env.QLING_DISCOVERY_LOCAL_DIRS || "[]");
       localDirs.forEach((dir: string, i: number) => {
         discoverySources.push({ id: `local-${i}`, uri: dir, type: "local" });
       });
-      const remoteManifests = JSON.parse(process.env.QINGLING_DISCOVERY_REMOTE_MANIFESTS || "[]");
+      const remoteManifests = JSON.parse(process.env.QLING_DISCOVERY_REMOTE_MANIFESTS || "[]");
       remoteManifests.forEach((url: string, i: number) => {
         discoverySources.push({ id: `remote-${i}`, uri: url, type: "remote" });
       });
@@ -301,7 +301,7 @@ export class AgentLoop extends AgentEventEmitter {
     await this.missionManager.init();
 
     // v0.3 Sync dynamic discovery
-    if (process.env.QINGLING_FEATURES_DYNAMIC_DISCOVERY === "true") {
+    if (process.env.QLING_FEATURES_DYNAMIC_DISCOVERY === "true") {
       console.error("🔍 正在同步动态插件与技能...");
       await this.discoveryRegistry.syncAll();
       const discoveredTools = this.discoveryRegistry.getDiscoveredTools();
@@ -316,19 +316,19 @@ export class AgentLoop extends AgentEventEmitter {
     }
 
     // WAL initialization
-    const walEnabled = process.env.QINGLING_MEMORY_WAL_ENABLED !== "false";
-    const projectionIntervalRaw = Number(process.env.QINGLING_MEMORY_PROJECTION_INTERVAL_MS ?? "5000");
+    const walEnabled = process.env.QLING_MEMORY_WAL_ENABLED !== "false";
+    const projectionIntervalRaw = Number(process.env.QLING_MEMORY_PROJECTION_INTERVAL_MS ?? "5000");
     const projectionInterval =
       Number.isFinite(projectionIntervalRaw) && projectionIntervalRaw > 0
         ? projectionIntervalRaw
         : 5000;
-    const dreamLLM = process.env.QINGLING_MEMORY_DREAM_LLM_ENABLED !== "false";
-    const dreamThresholdRaw = Number(process.env.QINGLING_MEMORY_DREAM_TURN_THRESHOLD ?? "24");
+    const dreamLLM = process.env.QLING_MEMORY_DREAM_LLM_ENABLED !== "false";
+    const dreamThresholdRaw = Number(process.env.QLING_MEMORY_DREAM_TURN_THRESHOLD ?? "24");
     const dreamThreshold =
       Number.isFinite(dreamThresholdRaw) && dreamThresholdRaw > 0
         ? dreamThresholdRaw
         : 24;
-    const memoryMaxEntriesRaw = Number(process.env.QINGLING_MEMORY_MAX_MEMORIES ?? "1000");
+    const memoryMaxEntriesRaw = Number(process.env.QLING_MEMORY_MAX_MEMORIES ?? "1000");
     this.memoryMaxEntries =
       Number.isFinite(memoryMaxEntriesRaw) && memoryMaxEntriesRaw > 0
         ? Math.floor(memoryMaxEntriesRaw)
@@ -345,17 +345,17 @@ export class AgentLoop extends AgentEventEmitter {
         this.memoryStore.setWAL(this.wal, { intervalMs: projectionInterval });
         
         // v0.3 语义记忆初始化 (v0.5 升级为认知引擎)
-        const semanticEnabled = process.env.QINGLING_FEATURES_SEMANTIC_MEMORY === "true";
+        const semanticEnabled = process.env.QLING_FEATURES_SEMANTIC_MEMORY === "true";
         if (semanticEnabled) {
           const { CognitiveIndex } = await import("./memory/cognitive-index.js");
           const { EmbeddingClient } = await import("./memory/embedding.js");
           
           const cognitiveIndex = new CognitiveIndex(this.memoryDir);
           const embeddingClient = new EmbeddingClient({
-            apiKey: process.env.QINGLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
-            endpoint: process.env.QINGLING_MEMORY_SEMANTIC_ENDPOINT || this.config.endpoint || (this.config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com"),
-            model: process.env.QINGLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small",
-            dimensions: Number(process.env.QINGLING_MEMORY_SEMANTIC_DIM) || 1536,
+            apiKey: process.env.QLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
+            endpoint: process.env.QLING_MEMORY_SEMANTIC_ENDPOINT || this.config.endpoint || (this.config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com"),
+            model: process.env.QLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small",
+            dimensions: Number(process.env.QLING_MEMORY_SEMANTIC_DIM) || 1536,
           });
           
           this.memoryStore.setCognitiveIndex(cognitiveIndex, embeddingClient);
@@ -378,15 +378,15 @@ export class AgentLoop extends AgentEventEmitter {
     }
 
     // Metrics & Dashboard initialization
-    const metricsEnabled = process.env.QINGLING_METRICS_ENABLED === "true";
-    const dashboardEnabled = process.env.QINGLING_FEATURES_DASHBOARD === "true";
+    const metricsEnabled = process.env.QLING_METRICS_ENABLED === "true";
+    const dashboardEnabled = process.env.QLING_FEATURES_DASHBOARD === "true";
 
     if (metricsEnabled || dashboardEnabled) {
       try {
         const metricsDir = path.resolve(
-          process.env.QINGLING_METRICS_DIR ?? path.join(this.runtimeRootDir, "metrics")
+          process.env.QLING_METRICS_DIR ?? path.join(this.runtimeRootDir, "metrics")
         );
-        const flushIntervalRaw = Number(process.env.QINGLING_METRICS_FLUSH_INTERVAL_MS ?? "10000");
+        const flushIntervalRaw = Number(process.env.QLING_METRICS_FLUSH_INTERVAL_MS ?? "10000");
         const flushIntervalMs =
           Number.isFinite(flushIntervalRaw) && flushIntervalRaw > 0
             ? flushIntervalRaw
@@ -404,7 +404,7 @@ export class AgentLoop extends AgentEventEmitter {
         // v0.3 Dashboard Server
         if (dashboardEnabled) {
           this.dashboardServer = new DashboardServer({
-            port: Number(process.env.QINGLING_DASHBOARD_PORT) || 9999,
+            port: Number(process.env.QLING_DASHBOARD_PORT) || 9999,
             collector: this.metricsCollector,
             workflowRuntime: this.workflowRuntime,
             agentLoop: this,
@@ -421,11 +421,11 @@ export class AgentLoop extends AgentEventEmitter {
     }
 
     // MCP initialization
-    const mcpServersRaw = process.env.QINGLING_MCP_SERVERS;
+    const mcpServersRaw = process.env.QLING_MCP_SERVERS;
     if (mcpServersRaw) {
       try {
-        const mcpConnTimeoutRaw = Number(process.env.QINGLING_MCP_CONNECTION_TIMEOUT_MS ?? "10000");
-        const mcpCallTimeoutRaw = Number(process.env.QINGLING_MCP_CALL_TIMEOUT_MS ?? "30000");
+        const mcpConnTimeoutRaw = Number(process.env.QLING_MCP_CONNECTION_TIMEOUT_MS ?? "10000");
+        const mcpCallTimeoutRaw = Number(process.env.QLING_MCP_CALL_TIMEOUT_MS ?? "30000");
         const mcpConnTimeout =
           Number.isFinite(mcpConnTimeoutRaw) && mcpConnTimeoutRaw > 0 ? mcpConnTimeoutRaw : 10000;
         const mcpCallTimeout =
@@ -522,7 +522,7 @@ export class AgentLoop extends AgentEventEmitter {
       const systemPrompt = await this.buildSystemPrompt();
 
       // v0.3 Workflow Checkpoint: Update context
-      if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+      if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
         await this.workflowRuntime.updateContext(this.messages);
       }
 
@@ -605,7 +605,7 @@ export class AgentLoop extends AgentEventEmitter {
       }
       
       // v0.3 Workflow Checkpoint: Set pending tools
-      if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+      if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
         await this.workflowRuntime.setPendingTools(preparedCalls.map(p => p.call));
       }
 
@@ -640,7 +640,7 @@ export class AgentLoop extends AgentEventEmitter {
         }
 
         // v0.3 Tool Spec Boost: Consistency Check
-        if (process.env.QINGLING_FEATURES_TOOL_SPEC_BOOST === "true") {
+        if (process.env.QLING_FEATURES_TOOL_SPEC_BOOST === "true") {
           const def = this.config.tools.find(t => t.name === tc.name);
           if (def) {
             const check = checkToolConsistency(tc, def);
@@ -678,7 +678,7 @@ export class AgentLoop extends AgentEventEmitter {
           } catch (err) {
             if (err instanceof ApprovalRequiredError && this.channel) {
               // Approval flow
-              if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+              if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
                 await this.workflowRuntime.awaitApproval();
               }
               const approvalResponse = await this.approvalGate.requestApproval(
@@ -776,7 +776,7 @@ export class AgentLoop extends AgentEventEmitter {
         console.error(icon + " " + tc.name + ": " + preview + (result.output.length > 80 ? "..." : ""));
         
         // v0.3 Workflow Checkpoint: Add result
-        if (process.env.QINGLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+        if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
           await this.workflowRuntime.addToolResult(result);
         }
 
@@ -868,7 +868,7 @@ export class AgentLoop extends AgentEventEmitter {
   setPermissionMode(mode: "allow" | "deny" | "ask"): void {
     this.hookManager.setPermissionDefaultDecision(mode);
     this.guardConfig.permissions.default = mode;
-    process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT = mode;
+    process.env.QLING_GUARD_PERMISSIONS_DEFAULT = mode;
   }
 
   async compactSessionNow(): Promise<{ beforeCount: number; afterCount: number; changed: boolean }> {
@@ -903,7 +903,7 @@ export class AgentLoop extends AgentEventEmitter {
       await this.telemetry.flush();
     }
     if (this.metricsCollector) {
-      const retentionDays = Number(process.env.QINGLING_METRICS_RETENTION_DAYS ?? "30");
+      const retentionDays = Number(process.env.QLING_METRICS_RETENTION_DAYS ?? "30");
       if (retentionDays > 0) {
         await this.metricsCollector.purgeOldEntries(retentionDays);
       }
@@ -1285,7 +1285,7 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private resolveLlmRequestTimeout(): number {
-    const envValue = Number(process.env.QINGLING_LLM_REQUEST_TIMEOUT_MS ?? "120000");
+    const envValue = Number(process.env.QLING_LLM_REQUEST_TIMEOUT_MS ?? "120000");
     if (Number.isFinite(envValue) && envValue > 0) {
       return envValue;
     }

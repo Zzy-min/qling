@@ -1,4 +1,4 @@
-# `qingling` 阶段 B：Daemon-backed Goal / Loop Durable Tasks 设计（2026-05-17）
+# `qling` 阶段 B：Daemon-backed Goal / Loop Durable Tasks 设计（2026-05-17）
 
 ## 背景
 
@@ -18,7 +18,7 @@
 ## 目标
 
 1. 为 `/goal` 与 `/loop` 增加明确的 daemon-backed durable runner。
-2. 关闭前台终端后，只要 `qinglingd` 仍在运行，durable goal/loop 继续执行。
+2. 关闭前台终端后，只要 `qlingd` 仍在运行，durable goal/loop 继续执行。
 3. 复用现有 `session-goals` / `session-tasks` / `sessions` 快照体系，不另起一套完全独立的状态模型。
 4. 保持当前 local session 模式兼容，避免直接破坏已经稳定的 `/goal`、`/loop` 本地体验。
 
@@ -38,7 +38,7 @@
 - `session`
   - 由当前前台 TUI/REPL 执行
 - `daemon`
-  - 由 `qinglingd` 执行
+  - 由 `qlingd` 执行
 
 原则：
 
@@ -175,7 +175,7 @@ daemon 新增一个轻量 supervisor 循环：
 
 ## 验收
 
-1. `qingling daemon start` 后，`/loop daemon ...` 在关闭 TUI 后仍能继续执行。
-2. `qingling daemon start` 后，`/goal daemon ...` 在关闭 TUI 后仍能继续执行直至达成/清除/超限。
+1. `qling daemon start` 后，`/loop daemon ...` 在关闭 TUI 后仍能继续执行。
+2. `qling daemon start` 后，`/goal daemon ...` 在关闭 TUI 后仍能继续执行直至达成/清除/超限。
 3. local 与 daemon runner 不会双跑同一 task/goal。
 4. `npm run build` 与 `npm run ci:check` 全通过。

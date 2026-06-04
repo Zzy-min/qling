@@ -1,4 +1,4 @@
-# `qingling permissions` 顶层权限状态计划（2026-06-01）
+# `qling permissions` 顶层权限状态计划（2026-06-01）
 
 ## Step 1: 测试先行
 
@@ -10,9 +10,9 @@
 - 扩展 `tests/unit/cli-startup.test.mjs`：
   - `permissions` 顶层模式可解析。
   - `权限` 中文别名可解析。
-  - help 展示 `qingling permissions` 和中文别名。
+  - help 展示 `qling permissions` 和中文别名。
 - 扩展 `tests/smoke/cli-startup.smoke.test.mjs`：
-  - `node dist/index.js permissions` 在 `QINGLING_PERMISSIONS_MODE=ask` 下输出 ask 并退出。
+  - `node dist/index.js permissions` 在 `QLING_PERMISSIONS_MODE=ask` 下输出 ask 并退出。
 
 ## Step 2: 权限报告模块
 

@@ -23,7 +23,7 @@ function resolveCurrentMode(context: any): PermissionMode {
   if (typeof fromLoop === "string" && isMode(fromLoop.toLowerCase())) {
     return fromLoop.toLowerCase() as PermissionMode;
   }
-  const fromEnv = String(process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT ?? "allow").toLowerCase();
+  const fromEnv = String(process.env.QLING_GUARD_PERMISSIONS_DEFAULT ?? "allow").toLowerCase();
   if (isMode(fromEnv)) {
     return fromEnv;
   }
@@ -31,7 +31,7 @@ function resolveCurrentMode(context: any): PermissionMode {
 }
 
 function parseEnvPermissionRules(env: NodeJS.ProcessEnv): PermissionRuleInput[] {
-  const raw = env.QINGLING_GUARD_PERMISSIONS_RULES;
+  const raw = env.QLING_GUARD_PERMISSIONS_RULES;
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -87,8 +87,8 @@ export const permissionsCommand: SlashCommand = {
     if (typeof setMode === "function") {
       await setMode.call(context.agentLoop, first);
     }
-    process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT = first;
-    process.env.QINGLING_PERMISSIONS_MODE = first;
+    process.env.QLING_GUARD_PERMISSIONS_DEFAULT = first;
+    process.env.QLING_PERMISSIONS_MODE = first;
 
     const mode = resolveCurrentMode(context);
     context.writeLine("");

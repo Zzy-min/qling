@@ -6,7 +6,7 @@ export const detachCommand: SlashCommand = {
   description: "将当前任务脱离终端在后台运行 (v0.5 M3)",
   usage: "/detach",
   execute: async (_args, context) => {
-    const DAEMON_PORT = process.env.QINGLING_DAEMON_PORT || "9998";
+    const DAEMON_PORT = process.env.QLING_DAEMON_PORT || "9998";
     const endpoint = `http://localhost:${DAEMON_PORT}/missions`;
 
     context.writeLine("");
