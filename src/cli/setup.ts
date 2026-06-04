@@ -34,7 +34,7 @@ export async function runSetup() {
   const rl = readline.createInterface({ input, output });
 
   console.log("\n=========================================");
-  console.log("🌬️  轻灵 (Qingling) - 初始配置向导");
+  console.log("🌬️  轻灵 (qling) - 初始配置向导");
   console.log("=========================================\n");
 
   console.log("请选择您的 LLM 提供商 (输入数字序号):");
@@ -142,6 +142,6 @@ export async function runSetup() {
   await fs.writeFile(globalEnvPath, envLines.join("\n") + "\n", "utf-8");
 
   console.log(`\n✅ 配置已保存至全局环境变量文件: ${globalEnvPath}`);
-  console.log("提示：您可以随时再次运行 `qingling setup` 或手动编辑该文件进行修改。");
+  console.log("提示：您可以随时再次运行 `qling setup` 或手动编辑该文件进行修改。");
   rl.close();
 }

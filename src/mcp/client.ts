@@ -84,7 +84,7 @@ export class MCPClient {
       const initResult = await this.sendRequest("initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "qingling", version: "0.2" },
+        clientInfo: { name: "qling", version: "0.2" },
       });
 
       if (!initResult) {

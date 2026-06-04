@@ -4,7 +4,7 @@
 // 架构原则：
 // 1. Header 只打印一次（启动时）
 // 2. 所有输出追加到终端历史，从不重绘
-// 3. 底部输入栏：单行 › prompt，光标跟随输入字符
+// 3. 底部输入栏：› prompt，支持 Ctrl+N 插入多行、Ctrl+R 搜索历史
 // 4. Agent 执行期间输入栏保持可用
 // 5. 执行完毕后调用 showPrompt() 恢复 › prompt
 //
@@ -17,6 +17,8 @@
 
 import * as readline from "readline";
 import { default as stringWidth } from "string-width";
+import { InputBuffer } from "./input-buffer.js";
+import { formatProgressPulse } from "./progress.js";
 
 // ── ANSI 颜色工具 ───────────────────────────────────────
 
@@ -176,14 +178,16 @@ export type AgentEvent =
 export class StreamUI {
   private model: string;
   private tools: number;
-  private input: string = "";
-  private cursorPos: number = 0;
-  private history: string[] = [];
-  private historyIdx: number = -1;
+  private input = new InputBuffer();
   private running: boolean = false;
   private inputCallback: ((cmd: string) => Promise<void>) | null = null;
   private currentToolRunning: boolean = false;
   private dataHandler: ((chunk: string) => void) | null = null;
+  private statusLine: string | null = null;
+  private statusLineEnabled = true;
+  private progressTimer: NodeJS.Timeout | null = null;
+  private progressStartedAt = 0;
+  private progressLabel = "agent";
 
   constructor(model: string = "deepseek-chat", tools: number = 0) {
     this.model = model;
@@ -199,6 +203,7 @@ export class StreamUI {
 
   stop(): void {
     this.running = false;
+    this.stopProgress();
     if (this.dataHandler) {
       process.stdin.off("data", this.dataHandler);
       this.dataHandler = null;
@@ -214,6 +219,36 @@ export class StreamUI {
     this.inputCallback = cb;
   }
 
+  setStatusLine(line: string | null): void {
+    this.statusLine = line;
+  }
+
+  setStatusLineEnabled(enabled: boolean): void {
+    this.statusLineEnabled = enabled;
+  }
+
+  setHistory(entries: string[]): void {
+    this.input.setHistory(entries);
+  }
+
+  startProgress(label: string = "agent", intervalMs: number = 10_000): void {
+    this.stopProgress();
+    this.progressLabel = label.trim() || "agent";
+    this.progressStartedAt = Date.now();
+    const safeIntervalMs = Math.max(1_000, intervalMs);
+    this.progressTimer = setInterval(() => {
+      const elapsedMs = Date.now() - this.progressStartedAt;
+      process.stdout.write("\n" + DIM(formatProgressPulse(this.progressLabel, elapsedMs)));
+    }, safeIntervalMs);
+    this.progressTimer.unref?.();
+  }
+
+  stopProgress(): void {
+    if (!this.progressTimer) return;
+    clearInterval(this.progressTimer);
+    this.progressTimer = null;
+  }
+
   // ── Header（只调用一次） ───────────────────────────
 
   private printHeader(): void {
@@ -222,7 +257,8 @@ export class StreamUI {
       S.s(this.model) + "    " + S.g("online") + "    " +
       S.y("tools") + " " + S.y(String(this.tools));
     const line2 = S.d(pathStr);
-    process.stdout.write(line1 + "\n" + line2 + "\n");
+    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Ctrl+R 搜索历史 · Ctrl+C 清空输入");
+    process.stdout.write(line1 + "\n" + line2 + "\n" + line3 + "\n");
   }
 
   // ── 底部输入栏 ────────────────────────────────────
@@ -231,7 +267,10 @@ export class StreamUI {
     const w = process.stdout.columns || 80;
     const sep = "─".repeat(Math.max(1, w));
     process.stdout.write(DIM(sep) + "\n");
-    process.stdout.write(S.p("› ") + this.input);
+    if (this.statusLineEnabled && this.statusLine) {
+      process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
+    }
+    this.writeInputValue();
   }
 
   private backToPrompt(): void {
@@ -241,19 +280,29 @@ export class StreamUI {
 
   private redrawInput(): void {
     this.backToPrompt();
-    process.stdout.write(S.p("› ") + this.input);
+    this.writeInputValue();
     this.syncCursor();
   }
 
   private syncCursor(): void {
-    const col = 2 + this.cursorPos;
+    const beforeCursor = this.input.value.slice(0, this.input.cursorPos);
+    const lastLine = beforeCursor.split("\n").at(-1) ?? "";
+    const col = 2 + sw(lastLine);
     process.stdout.write("\x1b[" + col + "G");
+  }
+
+  private writeInputValue(): void {
+    const rendered = this.input.value.replace(/\n/g, "\n  ");
+    process.stdout.write(S.p("› ") + rendered);
   }
 
   showPrompt(): void {
     if (!this.running) return;
     process.stdout.write("\n" + DIM("─".repeat(Math.max(1, process.stdout.columns || 80))) + "\n");
-    process.stdout.write(S.p("› ") + this.input);
+    if (this.statusLineEnabled && this.statusLine) {
+      process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, process.stdout.columns || 80))) + "\n");
+    }
+    this.writeInputValue();
   }
 
   // ── 键盘输入处理 ─────────────────────────────────
@@ -296,6 +345,14 @@ export class StreamUI {
         } else if (seq === "\x0f") {
           // Ctrl+O — fold toggle (reserved for future expand/collapse)
           partial = "";
+        } else if (seq === "\x0e") {
+          // Ctrl+N inserts a newline while Enter still submits.
+          partial = "";
+          this.handleNewline();
+        } else if (seq === "\x12") {
+          // Ctrl+R restores the latest history entry matching the current input.
+          partial = "";
+          this.handleHistorySearch();
         } else if (seq.startsWith("\x1b[") && seq.length > 4) {
           partial = "";
         } else if (seq.startsWith("\x1b[")) {
@@ -312,12 +369,8 @@ export class StreamUI {
   }
 
   private handleEnter(): void {
-    const cmd = this.input.trim();
+    const cmd = this.input.submit();
     if (!cmd) return;
-    this.history.push(cmd);
-    this.historyIdx = this.history.length;
-    this.input = "";
-    this.cursorPos = 0;
     process.stdout.write("\n");
     if (this.inputCallback) {
       this.inputCallback(cmd);
@@ -325,58 +378,49 @@ export class StreamUI {
   }
 
   private handleCtrlC(): void {
-    this.input = "";
-    this.cursorPos = 0;
+    this.input.clear();
     this.backToPrompt();
-    process.stdout.write(S.r("^C") + " " + S.p("› ") + this.input);
+    process.stdout.write(S.r("^C") + " ");
+    this.writeInputValue();
   }
 
   private handleBackspace(): void {
-    if (this.cursorPos > 0) {
-      this.input = this.input.slice(0, this.cursorPos - 1) + this.input.slice(this.cursorPos);
-      this.cursorPos--;
-      this.redrawInput();
-    }
+    this.input.backspace();
+    this.redrawInput();
   }
 
   private handleHistoryUp(): void {
-    if (this.historyIdx > 0) {
-      this.historyIdx--;
-      this.input = this.history[this.historyIdx] ?? "";
-      this.cursorPos = this.input.length;
-      this.redrawInput();
-    }
+    this.input.historyUp();
+    this.redrawInput();
   }
 
   private handleHistoryDown(): void {
-    if (this.historyIdx < this.history.length - 1) {
-      this.historyIdx++;
-      this.input = this.history[this.historyIdx] ?? "";
-    } else {
-      this.historyIdx = this.history.length;
-      this.input = "";
-    }
-    this.cursorPos = this.input.length;
+    this.input.historyDown();
+    this.redrawInput();
+  }
+
+  private handleHistorySearch(): void {
+    this.input.searchHistory();
     this.redrawInput();
   }
 
   private handleLeft(): void {
-    if (this.cursorPos > 0) {
-      this.cursorPos--;
-      this.syncCursor();
-    }
+    this.input.moveLeft();
+    this.syncCursor();
   }
 
   private handleRight(): void {
-    if (this.cursorPos < this.input.length) {
-      this.cursorPos++;
-      this.syncCursor();
-    }
+    this.input.moveRight();
+    this.syncCursor();
   }
 
   private handleChar(ch: string): void {
-    this.input = this.input.slice(0, this.cursorPos) + ch + this.input.slice(this.cursorPos);
-    this.cursorPos++;
+    this.input.insertChar(ch);
+    this.redrawInput();
+  }
+
+  private handleNewline(): void {
+    this.input.insertNewline();
     this.redrawInput();
   }
 

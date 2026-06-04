@@ -6,7 +6,7 @@
 
 - **Browser Fetch (v0.5)**: 集成 Playwright 支持 JS 渲染页面抓取
 - **Mission Manager**: 引入长任务状态管理与持久化队列
-- **Onboarding flow**: 交互式 `qingling setup` 配置向导
+- **Onboarding flow**: 交互式 `qling setup` 配置向导
 - **Daemon Mode**: 后台守护进程支持（`npm run daemon`）
 - **性能优化**: 优化了流式 TUI 的渲染抖动问题
 

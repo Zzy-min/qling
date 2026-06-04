@@ -20,7 +20,7 @@ async function startOnboarding() {
   const rl = readline.createInterface({ input, output });
 
   console.log("\n=========================================");
-  console.log("🌬️  欢迎来到 轻灵 (Qingling) v0.5");
+  console.log("🌬️  欢迎来到 轻灵 (qling) v0.5");
   console.log("=========================================\n");
 
   console.log("你好！我是轻灵，一个能在本地帮你完成开发任务的智能助手。");

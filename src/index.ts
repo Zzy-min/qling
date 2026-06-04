@@ -2,9 +2,9 @@
 // ============================================================
 // 轻灵 - CLI 入口
 // 契约:
-//   默认启动: qingling               -> chat (TUI)
-//   单次任务: qingling run "任务"    -> run
-//   REPL:     qingling repl          -> repl
+//   默认启动: qling               -> chat (TUI)
+//   单次任务: qling run "任务"    -> run
+//   REPL:     qling repl          -> repl
 // ============================================================
 
 import { fileURLToPath } from "url";
@@ -27,6 +27,35 @@ import { buildToolRegistry } from "./tools/index.js";
 import { runSetup } from "./cli/setup.js";
 import { checkOnboarding } from "./onboarding/tutorial.js";
 import type { AgentConfig } from "./types.js";
+import type { Mission, MissionEvent } from "./mission/types.js";
+import { MissionManager } from "./mission/manager.js";
+import { getDaemonStatus, startDaemon, stopDaemon } from "./cli/daemon-control.js";
+import { followMissionAttach, renderAgentsView, renderMissionEvents } from "./cli/mission-views.js";
+import { buildDoctorReport, formatDoctorReport } from "./doctor.js";
+import { buildLocalStorageReport, formatLocalStorageReport } from "./local-storage-report.js";
+import { formatSessionExportIndex, listSessionExportFiles, parseSessionExportCount } from "./session-export-index.js";
+import { formatSessionListReport, listLocalSessions, parseSessionListCount } from "./session-list-report.js";
+import { cancelLocalSessionTask, formatCanceledSessionTask, formatSessionTaskReport, listLocalSessionTasks, parseSessionTaskCount } from "./session-task-report.js";
+import { clearLocalSessionGoal, formatSessionGoalMutation, formatSessionGoalReport, listLocalSessionGoals, setLocalSessionGoal } from "./session-goal-report.js";
+import { buildLocalMemoryReport, findLocalMemoryEntry, formatLocalMemoryEntry, formatLocalMemoryGraphReport, formatLocalMemoryPracticesReport, formatLocalMemoryReport, formatLocalMemorySearchReport, listLocalMemoryGraph, listLocalMemoryPractices, parseMemoryReportCount, parseMemorySearchArgs, searchLocalMemoryEntries } from "./memory-report.js";
+import { buildLocalPrivacyReport, formatPrivacyReport } from "./privacy-report.js";
+import { buildLocalContextReport, formatContextReport } from "./context-report.js";
+import { SHORTCUT_LINES } from "./shortcuts.js";
+import { collectLocalStatusLineSnapshot, formatStatusLine, parseStatusLineCostPer1k } from "./statusline.js";
+import { buildSavedSessionRecap, parseSavedSessionRecapArgs } from "./recap.js";
+import {
+  buildLocalPermissionsReport,
+  explainLocalPermissionDecision,
+  formatLocalPermissionsReport,
+  formatPermissionExplanationReport,
+} from "./permissions-report.js";
+import { buildLocalConfigReport, formatLocalConfigReport } from "./config-report.js";
+import { buildLocalMcpReport, formatLocalMcpReport } from "./mcp-report.js";
+import { buildLocalHooksReport, formatLocalHooksReport } from "./hooks-report.js";
+import { buildLocalStatusReport, formatLocalStatusReport } from "./local-status-report.js";
+
+const CURRENT_FILE = fileURLToPath(import.meta.url);
+const DIST_DIR = path.dirname(CURRENT_FILE);
 
 function findEnvPaths(): string[] {
   const paths: string[] = [];
@@ -63,6 +92,248 @@ for (const p of envPaths) {
   dotenv.config({ path: p });
 }
 
+function formatTimestamp(value: number): string {
+  return new Date(value).toLocaleString();
+}
+
+function printMissionList(missions: Mission[], source: string): void {
+  console.error(source);
+  console.log("\n📋 【使命列表】");
+  console.log("-----------------------------------------");
+  if (missions.length === 0) {
+    console.log("(无)");
+  }
+  for (const mission of missions) {
+    console.log(`- [${mission.status.toUpperCase()}] ${mission.id} | ${formatTimestamp(mission.createdAt)}`);
+    console.log(`  名称: ${mission.name}`);
+    console.log(`  任务: ${mission.description.slice(0, 80)}`);
+  }
+  console.log("-----------------------------------------\n");
+}
+
+function printMissionDetail(mission: Mission): void {
+  console.log(`ID: ${mission.id}`);
+  console.log(`名称: ${mission.name}`);
+  console.log(`状态: ${mission.status}`);
+  console.log(`会话: ${mission.sessionId}`);
+  console.log(`创建: ${formatTimestamp(mission.createdAt)}`);
+  console.log(`更新: ${formatTimestamp(mission.updatedAt)}`);
+  if (mission.sourceMissionId) {
+    console.log(`来源使命: ${mission.sourceMissionId}`);
+  }
+  if (mission.error) {
+    console.log(`错误: [${mission.error.code}] ${mission.error.message}`);
+  }
+  console.log(`任务: ${mission.description}`);
+}
+
+function printMissionLogs(events: MissionEvent[]): void {
+  console.log(renderMissionEvents(events));
+}
+
+function shouldFallbackToLocalMission(err: unknown): boolean {
+  return !(axios.isAxiosError(err) && err.response);
+}
+
+async function withMissionFallback<T>(
+  daemonCall: () => Promise<T>,
+  localCall: () => Promise<T>
+): Promise<{ value: T; source: "daemon" | "local" }> {
+  try {
+    return {
+      value: await daemonCall(),
+      source: "daemon",
+    };
+  } catch (err) {
+    if (!shouldFallbackToLocalMission(err)) {
+      throw err;
+    }
+    return {
+      value: await localCall(),
+      source: "local",
+    };
+  }
+}
+
+async function executeLocalMission(agent: AgentLoop, manager: MissionManager, mission: Mission): Promise<string> {
+  await manager.updateStatus(mission.id, "running");
+  await manager.appendLog(mission.id, "使命开始在当前前台进程执行", { source: "local_cli" });
+  try {
+    agent.addUserMessage(mission.description);
+    const response = await agent.run();
+    await manager.updateStatus(mission.id, "succeeded");
+    await manager.appendLog(mission.id, "使命执行成功", {
+      source: "local_cli",
+      resultPreview: response.slice(0, 120),
+    });
+    return response;
+  } catch (err) {
+    await manager.updateStatus(mission.id, "failed", {
+      code: "LOCAL_MISSION_FAILED",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    await manager.appendLog(
+      mission.id,
+      `使命执行失败: ${err instanceof Error ? err.message : String(err)}`,
+      { source: "local_cli" }
+    );
+    throw err;
+  }
+}
+
+function normalizeMissionSubcommand(sub: string | undefined): string {
+  const normalized = (sub ?? "").toLowerCase();
+  const aliases: Record<string, string> = {
+    "开始": "start",
+    "列表": "list",
+    "查看": "show",
+    "日志": "logs",
+    "附着": "attach",
+    "跟随": "attach",
+    "暂停": "pause",
+    "恢复": "resume",
+    "取消": "cancel",
+    "停止": "cancel",
+    "终止": "cancel",
+    stop: "cancel",
+    terminate: "cancel",
+    "重试": "retry",
+    respawn: "retry",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function normalizeTasksSubcommand(sub: string | undefined): string {
+  const normalized = (sub ?? "").toLowerCase();
+  const aliases: Record<string, string> = {
+    "": "list",
+    "列表": "list",
+    "查看": "list",
+    "取消": "cancel",
+    "停止": "cancel",
+    "终止": "cancel",
+    "stop": "cancel",
+    "terminate": "cancel",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function normalizeGoalSubcommand(sub: string | undefined): string {
+  const normalized = (sub ?? "").toLowerCase();
+  const aliases: Record<string, string> = {
+    "": "status",
+    "状态": "status",
+    "查看": "status",
+    "列表": "status",
+    "设置": "set",
+    "清除": "clear",
+    "取消": "clear",
+    "停止": "clear",
+    "终止": "clear",
+    "reset": "clear",
+    "stop": "clear",
+    "cancel": "clear",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function normalizeMemorySubcommand(sub: string | undefined): string {
+  const normalized = (sub ?? "").toLowerCase();
+  const aliases: Record<string, string> = {
+    "": "list",
+    "状态": "list",
+    "查看列表": "list",
+    "列表": "list",
+    "status": "list",
+    "list": "list",
+    "practice": "practices",
+    "practices": "practices",
+    "实践": "practices",
+    "经验": "practices",
+    "graph": "graph",
+    "图谱": "graph",
+    "知识图谱": "graph",
+    "搜索": "search",
+    "search": "search",
+    "查看": "show",
+    "详情": "show",
+    "show": "show",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function parseGoalSetArgs(args: string[]): { sessionRef?: string; condition: string } {
+  const remaining: string[] = [];
+  let sessionRef: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--session" || arg === "-s") {
+      sessionRef = args[i + 1];
+      i++;
+      continue;
+    }
+    if (arg.startsWith("--session=")) {
+      sessionRef = arg.slice("--session=".length);
+      continue;
+    }
+    remaining.push(arg);
+  }
+  return {
+    sessionRef,
+    condition: remaining.join(" ").trim(),
+  };
+}
+
+function isPureMissionManagementSubcommand(sub: string): boolean {
+  return ["list", "show", "logs", "attach", "pause", "resume", "cancel"].includes(sub);
+}
+
+async function createStandaloneMissionManager(stateDir: string): Promise<MissionManager> {
+  const manager = new MissionManager(stateDir);
+  await manager.init();
+  return manager;
+}
+
+async function buildMissionReader(
+  missionId: string,
+  daemonUrl: string,
+  stateDir: string
+): Promise<{
+  source: "daemon" | "local";
+  getMission: () => Promise<Mission>;
+  getLogs: () => Promise<MissionEvent[]>;
+}> {
+  try {
+    await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+    return {
+      source: "daemon",
+      getMission: async () => {
+        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+        return resp.data as Mission;
+      },
+      getLogs: async () => {
+        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+        return resp.data as MissionEvent[];
+      },
+    };
+  } catch (err) {
+    if (!shouldFallbackToLocalMission(err)) {
+      throw err;
+    }
+    return {
+      source: "local",
+      getMission: async () => {
+        const manager = await createStandaloneMissionManager(stateDir);
+        return manager.getMissionOrThrow(missionId);
+      },
+      getLogs: async () => {
+        const manager = await createStandaloneMissionManager(stateDir);
+        return manager.getMissionLogs(missionId);
+      },
+    };
+  }
+}
+
 async function main() {
   const decision = parseCliArgs(process.argv.slice(2));
   if (decision.kind === "error") {
@@ -71,7 +342,7 @@ async function main() {
   }
 
   if (decision.mode === "help") {
-    console.log(buildHelpText("qingling"));
+    console.log(buildHelpText("qling", decision.subArgs.join(" ")));
     process.exit(0);
   }
 
@@ -97,7 +368,535 @@ async function main() {
   for (const warning of loaded.warnings) {
     console.error(`Warning: ${warning}`);
   }
+  const originalMcpServersEnv = process.env.QINGLING_MCP_SERVERS;
   applyConfigToProcessEnv(loaded.config);
+  const stateDir = loaded.config.runtime.file_state_dir;
+  const DAEMON_PORT = process.env.QINGLING_DAEMON_PORT || "9998";
+  const daemonUrl = `http://localhost:${DAEMON_PORT}`;
+  let standaloneMissionManagerPromise: Promise<MissionManager> | null = null;
+  const getStandaloneMissionManager = async (): Promise<MissionManager> => {
+    if (!standaloneMissionManagerPromise) {
+      standaloneMissionManagerPromise = createStandaloneMissionManager(stateDir);
+    }
+    return standaloneMissionManagerPromise;
+  };
+
+  // v0.3 Management Subcommands
+  if (decision.mode === "setup") {
+    await runSetup();
+    return;
+  }
+
+  if (decision.mode === "doctor") {
+    const report = await buildDoctorReport({
+      workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
+      agentLoop: {
+        getWorkspaceDir: () => loaded.config.runtime.workspace_dir ?? process.cwd(),
+        getSessionStats: () => ({ sessionId: "cli-doctor", turnCount: 0, tokens: 0 }),
+        getPermissionMode: () => loaded.config.guard.permissions.default,
+      },
+      writeLine: () => {},
+      writeError: () => {},
+    });
+    console.log(formatDoctorReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "status") {
+    const report = await buildLocalStatusReport(loaded.config);
+    console.log(formatLocalStatusReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "storage") {
+    const report = await buildLocalStorageReport({
+      workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
+      agentLoop: {
+        getWorkspaceDir: () => loaded.config.runtime.workspace_dir ?? process.cwd(),
+        getRuntimeRootDir: () => loaded.config.runtime.file_state_dir,
+      },
+      writeLine: () => {},
+      writeError: () => {},
+    }, {
+      env: {
+        ...process.env,
+        QINGLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
+        QINGLING_FILE_CACHE_DIR: loaded.config.runtime.file_cache_dir,
+      },
+    });
+    console.log(formatLocalStorageReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "exports") {
+    const report = await listSessionExportFiles({
+      workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
+      agentLoop: {
+        getWorkspaceDir: () => loaded.config.runtime.workspace_dir ?? process.cwd(),
+        getRuntimeRootDir: () => loaded.config.runtime.file_state_dir,
+      },
+      writeLine: () => {},
+      writeError: () => {},
+    }, {
+      count: parseSessionExportCount(decision.subArgs[0]),
+      env: {
+        ...process.env,
+        QINGLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
+      },
+    });
+    console.log(formatSessionExportIndex(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "sessions") {
+    const report = await listLocalSessions(loaded.config.runtime.file_state_dir, {
+      count: parseSessionListCount(decision.subArgs[0]),
+    });
+    console.log(formatSessionListReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "tasks") {
+    const [rawSub, ...taskArgs] = decision.subArgs;
+    const sub = normalizeTasksSubcommand(rawSub);
+    try {
+      if (sub === "list") {
+        const report = await listLocalSessionTasks(stateDir, {
+          count: parseSessionTaskCount(taskArgs[0]),
+        });
+        console.log(formatSessionTaskReport(report).join("\n"));
+        return;
+      }
+      if (sub === "cancel") {
+        const taskId = taskArgs[0];
+        if (!taskId) {
+          console.error("用法: qling tasks cancel <id>");
+          process.exit(1);
+        }
+        const task = await cancelLocalSessionTask(stateDir, taskId);
+        console.log(formatCanceledSessionTask(task).join("\n"));
+        return;
+      }
+      console.error("用法: qling tasks list [count] | cancel <id>");
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
+
+  if (decision.mode === "goal") {
+    const [rawSub, ...goalArgs] = decision.subArgs;
+    const sub = normalizeGoalSubcommand(rawSub);
+    try {
+      if (sub === "status") {
+        const report = await listLocalSessionGoals(stateDir, {
+          sessionRef: goalArgs[0],
+        });
+        console.log(formatSessionGoalReport(report).join("\n"));
+        return;
+      }
+      if (sub === "set") {
+        const parsed = parseGoalSetArgs(goalArgs);
+        if (!parsed.condition) {
+          console.error("用法: qling goal set [--session <session>] \"完成条件\"");
+          process.exit(1);
+        }
+        const result = await setLocalSessionGoal(stateDir, parsed.condition, {
+          sessionRef: parsed.sessionRef,
+        });
+        console.log(formatSessionGoalMutation("set", result).join("\n"));
+        return;
+      }
+      if (sub === "clear") {
+        const result = await clearLocalSessionGoal(stateDir, {
+          sessionRef: goalArgs[0],
+        });
+        console.log(formatSessionGoalMutation("clear", result).join("\n"));
+        return;
+      }
+      console.error("用法: qling goal status [session] | set [--session <session>] \"完成条件\" | clear [session]");
+      process.exit(1);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
+
+  if (decision.mode === "memory") {
+    const [rawSub, ...memoryArgs] = decision.subArgs;
+    const sub = normalizeMemorySubcommand(rawSub);
+    try {
+      if (sub === "list") {
+        const count = rawSub && normalizeMemorySubcommand(rawSub) === "list" ? memoryArgs[0] : rawSub;
+        const report = await buildLocalMemoryReport(stateDir, {
+          count: parseMemoryReportCount(count),
+        });
+        console.log(formatLocalMemoryReport(report).join("\n"));
+        return;
+      }
+      if (sub === "show") {
+        const memoryId = memoryArgs[0];
+        if (!memoryId) {
+          console.error("用法: qling memory show <id>");
+          process.exit(1);
+        }
+        const entry = await findLocalMemoryEntry(stateDir, memoryId);
+        if (!entry) {
+          console.error(`未找到指定本地记忆: ${memoryId}`);
+          process.exit(1);
+        }
+        console.log(formatLocalMemoryEntry(entry).join("\n"));
+        return;
+      }
+      if (sub === "search") {
+        const request = parseMemorySearchArgs(memoryArgs);
+        if (!request.query) {
+          console.error("用法: qling memory search <query> [count]");
+          process.exit(1);
+        }
+        const report = await searchLocalMemoryEntries(stateDir, request);
+        console.log(formatLocalMemorySearchReport(report).join("\n"));
+        return;
+      }
+      if (sub === "practices") {
+        const report = await listLocalMemoryPractices(stateDir, {
+          count: parseMemoryReportCount(memoryArgs[0]),
+        });
+        console.log(formatLocalMemoryPracticesReport(report).join("\n"));
+        return;
+      }
+      if (sub === "graph") {
+        const report = await listLocalMemoryGraph(stateDir, {
+          count: parseMemoryReportCount(memoryArgs[0]),
+        });
+        console.log(formatLocalMemoryGraphReport(report).join("\n"));
+        return;
+      }
+      if (sub !== "reindex") {
+        console.error("用法: qling memory status [count] | list [count] | search <query> [count] | practices [count] | graph [count] | show <id> | reindex [--full]");
+        process.exit(1);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
+
+  if (decision.mode === "privacy") {
+    const report = await buildLocalPrivacyReport({
+      workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
+      stateDir: loaded.config.runtime.file_state_dir,
+      cacheDir: loaded.config.runtime.file_cache_dir,
+      model: loaded.config.llm.model,
+    });
+    console.log(formatPrivacyReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "context") {
+    const report = await buildLocalContextReport({
+      workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
+      stateDir: loaded.config.runtime.file_state_dir,
+      cacheDir: loaded.config.runtime.file_cache_dir,
+      maxTokens: loaded.config.runtime.max_token_budget,
+    });
+    console.log(formatContextReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "shortcuts") {
+    console.log(SHORTCUT_LINES.join("\n"));
+    return;
+  }
+
+  if (decision.mode === "statusline") {
+    const snapshot = collectLocalStatusLineSnapshot({
+      workspaceDir: loaded.config.runtime.workspace_dir,
+      model: loaded.config.llm.model,
+      permissionMode: loaded.config.guard.permissions.default,
+      maxTokens: loaded.config.runtime.max_token_budget,
+      costPer1kTokens: parseStatusLineCostPer1k(process.env.QINGLING_STATUSLINE_COST_PER_1K_TOKENS),
+    });
+    console.log("");
+    console.log("◎ statusline");
+    console.log("-----------------------------------------");
+    console.log(formatStatusLine(snapshot));
+    console.log("-----------------------------------------");
+    console.log("");
+    return;
+  }
+
+  if (decision.mode === "recap") {
+    const request = parseSavedSessionRecapArgs(decision.subArgs);
+    console.log(await buildSavedSessionRecap(stateDir, request));
+    return;
+  }
+
+  if (decision.mode === "permissions") {
+    const [rawSub, toolName] = decision.subArgs;
+    const sub = (rawSub ?? "status").toLowerCase();
+    if (sub === "explain" || sub === "解释") {
+      if (!toolName) {
+        console.error("用法: qling permissions explain <tool>");
+        process.exit(1);
+      }
+      const report = explainLocalPermissionDecision({
+        defaultMode: loaded.config.guard.permissions.default,
+        rules: loaded.config.guard.permissions.rules,
+        env: process.env,
+      }, toolName);
+      console.log(formatPermissionExplanationReport(report).join("\n"));
+      return;
+    }
+
+    const report = buildLocalPermissionsReport({
+      defaultMode: loaded.config.guard.permissions.default,
+      rules: loaded.config.guard.permissions.rules,
+      env: process.env,
+    });
+    console.log(formatLocalPermissionsReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "config") {
+    console.log(formatLocalConfigReport(buildLocalConfigReport(loaded.config)).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "mcp") {
+    console.log(formatLocalMcpReport(buildLocalMcpReport(loaded.config.mcp, {
+      ...process.env,
+      QINGLING_MCP_SERVERS: originalMcpServersEnv ?? process.env.QINGLING_MCP_SERVERS,
+    })).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "hooks") {
+    console.log(formatLocalHooksReport(buildLocalHooksReport(loaded.config.guard)).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "daemon") {
+    const [sub] = decision.subArgs;
+    const daemonOptions = {
+      stateDir: process.env.QINGLING_FILE_STATE_DIR || loaded.config.runtime.file_state_dir || path.join(os.homedir(), ".qingling"),
+      port: Number(process.env.QINGLING_DAEMON_PORT || "9998"),
+      daemonEntry: path.join(DIST_DIR, "daemon.js"),
+      cwd: process.cwd(),
+      env: process.env,
+    };
+
+    if (sub === "start") {
+      const result = await startDaemon(daemonOptions);
+      if (result.started) {
+        console.error(`✅ qling daemon 已启动 (pid=${result.status.pid ?? "unknown"}, port=${result.status.port})`);
+      } else {
+        console.error(`ℹ️ qling daemon 已在运行 (pid=${result.status.pid ?? "unknown"}, port=${result.status.port})`);
+      }
+      return;
+    }
+
+    if (sub === "status") {
+      const status = await getDaemonStatus(daemonOptions);
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+
+    if (sub === "stop") {
+      const result = await stopDaemon(daemonOptions);
+      if (result.stopped) {
+        console.error("🛑 qling daemon 已停止");
+        return;
+      }
+      if (result.status.healthy && !result.status.managed) {
+        console.error("❌ 检测到 daemon 正在运行，但不受当前 CLI 管理；请手动停止该进程。");
+        process.exit(1);
+      }
+      console.error("ℹ️ qling daemon 当前未运行");
+      return;
+    }
+
+    console.error("用法: qling daemon start|status|stop");
+    process.exit(1);
+  }
+
+  if (decision.mode === "agents") {
+    const manager = await getStandaloneMissionManager();
+    const { value: missions, source } = await withMissionFallback(
+      async () => {
+        const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+        return resp.data as Mission[];
+      },
+      async () => manager.listMissions()
+    );
+    console.error(source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+    console.log(renderAgentsView(missions));
+    return;
+  }
+
+  if (decision.mode === "logs") {
+    const missionId = decision.subArgs[0];
+    if (!missionId) {
+      console.error("用法: qling logs <id>");
+      process.exit(1);
+    }
+    const manager = await getStandaloneMissionManager();
+    const { value: logs, source } = await withMissionFallback(
+      async () => {
+        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+        return resp.data as MissionEvent[];
+      },
+      async () => manager.getMissionLogs(missionId)
+    );
+    console.error(source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+    printMissionLogs(logs);
+    return;
+  }
+
+  if (decision.mode === "mission") {
+    const [rawSub, ...mArgs] = decision.subArgs;
+    const sub = normalizeMissionSubcommand(rawSub);
+    const manager = await getStandaloneMissionManager();
+
+    if (sub === "start") {
+      const task = mArgs.join(" ");
+      if (!task) {
+        console.error("用法: qling mission start \"任务描述\"");
+        process.exit(1);
+      }
+      try {
+        const resp = await axios.post(
+          `${daemonUrl}/missions`,
+          {
+            name: "CLI Mission",
+            description: task,
+            sessionId: "session-daemon-submit",
+          },
+          { timeout: 2000 }
+        );
+        console.error(`🚀 使命已成功提交至 qlingd 守护进程: ${resp.data.missionId}`);
+        console.error("提示: 您现在可以关闭此终端，任务将在后台继续。");
+        return;
+      } catch (err) {
+        if (!shouldFallbackToLocalMission(err)) {
+          throw err;
+        }
+      }
+    }
+
+    if (sub === "retry") {
+      const missionId = mArgs[0];
+      if (!missionId) {
+        console.error("用法: qling mission retry <id>");
+        process.exit(1);
+      }
+      try {
+        const resp = await axios.post(
+          `${daemonUrl}/missions/${encodeURIComponent(missionId)}/retry`,
+          {},
+          { timeout: 2000 }
+        );
+        console.error(`🚀 已向 qlingd 提交重试使命: ${resp.data.missionId}`);
+        return;
+      } catch (err) {
+        if (!shouldFallbackToLocalMission(err)) {
+          throw err;
+        }
+      }
+    }
+
+    if (isPureMissionManagementSubcommand(sub)) {
+      if (sub === "list") {
+        const { value: missions, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+            return resp.data as Mission[];
+          },
+          async () => manager.listMissions()
+        );
+        printMissionList(
+          missions,
+          source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存 (守护进程未运行)"
+        );
+        return;
+      }
+
+      if (sub === "show") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error("用法: qling mission show <id>");
+          process.exit(1);
+        }
+        const { value: mission, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+            return resp.data as Mission;
+          },
+          async () => manager.getMissionOrThrow(missionId)
+        );
+        console.error(source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+        printMissionDetail(mission);
+        return;
+      }
+
+      if (sub === "logs") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error("用法: qling mission logs <id>");
+          process.exit(1);
+        }
+        const { value: logs, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+            return resp.data as MissionEvent[];
+          },
+          async () => manager.getMissionLogs(missionId)
+        );
+        console.error(source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+        printMissionLogs(logs);
+        return;
+      }
+
+      if (sub === "attach") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error("用法: qling mission attach <id>");
+          process.exit(1);
+        }
+        const reader = await buildMissionReader(missionId, daemonUrl, stateDir);
+        console.error(reader.source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+        await followMissionAttach(missionId, reader);
+        return;
+      }
+
+      if (sub === "pause" || sub === "resume" || sub === "cancel") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error(`用法: qling mission ${rawSub ?? sub} <id>`);
+          process.exit(1);
+        }
+        const { value: mission, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.post(
+              `${daemonUrl}/missions/${encodeURIComponent(missionId)}/${sub}`,
+              {},
+              { timeout: 2000 }
+            );
+            return resp.data.mission as Mission;
+          },
+          async () => {
+            if (sub === "pause") return manager.pauseMission(missionId, "cli_local");
+            if (sub === "resume") return manager.resumeMission(missionId, "cli_local");
+            return manager.cancelMission(missionId, "cli_local");
+          }
+        );
+        console.error(source === "daemon" ? "📡 动作已发送到 qlingd 守护进程" : "📁 动作已在本地文件状态上执行");
+        printMissionDetail(mission);
+        return;
+      }
+    }
+  }
 
   const staticEnabled: Record<string, boolean> = {};
   for (const [name, cfg] of Object.entries(loaded.config.tools)) {
@@ -140,12 +939,6 @@ async function main() {
     },
   };
 
-  // v0.3 Management Subcommands
-  if (decision.mode === "setup") {
-    await runSetup();
-    return;
-  }
-
   // --- 延迟实例化 AgentLoop，防止 setup 等管理命令因缺失 Key 而崩溃 ---
   const agent = new AgentLoop(agentConfig);
   await agent.waitForInit();
@@ -161,7 +954,7 @@ async function main() {
         console.log(response);
         return;
       }
-      console.error("用法: qingling workflow resume <run_id>");
+      console.error("用法: qling workflow resume <run_id>");
       process.exit(1);
     }
 
@@ -173,7 +966,7 @@ async function main() {
         console.error("✅ 索引重建完成");
         return;
       }
-      console.error("用法: qingling memory reindex [--full]");
+      console.error("用法: qling memory reindex [--full]");
       process.exit(1);
     }
 
@@ -191,7 +984,7 @@ async function main() {
         await new Promise(() => {}); // Keep alive
         return;
       }
-      console.error("用法: qingling dashboard start");
+      console.error("用法: qling dashboard start");
       process.exit(1);
     }
 
@@ -205,21 +998,20 @@ async function main() {
         items.forEach(it => console.error(`  - [${it.manifest.type}] ${it.manifest.name} v${it.manifest.version}`));
         return;
       }
-      console.error("用法: qingling discovery sync");
+      console.error("用法: qling discovery sync");
       process.exit(1);
     }
 
     if (decision.mode === "mission") {
-      const [sub, ...mArgs] = decision.subArgs;
-      const DAEMON_PORT = process.env.QINGLING_DAEMON_PORT || "9998";
-      const daemonUrl = `http://localhost:${DAEMON_PORT}`;
+      const [rawSub, ...mArgs] = decision.subArgs;
+      const sub = normalizeMissionSubcommand(rawSub);
 
       const manager = agent.getMissionManager();
       
       if (sub === "start") {
         const task = mArgs.join(" ");
         if (!task) {
-          console.error("用法: qingling mission start \"任务描述\"");
+          console.error("用法: qling mission start \"任务描述\"");
           process.exit(1);
         }
         
@@ -230,46 +1022,123 @@ async function main() {
             description: task,
             sessionId: agent.getSessionId(),
           }, { timeout: 2000 });
-          console.error(`🚀 使命已成功提交至 qinglingd 守护进程: ${resp.data.missionId}`);
+          console.error(`🚀 使命已成功提交至 qlingd 守护进程: ${resp.data.missionId}`);
           console.error(`提示: 您现在可以关闭此终端，任务将在后台继续。`);
           return;
         } catch {
           console.warn(`⚠️ 守护进程未启动，将在当前前台进程执行使命...`);
           const mission = await manager.createMission("Local Mission", task, agent.getSessionId());
-          await manager.updateStatus(mission.id, "running");
-          agent.addUserMessage(task);
-          const response = await agent.run();
-          await manager.updateStatus(mission.id, "succeeded");
+          const response = await executeLocalMission(agent, manager, mission);
           console.log(response);
           return;
         }
       }
 
       if (sub === "list") {
-        let missions: any[] = [];
-        try {
-           const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
-           missions = resp.data;
-           console.error("📡 数据来源: qinglingd 守护进程");
-        } catch {
-           missions = manager.listMissions();
-           console.error("📁 数据来源: 本地文件缓存 (守护进程未运行)");
-        }
-
-        console.log("\n📋 【使命列表】");
-        console.log("-----------------------------------------");
-        if (missions.length === 0) console.log("(无)");
-        missions.forEach(m => {
-          const status = m.status.toUpperCase();
-          const time = new Date(m.createdAt).toLocaleString();
-          console.log(`- [${status}] ${m.id} | ${time}`);
-          console.log(`  任务: ${m.description.slice(0, 50)}...`);
-        });
-        console.log("-----------------------------------------\n");
+        const { value: missions, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+            return resp.data as Mission[];
+          },
+          async () => manager.listMissions()
+        );
+        printMissionList(
+          missions,
+          source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存 (守护进程未运行)"
+        );
         return;
       }
 
-      console.error("用法: qingling mission start|list|show|logs");
+      if (sub === "show") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error("用法: qling mission show <id>");
+          process.exit(1);
+        }
+        const { value: mission, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+            return resp.data as Mission;
+          },
+          async () => manager.getMissionOrThrow(missionId)
+        );
+        console.error(source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+        printMissionDetail(mission);
+        return;
+      }
+
+      if (sub === "logs") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error("用法: qling mission logs <id>");
+          process.exit(1);
+        }
+        const { value: logs, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+            return resp.data as MissionEvent[];
+          },
+          async () => manager.getMissionLogs(missionId)
+        );
+        console.error(source === "daemon" ? "📡 数据来源: qlingd 守护进程" : "📁 数据来源: 本地文件缓存");
+        printMissionLogs(logs);
+        return;
+      }
+
+      if (sub === "pause" || sub === "resume" || sub === "cancel") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error(`用法: qling mission ${rawSub ?? sub} <id>`);
+          process.exit(1);
+        }
+        const { value: mission, source } = await withMissionFallback(
+          async () => {
+            const resp = await axios.post(
+              `${daemonUrl}/missions/${encodeURIComponent(missionId)}/${sub}`,
+              {},
+              { timeout: 2000 }
+            );
+            return resp.data.mission as Mission;
+          },
+          async () => {
+            if (sub === "pause") return manager.pauseMission(missionId, "cli_local");
+            if (sub === "resume") return manager.resumeMission(missionId, "cli_local");
+            return manager.cancelMission(missionId, "cli_local");
+          }
+        );
+        console.error(source === "daemon" ? "📡 动作已发送到 qlingd 守护进程" : "📁 动作已在本地文件状态上执行");
+        printMissionDetail(mission);
+        return;
+      }
+
+      if (sub === "retry") {
+        const missionId = mArgs[0];
+        if (!missionId) {
+          console.error("用法: qling mission retry <id>");
+          process.exit(1);
+        }
+        try {
+          const resp = await axios.post(
+            `${daemonUrl}/missions/${encodeURIComponent(missionId)}/retry`,
+            {},
+            { timeout: 2000 }
+          );
+          console.error(`🚀 已向 qlingd 提交重试使命: ${resp.data.missionId}`);
+          return;
+        } catch (err) {
+          if (!shouldFallbackToLocalMission(err)) {
+            throw err;
+          }
+          console.warn("⚠️ 守护进程未启动，将在当前前台进程执行 retry...");
+          const mission = await manager.retryMission(missionId);
+          const response = await executeLocalMission(agent, manager, mission);
+          console.error(`🔄 已创建本地重试使命: ${mission.id}`);
+          console.log(response);
+          return;
+        }
+      }
+
+      console.error("用法: qling mission start|list|show|logs|attach|pause|resume|cancel|stop|terminate|retry|respawn");
       process.exit(1);
     }
 
@@ -296,13 +1165,19 @@ async function main() {
     }
 
     if (decision.mode === "chat") {
-      const repl = new StreamingREPL(agent);
+      const repl = new StreamingREPL(agent, {
+        continueSession: decision.global.continueSession,
+        resumeSession: decision.global.resumeSession,
+      });
       await repl.start();
       return;
     }
 
     if (decision.mode === "repl") {
-      const repl = new Repl(agent);
+      const repl = new Repl(agent, {
+        continueSession: decision.global.continueSession,
+        resumeSession: decision.global.resumeSession,
+      });
       await repl.start();
       return;
     }

@@ -172,12 +172,21 @@ export interface QinglingConfig {
       fallback_profiles: string[];
     };
   };
+  agents: {
+    isolation: {
+      mode: "worktree" | "off";
+      require_git: boolean;
+      non_git_policy: "warn" | "deny" | "off";
+    };
+  };
 }
 
 export interface CliGlobalOptions {
   configPath?: string;
   workspaceDir?: string;
   noWorkspace?: boolean;
+  continueSession?: boolean;
+  resumeSession?: string;
   fileCacheDir?: string;
   fileStateDir?: string;
   inspectPrompt?: boolean;
@@ -353,6 +362,13 @@ export function buildDefaultConfig(): QinglingConfig {
         fallback_profiles: ["default"],
       },
     },
+    agents: {
+      isolation: {
+        mode: "worktree",
+        require_git: true,
+        non_git_policy: "warn",
+      },
+    },
   };
 }
 
@@ -379,6 +395,8 @@ export async function loadQinglingConfig(
   const fromEnv = buildEnvConfig(env, defaults);
   const merged = deepMerge(deepMerge(defaults, fromFile), fromEnv);
   const withCli = applyCliOverrides(merged, cli);
+  applyPermissionModeCompat(withCli);
+  normalizeAgentsIsolationConfig(withCli);
   normalizeRuntimeRoots(withCli);
 
   return {
@@ -416,6 +434,15 @@ export function applyConfigToProcessEnv(config: QinglingConfig): void {
   process.env.QINGLING_GUARD_REDACTION_ENABLED = String(config.guard.redaction.enabled);
   process.env.QINGLING_GUARD_REDACTION_PATTERNS = JSON.stringify(config.guard.redaction.patterns);
   process.env.QINGLING_GUARD_AUDIT_JSONL_PATH = config.guard.audit.jsonl_path;
+  process.env.QINGLING_GUARD_RATE_LIMIT_ENABLED = String(config.guard.rate_limit.enabled);
+  process.env.QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE = String(config.guard.rate_limit.max_per_minute);
+  process.env.QINGLING_GUARD_CONTENT_FILTER_ENABLED = String(config.guard.content_filter.enabled);
+  process.env.QINGLING_GUARD_CONTENT_FILTER_PII = String(config.guard.content_filter.pii_detection);
+  process.env.QINGLING_GUARD_CONTENT_FILTER_INJECTION = String(config.guard.content_filter.injection_detection);
+  process.env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM = JSON.stringify(config.guard.content_filter.custom_patterns);
+  process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT = config.guard.permissions.default;
+  process.env.QINGLING_GUARD_PERMISSIONS_RULES = JSON.stringify(config.guard.permissions.rules);
+  process.env.QINGLING_PERMISSIONS_MODE = config.guard.permissions.default;
 
   // Memory (Phase 3)
   process.env.QINGLING_MEMORY_WAL_ENABLED = String(config.memory.wal_enabled);
@@ -486,6 +513,9 @@ export function applyConfigToProcessEnv(config: QinglingConfig): void {
   process.env.QINGLING_CHANNEL_SLACK_POLL_INTERVAL_MS = String(
     config.channels.slack.poll_interval_ms
   );
+  process.env.QINGLING_AGENTS_ISOLATION_MODE = config.agents.isolation.mode;
+  process.env.QINGLING_AGENTS_ISOLATION_REQUIRE_GIT = String(config.agents.isolation.require_git);
+  process.env.QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY = config.agents.isolation.non_git_policy;
 }
 
 export function guardConfigFromEnv(env: NodeJS.ProcessEnv = process.env): GuardConfig {
@@ -532,7 +562,10 @@ export function guardConfigFromEnv(env: NodeJS.ProcessEnv = process.env): GuardC
       custom_patterns: parseStringArray(env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM, defaults.content_filter.custom_patterns),
     },
     permissions: {
-      default: (env.QINGLING_GUARD_PERMISSIONS_DEFAULT ?? defaults.permissions.default) as "allow" | "deny" | "ask",
+      default: resolvePermissionMode(
+        env.QINGLING_GUARD_PERMISSIONS_DEFAULT ?? env.QINGLING_PERMISSIONS_MODE,
+        defaults.permissions.default
+      ),
       rules: parsePermissionRules(env.QINGLING_GUARD_PERMISSIONS_RULES, defaults.permissions.rules),
     },
   };
@@ -578,7 +611,38 @@ function buildEnvConfig(env: NodeJS.ProcessEnv, defaults: QinglingConfig): Parti
     if (raw === undefined) continue;
     setByPath(acc, key, parseEnvValue(raw, defaultValue));
   }
+
+  applyLegacyRuntimeEnvAliases(acc, env);
+  if (env.QINGLING_PERMISSIONS_MODE !== undefined) {
+    setByPath(
+      acc,
+      "guard.permissions.default",
+      resolvePermissionMode(env.QINGLING_PERMISSIONS_MODE, defaults.guard.permissions.default)
+    );
+  }
+  if (env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM !== undefined) {
+    setByPath(
+      acc,
+      "guard.content_filter.custom_patterns",
+      parseStringArray(
+        env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM,
+        defaults.guard.content_filter.custom_patterns
+      )
+    );
+  }
   return acc as Partial<QinglingConfig>;
+}
+
+function applyLegacyRuntimeEnvAliases(acc: Record<string, unknown>, env: NodeJS.ProcessEnv): void {
+  if (env.QINGLING_WORKSPACE_DIR !== undefined) {
+    setByPath(acc, "runtime.workspace_dir", env.QINGLING_WORKSPACE_DIR);
+  }
+  if (env.QINGLING_FILE_CACHE_DIR !== undefined) {
+    setByPath(acc, "runtime.file_cache_dir", env.QINGLING_FILE_CACHE_DIR);
+  }
+  if (env.QINGLING_FILE_STATE_DIR !== undefined) {
+    setByPath(acc, "runtime.file_state_dir", env.QINGLING_FILE_STATE_DIR);
+  }
 }
 
 function toQinglingEnvName(keyPath: string): string {
@@ -668,6 +732,38 @@ function parseStringArray(raw: string | undefined, fallback: string[]): string[]
     .split(",")
     .map((v) => v.trim())
     .filter(Boolean);
+}
+
+function resolvePermissionMode(
+  raw: string | undefined,
+  fallback: "allow" | "deny" | "ask"
+): "allow" | "deny" | "ask" {
+  if (!raw) return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === "allow" || normalized === "deny" || normalized === "ask") {
+    return normalized;
+  }
+  return fallback;
+}
+
+function applyPermissionModeCompat(config: QinglingConfig): void {
+  const raw = (config as any)?.permissions?.mode;
+  const mapped = resolvePermissionMode(raw, config.guard.permissions.default);
+  config.guard.permissions.default = mapped;
+}
+
+function normalizeAgentsIsolationConfig(config: QinglingConfig): void {
+  const defaults = buildDefaultConfig().agents.isolation;
+  const isolation = (config as any)?.agents?.isolation ?? {};
+  const modeRaw = String(isolation.mode ?? defaults.mode).toLowerCase();
+  const nonGitPolicyRaw = String(isolation.non_git_policy ?? defaults.non_git_policy).toLowerCase();
+
+  config.agents = config.agents ?? ({ isolation: defaults } as QinglingConfig["agents"]);
+  config.agents.isolation.mode = modeRaw === "off" ? "off" : "worktree";
+  config.agents.isolation.require_git =
+    typeof isolation.require_git === "boolean" ? isolation.require_git : defaults.require_git;
+  config.agents.isolation.non_git_policy =
+    nonGitPolicyRaw === "deny" || nonGitPolicyRaw === "off" ? (nonGitPolicyRaw as "deny" | "off") : "warn";
 }
 
 function applyCliOverrides(config: QinglingConfig, cli: CliGlobalOptions): QinglingConfig {

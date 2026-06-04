@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
 
@@ -25,39 +27,50 @@ function waitForExit(child, timeoutMs = 12_000) {
 }
 
 test("chat smoke: exit command triggers graceful shutdown", async () => {
-  const child = spawn(
-    process.execPath,
-    [
-      ENTRY,
-      "chat",
-      "--api-key",
-      "test-key",
-      "--provider",
-      "openai",
-      "--endpoint",
-      "https://api.openai.com/v1",
-      "--model",
-      "gpt-test",
-    ],
-    {
-      env: {
-        ...process.env,
-        QINGLING_MEMORY_WAL_ENABLED: "false",
-        QINGLING_METRICS_ENABLED: "false",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    }
-  );
+  const stateDir = mkdtempSync(join(tmpdir(), "qingling-chat-history-"));
+  try {
+    const child = spawn(
+      process.execPath,
+      [
+        ENTRY,
+        "chat",
+        "--api-key",
+        "test-key",
+        "--provider",
+        "openai",
+        "--endpoint",
+        "https://api.openai.com/v1",
+        "--model",
+        "gpt-test",
+        "--file-state-dir",
+        stateDir,
+      ],
+      {
+        env: {
+          ...process.env,
+          QINGLING_MEMORY_WAL_ENABLED: "false",
+          QINGLING_METRICS_ENABLED: "false",
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
 
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
 
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  child.stdin.write("exit\n");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    child.stdin.write("exit\n");
 
-  const { code, signal } = await waitForExit(child);
-  assert.equal(signal, null, `unexpected signal: ${signal}; stderr=${stderr.slice(0, 500)}`);
-  assert.equal(code, 0, `unexpected exit code: ${code}; stderr=${stderr.slice(0, 500)}`);
+    const { code, signal } = await waitForExit(child);
+    assert.equal(signal, null, `unexpected signal: ${signal}; stderr=${stderr.slice(0, 500)}`);
+    assert.equal(code, 0, `unexpected exit code: ${code}; stderr=${stderr.slice(0, 500)}`);
+
+    const historyPath = join(stateDir, "input-history.json");
+    assert.equal(existsSync(historyPath), true);
+    assert.deepEqual(JSON.parse(readFileSync(historyPath, "utf8")), ["exit"]);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
 });

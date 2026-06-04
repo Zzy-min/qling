@@ -225,6 +225,22 @@ export class HookManager {
     }
   }
 
+  getPermissionDefaultDecision(): "allow" | "deny" | "ask" {
+    return this.guardConfig?.permissions?.default ?? "allow";
+  }
+
+  setPermissionDefaultDecision(decision: "allow" | "deny" | "ask"): void {
+    const currentRules = this.guardConfig?.permissions?.rules ?? [];
+    if (this.guardConfig) {
+      this.guardConfig.permissions = {
+        ...(this.guardConfig.permissions ?? { rules: [] }),
+        default: decision,
+        rules: currentRules,
+      };
+    }
+    this.permissionMatrix = new PermissionMatrix(decision, currentRules);
+  }
+
   register(name: "PreToolUse", handler: PreToolUseHandler): void;
   register(name: "PostToolUse", handler: PostToolUseHandler): void;
   register(name: "PostToolUseFailure", handler: FailureHandler): void;

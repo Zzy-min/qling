@@ -1,0 +1,114 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { InputBuffer } from "../../dist/tui/input-buffer.js";
+
+test("input buffer inserts characters and submits trimmed command", () => {
+  const buffer = new InputBuffer();
+  buffer.insertChar("h");
+  buffer.insertChar("i");
+
+  assert.equal(buffer.value, "hi");
+  assert.equal(buffer.cursorPos, 2);
+  assert.equal(buffer.submit(), "hi");
+  assert.equal(buffer.value, "");
+});
+
+test("input buffer inserts newline without submitting", () => {
+  const buffer = new InputBuffer();
+  buffer.insertChar("a");
+  buffer.insertNewline();
+  buffer.insertChar("b");
+
+  assert.equal(buffer.value, "a\nb");
+  assert.equal(buffer.cursorPos, 3);
+  assert.equal(buffer.submit(), "a\nb");
+});
+
+test("input buffer edits around cursor across lines", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "ab") buffer.insertChar(ch);
+  buffer.insertNewline();
+  for (const ch of "cd") buffer.insertChar(ch);
+  buffer.moveLeft();
+  buffer.insertChar("X");
+
+  assert.equal(buffer.value, "ab\ncXd");
+  buffer.backspace();
+  assert.equal(buffer.value, "ab\ncd");
+});
+
+test("input buffer can delete newline with backspace", () => {
+  const buffer = new InputBuffer();
+  buffer.insertChar("a");
+  buffer.insertNewline();
+  buffer.insertChar("b");
+  buffer.moveLeft();
+  buffer.backspace();
+
+  assert.equal(buffer.value, "ab");
+});
+
+test("input buffer history restores multiline entries", () => {
+  const buffer = new InputBuffer();
+  buffer.insertChar("a");
+  buffer.insertNewline();
+  buffer.insertChar("b");
+  assert.equal(buffer.submit(), "a\nb");
+
+  buffer.historyUp();
+  assert.equal(buffer.value, "a\nb");
+  buffer.historyDown();
+  assert.equal(buffer.value, "");
+});
+
+test("input buffer searches most recent matching history entry", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "npm run build") buffer.insertChar(ch);
+  assert.equal(buffer.submit(), "npm run build");
+  for (const ch of "npm test") buffer.insertChar(ch);
+  assert.equal(buffer.submit(), "npm test");
+  for (const ch of "npm run ci:check") buffer.insertChar(ch);
+  assert.equal(buffer.submit(), "npm run ci:check");
+
+  for (const ch of "run") buffer.insertChar(ch);
+  assert.equal(buffer.searchHistory(), true);
+  assert.equal(buffer.value, "npm run ci:check");
+  assert.equal(buffer.cursorPos, "npm run ci:check".length);
+});
+
+test("input buffer can preload persisted history for navigation and search", () => {
+  const buffer = new InputBuffer();
+  buffer.setHistory(["npm run build", "npm test", "npm run ci:check"]);
+
+  buffer.historyUp();
+  assert.equal(buffer.value, "npm run ci:check");
+
+  buffer.clear();
+  for (const ch of "build") buffer.insertChar(ch);
+  assert.equal(buffer.searchHistory(), true);
+  assert.equal(buffer.value, "npm run build");
+  assert.equal(buffer.cursorPos, "npm run build".length);
+});
+
+test("input buffer search with empty query restores latest history", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "first") buffer.insertChar(ch);
+  assert.equal(buffer.submit(), "first");
+  for (const ch of "second") buffer.insertChar(ch);
+  assert.equal(buffer.submit(), "second");
+
+  assert.equal(buffer.searchHistory(), true);
+  assert.equal(buffer.value, "second");
+});
+
+test("input buffer search miss keeps current input", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "npm run build") buffer.insertChar(ch);
+  assert.equal(buffer.submit(), "npm run build");
+
+  for (const ch of "deploy") buffer.insertChar(ch);
+  assert.equal(buffer.searchHistory(), false);
+  assert.equal(buffer.value, "deploy");
+  assert.equal(buffer.cursorPos, "deploy".length);
+});

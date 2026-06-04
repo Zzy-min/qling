@@ -78,6 +78,105 @@ test("config cli noWorkspace overrides workspace root", async () => {
   assert.equal(loaded.config.runtime.workspace_dir, null);
 });
 
+test("config supports legacy runtime env aliases for workspace/cache/state dirs", async () => {
+  const workspaceDir = process.cwd();
+  const stateDir = join(workspaceDir, ".tmp-state");
+  const cacheDir = join(stateDir, "cache-custom");
+  await withEnv(
+    {
+      QINGLING_WORKSPACE_DIR: workspaceDir,
+      QINGLING_FILE_CACHE_DIR: cacheDir,
+      QINGLING_FILE_STATE_DIR: stateDir,
+    },
+    async () => {
+      const loaded = await loadQinglingConfig({});
+      assert.equal(loaded.config.runtime.workspace_dir, workspaceDir);
+      assert.equal(loaded.config.runtime.file_cache_dir, cacheDir);
+      assert.equal(loaded.config.runtime.file_state_dir, stateDir);
+    }
+  );
+});
+
+test("config supports permissions.mode compatibility from config file", async () => {
+  await withTempDir(async (dir) => {
+    const configPath = join(dir, "qingling.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        permissions: { mode: "deny" },
+      }),
+      "utf-8"
+    );
+    const loaded = await loadQinglingConfig({ configPath });
+    assert.equal(loaded.config.guard.permissions.default, "deny");
+  });
+});
+
+test("config supports QINGLING_PERMISSIONS_MODE env alias", async () => {
+  await withEnv(
+    {
+      QINGLING_PERMISSIONS_MODE: "ask",
+      QINGLING_GUARD_PERMISSIONS_DEFAULT: undefined,
+    },
+    async () => {
+      const loaded = await loadQinglingConfig({});
+      assert.equal(loaded.config.guard.permissions.default, "ask");
+    }
+  );
+});
+
+test("config supports QINGLING_GUARD_CONTENT_FILTER_CUSTOM env alias", async () => {
+  await withEnv(
+    {
+      QINGLING_GUARD_CONTENT_FILTER_CUSTOM: JSON.stringify(["SECRET_CUSTOM_ALIAS"]),
+      QINGLING_GUARD_CONTENT_FILTER_CUSTOM_PATTERNS: undefined,
+    },
+    async () => {
+      const loaded = await loadQinglingConfig({});
+      assert.deepEqual(loaded.config.guard.content_filter.custom_patterns, ["SECRET_CUSTOM_ALIAS"]);
+    }
+  );
+});
+
+test("config supports agents.isolation fields from config file", async () => {
+  await withTempDir(async (dir) => {
+    const configPath = join(dir, "qingling.config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        agents: {
+          isolation: {
+            mode: "off",
+            require_git: false,
+            non_git_policy: "off",
+          },
+        },
+      }),
+      "utf-8"
+    );
+    const loaded = await loadQinglingConfig({ configPath });
+    assert.equal(loaded.config.agents.isolation.mode, "off");
+    assert.equal(loaded.config.agents.isolation.require_git, false);
+    assert.equal(loaded.config.agents.isolation.non_git_policy, "off");
+  });
+});
+
+test("config supports agents isolation env aliases", async () => {
+  await withEnv(
+    {
+      QINGLING_AGENTS_ISOLATION_MODE: "off",
+      QINGLING_AGENTS_ISOLATION_REQUIRE_GIT: "false",
+      QINGLING_AGENTS_ISOLATION_NON_GIT_POLICY: "deny",
+    },
+    async () => {
+      const loaded = await loadQinglingConfig({});
+      assert.equal(loaded.config.agents.isolation.mode, "off");
+      assert.equal(loaded.config.agents.isolation.require_git, false);
+      assert.equal(loaded.config.agents.isolation.non_git_policy, "deny");
+    }
+  );
+});
+
 test("config: explicit missing config path throws", async () => {
   await assert.rejects(() =>
     loadQinglingConfig({
@@ -86,8 +185,15 @@ test("config: explicit missing config path throws", async () => {
   );
 });
 
-test("applyConfigToProcessEnv maps memory/mcp/metrics/channels fields", async () => {
+test("applyConfigToProcessEnv maps memory/mcp/metrics/channels and guard fields", async () => {
   const loaded = await loadQinglingConfig({});
+  loaded.config.guard.rate_limit.enabled = true;
+  loaded.config.guard.rate_limit.max_per_minute = 17;
+  loaded.config.guard.content_filter.enabled = true;
+  loaded.config.guard.content_filter.pii_detection = true;
+  loaded.config.guard.content_filter.injection_detection = false;
+  loaded.config.guard.content_filter.custom_patterns = ["SECRET_CONFIG_PATTERN"];
+  loaded.config.guard.permissions.rules = [{ tool_pattern: "bash", decision: "ask" }];
   applyConfigToProcessEnv(loaded.config);
 
   assert.equal(process.env.QINGLING_MEMORY_WAL_ENABLED, String(loaded.config.memory.wal_enabled));
@@ -98,4 +204,11 @@ test("applyConfigToProcessEnv maps memory/mcp/metrics/channels fields", async ()
   assert.equal(process.env.QINGLING_MCP_SERVERS, JSON.stringify(loaded.config.mcp.servers));
   assert.equal(process.env.QINGLING_METRICS_ENABLED, String(loaded.config.metrics.enabled));
   assert.equal(process.env.QINGLING_CHANNEL_DEFAULT, loaded.config.channels.default);
+  assert.equal(process.env.QINGLING_GUARD_RATE_LIMIT_ENABLED, "true");
+  assert.equal(process.env.QINGLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE, "17");
+  assert.equal(process.env.QINGLING_GUARD_CONTENT_FILTER_ENABLED, "true");
+  assert.equal(process.env.QINGLING_GUARD_CONTENT_FILTER_PII, "true");
+  assert.equal(process.env.QINGLING_GUARD_CONTENT_FILTER_INJECTION, "false");
+  assert.equal(process.env.QINGLING_GUARD_CONTENT_FILTER_CUSTOM, JSON.stringify(["SECRET_CONFIG_PATTERN"]));
+  assert.equal(process.env.QINGLING_GUARD_PERMISSIONS_RULES, JSON.stringify([{ tool_pattern: "bash", decision: "ask" }]));
 });

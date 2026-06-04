@@ -1,9 +1,9 @@
-import { AgentLoop } from "../agent-loop.js";
+import { SlashCommandContext } from "./runtime.js";
 
 export interface SlashCommand {
   name: string;
   aliases?: string[];
   description: string;
   usage: string;
-  execute: (args: string[], agentLoop: AgentLoop) => Promise<void>;
+  execute: (args: string[], context: SlashCommandContext) => Promise<void>;
 }

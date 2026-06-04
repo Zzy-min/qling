@@ -9,12 +9,11 @@ import { WorkflowCheckpoint } from "../workflow-types.js";
 export type MissionStatus = 
   | "queued" 
   | "running" 
-  | "awaiting_approval" 
+  | "blocked"
   | "paused" 
   | "succeeded" 
   | "failed" 
-  | "canceled"
-  | "detached";
+  | "canceled";
 
 export interface Mission {
   id: string;
@@ -25,6 +24,7 @@ export interface Mission {
   /** 关联的会话与工作流信息 */
   sessionId: string;
   workflowRunId?: string;
+  sourceMissionId?: string;
   
   /** 执行上下文快照 */
   lastContext: Message[];
@@ -51,7 +51,7 @@ export interface Mission {
 
 export interface MissionEvent {
   missionId: string;
-  type: "state_changed" | "tool_called" | "reflection_made" | "log";
+  type: "state_changed" | "control" | "log";
   timestamp: number;
-  data: any;
+  data: Record<string, unknown>;
 }

@@ -74,7 +74,7 @@ export class CognitiveIndex {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS distilled_practices (
         id TEXT PRIMARY KEY,
-        task_pattern TEXT NOT NULL,
+        task_pattern TEXT UNIQUE NOT NULL,
         action_json TEXT NOT NULL, -- 成功执行的指令序列
         context_json TEXT NOT NULL, -- 涉及的文件与前置条件
         confidence REAL DEFAULT 1.0,
@@ -82,6 +82,28 @@ export class CognitiveIndex {
         created_at INTEGER NOT NULL
       )
     `);
+
+    // Ensure existing tables enforce the unique index on task_pattern
+    try {
+      this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_distilled_practices_task_pattern ON distilled_practices(task_pattern);
+      `);
+    } catch (err) {
+      console.warn("[CognitiveIndex] Failed to create unique index, attempting deduplication:", (err as Error).message);
+      try {
+        this.db.exec(`
+          DELETE FROM distilled_practices
+          WHERE id NOT IN (
+            SELECT MIN(id) FROM distilled_practices GROUP BY task_pattern
+          );
+        `);
+        this.db.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_distilled_practices_task_pattern ON distilled_practices(task_pattern);
+        `);
+      } catch (dedupErr) {
+        console.error("[CognitiveIndex] Deduplication and index migration failed:", (dedupErr as Error).message);
+      }
+    }
   }
 
   // --- 向量操作 ---

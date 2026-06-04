@@ -1,5 +1,5 @@
 // ============================================================
-// qinglingd - 轻灵后台守护进程 (v0.5 M3)
+// qlingd - 轻灵后台守护进程 (v0.5 M3)
 // 负责后台任务执行、队列管理与状态持久化
 // ============================================================
 
@@ -11,6 +11,10 @@ import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
 import dotenv from "dotenv";
+import { SessionScheduler } from "./session/session-scheduler.js";
+import { SessionGoalController } from "./session/goal-controller.js";
+import { SessionGoalManager } from "./session/session-goal-manager.js";
+import { DurableSessionSupervisor } from "./session/durable-session-supervisor.js";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME_DIR, ".qingling");
@@ -41,16 +45,22 @@ async function main() {
   const stateDir = process.env.QINGLING_FILE_STATE_DIR || DEFAULT_STATE_DIR;
   const manager = new MissionManager(stateDir);
   await manager.init();
+  const startedAt = Date.now();
+  const supervisor = new DurableSessionSupervisor({
+    stateDir,
+    log: (message) => console.log(`[qlingd] ${message}`),
+  });
 
   // 尝试预加载配置并应用到环境变量
   try {
     const { config } = await loadQinglingConfig({});
     applyConfigToProcessEnv(config);
   } catch (err) {
-    console.error(`[qinglingd] Warning: Failed to load config: ${(err as Error).message}`);
+    console.error(`[qlingd] Warning: Failed to load config: ${(err as Error).message}`);
   }
 
   const PORT = Number(process.env.QINGLING_DAEMON_PORT) || 9998;
+  supervisor.start();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${PORT}`);
     
@@ -66,10 +76,9 @@ async function main() {
 
       // 2. 提交新使命
       if (url.pathname === "/missions" && req.method === "POST") {
-        let body = "";
-        for await (const chunk of req) body += chunk;
-        const data = JSON.parse(body);
+        const data = await readJsonBody(req);
         const mission = await manager.createMission(data.name, data.description, data.sessionId);
+        await manager.appendLog(mission.id, "使命已提交到后台队列", { source: "daemon" });
         
         // 异步启动任务执行 (Detach) - 传入全量数据以支持状态恢复
         executeMissionInBackground(mission.id, manager, stateDir, data);
@@ -78,21 +87,155 @@ async function main() {
         return;
       }
 
+      const missionRoute = matchMissionRoute(url.pathname);
+      if (missionRoute) {
+        const { id, action } = missionRoute;
+
+        if (!action && req.method === "GET") {
+          const mission = manager.getMissionOrThrow(id);
+          res.end(JSON.stringify(mission));
+          return;
+        }
+
+        if (action === "logs" && req.method === "GET") {
+          const logs = await manager.getMissionLogs(id);
+          res.end(JSON.stringify(logs));
+          return;
+        }
+
+        if (req.method === "POST") {
+          if (action === "pause") {
+            const mission = await manager.pauseMission(id, "daemon_api");
+            res.end(JSON.stringify({ ok: true, mission }));
+            return;
+          }
+          if (action === "resume") {
+            const mission = await manager.resumeMission(id, "daemon_api");
+            res.end(JSON.stringify({ ok: true, mission }));
+            return;
+          }
+          if (action === "cancel") {
+            const mission = await manager.cancelMission(id, "daemon_api");
+            res.end(JSON.stringify({ ok: true, mission }));
+            return;
+          }
+          if (action === "retry") {
+            const retried = await manager.retryMission(id);
+            await manager.appendLog(retried.id, "使命由 retry 重新排队", {
+              source: "daemon",
+              sourceMissionId: id,
+            });
+            executeMissionInBackground(retried.id, manager, stateDir, {
+              name: retried.name,
+              description: retried.description,
+              sessionId: retried.sessionId,
+            });
+            res.end(JSON.stringify({ ok: true, missionId: retried.id }));
+            return;
+          }
+        }
+      }
+
+      const sessionRoute = matchSessionRoute(url.pathname);
+      if (sessionRoute) {
+        const { sessionId, resource, itemId, action } = sessionRoute;
+
+        if (resource === "loop-tasks") {
+          const scheduler = new SessionScheduler({
+            stateDir,
+            sessionId,
+            runner: "daemon",
+            onDue: async () => {},
+          });
+          await scheduler.init();
+
+          if (!itemId && req.method === "GET") {
+            res.end(JSON.stringify(await scheduler.listTasks()));
+            return;
+          }
+
+          if (!itemId && req.method === "POST") {
+            const data = await readJsonBody(req);
+            const task = await scheduler.createLoopTask({
+              prompt: data.prompt,
+              intervalMs: Number(data.intervalMs),
+              mode: data.mode === "fixed" ? "fixed" : "default",
+              runner: "daemon",
+            });
+            res.end(JSON.stringify(task));
+            return;
+          }
+
+          if (itemId && action === "cancel" && req.method === "POST") {
+            const task = await scheduler.cancelTask(itemId);
+            res.end(JSON.stringify(task));
+            return;
+          }
+        }
+
+        if (resource === "goal") {
+          const manager = new SessionGoalManager({ stateDir, sessionId });
+          const controller = new SessionGoalController({
+            manager,
+            runner: "daemon",
+          });
+          await controller.init();
+
+          if (!action && req.method === "GET") {
+            res.end(JSON.stringify(await controller.getGoalStatus()));
+            return;
+          }
+
+          if (!action && req.method === "POST") {
+            const data = await readJsonBody(req);
+            const goal = await controller.setGoal(
+              data.condition,
+              {
+                turnCount: Number(data.stats?.turnCount ?? 0),
+                tokens: Number(data.stats?.tokens ?? 0),
+              },
+              {
+                runner: "daemon",
+                pending: true,
+              }
+            );
+            res.end(JSON.stringify(goal));
+            return;
+          }
+
+          if (action === "clear" && req.method === "POST") {
+            const goal = await controller.clearGoal("daemon_api_clear");
+            res.end(JSON.stringify(goal));
+            return;
+          }
+        }
+      }
+
       // 4. 健康检查
       if (url.pathname === "/health") {
-        res.end(JSON.stringify({ status: "ok", version: "0.5.0-daemon" }));
+        res.end(JSON.stringify({
+          status: "ok",
+          version: "0.5.0-daemon",
+          pid: process.pid,
+          uptimeMs: Date.now() - startedAt,
+          missions: manager.listMissions().length,
+          durableSupervisor: "running",
+        }));
         return;
       }
 
-      res.writeHead(404).end(JSON.stringify({ error: "Not Found" }));
+      res.writeHead(404);
+      res.end(JSON.stringify({ error: "Not Found" }));
 
     } catch (err) {
-      res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+      const error = err as Error & { statusCode?: number; code?: string };
+      res.writeHead(error.statusCode ?? 500);
+      res.end(JSON.stringify({ error: error.message, code: error.code ?? "DAEMON_ERROR" }));
     }
   });
 
   server.listen(PORT, () => {
-    console.log(`[qinglingd] 守护进程已启动，监听端口: ${PORT}`);
+    console.log(`[qlingd] 守护进程已启动，监听端口: ${PORT}`);
   });
 }
 
@@ -102,7 +245,13 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
   if (!mission) return;
 
   try {
+    if (mission.status === "paused" || mission.status === "canceled") {
+      await manager.appendLog(id, `使命未启动，当前状态为 ${mission.status}`, { source: "daemon" });
+      return;
+    }
+
     await manager.updateStatus(id, "running");
+    await manager.appendLog(id, "使命开始执行", { source: "daemon" });
     
     // 重新加载配置
     const { config: loadedConfig } = await loadQinglingConfig({});
@@ -133,7 +282,8 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
 
     // v0.5 M3: 状态恢复 (High-fidelity Resume)
     if (data.checkpoint) {
-       console.log(`[qinglingd] 正在为使命 ${id} 恢复状态机快照...`);
+      console.log(`[qlingd] 正在为使命 ${id} 恢复状态机快照...`);
+       await manager.appendLog(id, "正在恢复状态机快照", { source: "daemon" });
        agent.syncWorkflowState(data.checkpoint);
        if (data.stats) {
           (agent as any).sessionTokens = data.stats.sessionTokens || 0;
@@ -145,7 +295,11 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
     const result = await agent.run();
     
     await manager.updateStatus(id, "succeeded");
-    console.log(`[qinglingd] 使命 ${id} 执行成功。`);
+    await manager.appendLog(id, "使命执行成功", {
+      source: "daemon",
+      resultPreview: typeof result === "string" ? result.slice(0, 120) : String(result),
+    });
+    console.log(`[qlingd] 使命 ${id} 执行成功。`);
     await agent.shutdown();
 
   } catch (err) {
@@ -153,8 +307,44 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
       message: (err as Error).message,
       code: "DAEMON_EXEC_FAILED"
     });
-    console.error(`[qinglingd] 使命 ${id} 执行失败: ${(err as Error).message}`);
+    await manager.appendLog(id, `使命执行失败: ${(err as Error).message}`, { source: "daemon" });
+    console.error(`[qlingd] 使命 ${id} 执行失败: ${(err as Error).message}`);
   }
+}
+
+function matchMissionRoute(pathname: string): { id: string; action: string | null } | null {
+  const match = pathname.match(/^\/missions\/([^/]+)(?:\/([^/]+))?$/);
+  if (!match) return null;
+  return {
+    id: decodeURIComponent(match[1]),
+    action: match[2] ? decodeURIComponent(match[2]) : null,
+  };
+}
+
+function matchSessionRoute(
+  pathname: string
+): { sessionId: string; resource: "loop-tasks" | "goal"; itemId: string | null; action: string | null } | null {
+  const match = pathname.match(/^\/sessions\/([^/]+)\/(loop-tasks|goal)(?:\/([^/]+))?(?:\/([^/]+))?$/);
+  if (!match) return null;
+  const resource = match[2] as "loop-tasks" | "goal";
+  let itemId = match[3] ? decodeURIComponent(match[3]) : null;
+  let action = match[4] ? decodeURIComponent(match[4]) : null;
+  if (resource === "goal" && itemId && !action) {
+    action = itemId;
+    itemId = null;
+  }
+  return {
+    sessionId: decodeURIComponent(match[1]),
+    resource,
+    itemId,
+    action,
+  };
+}
+
+async function readJsonBody(req: http.IncomingMessage): Promise<any> {
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  return body ? JSON.parse(body) : {};
 }
 
 main().catch(console.error);

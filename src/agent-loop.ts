@@ -36,6 +36,11 @@ import { buildSkillsSection } from "./pipeline/sections.js";
 import { applyContentFilter, setCustomPatterns } from "./guard/content-filter.js";
 import { appendGuardAudit } from "./guard.js";
 import { guardConfigFromEnv, type GuardConfig } from "./config.js";
+import {
+  SessionRegistry,
+  type SavedSessionSnapshot,
+  type SavedSessionSummary,
+} from "./session/session-registry.js";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_QINGLING_DIR = path.join(HOME_DIR, ".qingling");
@@ -97,6 +102,8 @@ export class AgentLoop extends AgentEventEmitter {
   private telemetry: AgentTelemetry | null = null;
   private channel: Channel | null = null;
   private sessionId: string;
+  private sessionCreatedAt: string;
+  private sessionRegistry: SessionRegistry;
   private guardConfig: GuardConfig;
 
   // --- v0.3 Getters (Management) ---
@@ -104,6 +111,30 @@ export class AgentLoop extends AgentEventEmitter {
   getMemoryStore(): MemoryStore { return this.memoryStore; }
   getDiscoveryRegistry(): DiscoveryRegistry { return this.discoveryRegistry; }
   getMissionManager(): MissionManager { return this.missionManager; }
+  getRuntimeRootDir(): string { return this.runtimeRootDir; }
+  getWorkspaceDir(): string { return this.config.runtime?.workspaceDir ?? process.cwd(); }
+  getMessagesSnapshot(): Message[] { return this.messages.map((message) => ({ ...message })); }
+  getSessionStats(): { sessionId: string; turnCount: number; tokens: number; compactions: number } {
+    return {
+      sessionId: this.sessionId,
+      turnCount: this.turnCount,
+      tokens: this.sessionTokens,
+      compactions: this.compactionCount,
+    };
+  }
+  getSessionSummary(): SavedSessionSummary {
+    return {
+      name: this.sessionId,
+      sessionId: this.sessionId,
+      workspaceDir: this.getWorkspaceDir(),
+      createdAt: this.sessionCreatedAt,
+      updatedAt: new Date().toISOString(),
+      turnCount: this.turnCount,
+      messageCount: this.messages.length,
+      sessionTokens: this.sessionTokens,
+      compactionCount: this.compactionCount,
+    };
+  }
 
   /** 状态机恢复后的内部同步 */
   syncWorkflowState(checkpoint: any): void {
@@ -184,8 +215,10 @@ export class AgentLoop extends AgentEventEmitter {
     };
     this.sectionRegistry = buildDefaultRegistry(this.config.tools);
     this.sessionId = "session-" + Date.now();
+    this.sessionCreatedAt = new Date().toISOString();
     this.approvalGate = new ApprovalGate();
     this.guardConfig = guardConfigFromEnv();
+    this.sessionRegistry = new SessionRegistry({ stateDir: this.runtimeRootDir });
 
     // 初始化 v2 组件
     this.hookManager = new HookManager(this.config.tools, this.guardConfig);
@@ -828,6 +861,32 @@ export class AgentLoop extends AgentEventEmitter {
     return this.sessionId;
   }
 
+  getPermissionMode(): "allow" | "deny" | "ask" {
+    return this.hookManager.getPermissionDefaultDecision();
+  }
+
+  setPermissionMode(mode: "allow" | "deny" | "ask"): void {
+    this.hookManager.setPermissionDefaultDecision(mode);
+    this.guardConfig.permissions.default = mode;
+    process.env.QINGLING_GUARD_PERMISSIONS_DEFAULT = mode;
+  }
+
+  async compactSessionNow(): Promise<{ beforeCount: number; afterCount: number; changed: boolean }> {
+    const beforeCount = this.messages.length;
+    const compacted = await this.compactor.compact(this.messages);
+    const changed = compacted.length !== beforeCount;
+    this.messages = compacted;
+    if (changed) {
+      this.compactionCount++;
+    }
+    this.memoryStore.compactPersisted(this.memoryMaxEntries);
+    return {
+      beforeCount,
+      afterCount: this.messages.length,
+      changed,
+    };
+  }
+
   async shutdown(): Promise<void> {
     try {
       await this.initPromise;
@@ -866,53 +925,93 @@ export class AgentLoop extends AgentEventEmitter {
 
   // --- Session Persistence ---
 
+  async checkpointSession(): Promise<string> {
+    return this.sessionRegistry.save(this.buildSessionSnapshot(this.sessionId));
+  }
+
   async saveSession(name?: string): Promise<string> {
     const sessionName = name ?? "session-" + new Date().toISOString().replace(/[:.]/g, "-");
-    const sessionDir = path.join(this.runtimeRootDir, "sessions");
-    await fs.mkdir(sessionDir, { recursive: true });
-    const sessionFile = path.join(sessionDir, sessionName + ".json");
-    const data = {
-      messages: this.messages,
-      turnCount: this.turnCount,
-      sessionTokens: this.sessionTokens,
-      savedAt: new Date().toISOString(),
-    };
-    await fs.writeFile(sessionFile, JSON.stringify(data, null, 2), "utf-8");
-    return sessionFile;
+    return this.sessionRegistry.save(this.buildSessionSnapshot(sessionName));
   }
 
   async loadSession(name: string): Promise<boolean> {
-    const sessionFile = path.join(
-      this.runtimeRootDir,
-      "sessions",
-      name.endsWith(".json") ? name : name + ".json"
-    );
-    try {
-      const data = await fs.readFile(sessionFile, "utf-8");
-      const parsed = JSON.parse(data);
-      this.messages = parsed.messages ?? [];
-      this.turnCount = parsed.turnCount ?? 0;
-      this.sessionTokens = parsed.sessionTokens ?? 0;
-      this.sectionRegistry.clearCache();
-      return true;
-    } catch {
-      return false;
-    }
+    return (await this.restoreSession(name)) !== null;
   }
 
   async listSessions(): Promise<string[]> {
-    const sessionDir = path.join(this.runtimeRootDir, "sessions");
-    try {
-      await fs.mkdir(sessionDir, { recursive: true });
-      const files = await fs.readdir(sessionDir);
-      return files.filter((f) => f.endsWith(".json")).sort().reverse();
-    } catch {
-      return [];
+    const sessions = await this.listSessionsDetailed();
+    return sessions.map((session) => `${session.name}.json`);
+  }
+
+  async listSessionsDetailed(): Promise<SavedSessionSummary[]> {
+    return this.sessionRegistry.list();
+  }
+
+  async restoreSession(nameOrSessionId: string): Promise<SavedSessionSummary | null> {
+    const snapshot = await this.sessionRegistry.load(nameOrSessionId);
+    if (!snapshot) {
+      return null;
     }
+    return this.applySessionSnapshot(snapshot);
+  }
+
+  async restoreLatestSession(): Promise<SavedSessionSummary | null> {
+    const snapshot = await this.sessionRegistry.loadLatest();
+    if (!snapshot) {
+      return null;
+    }
+    return this.applySessionSnapshot(snapshot);
   }
 
 
   // --- Private Methods ---
+
+  private buildSessionSnapshot(name: string): Omit<SavedSessionSnapshot, "version"> {
+    return {
+      name,
+      sessionId: this.sessionId,
+      workspaceDir: this.getWorkspaceDir(),
+      createdAt: this.sessionCreatedAt,
+      updatedAt: new Date().toISOString(),
+      messages: this.getMessagesSnapshot(),
+      turnCount: this.turnCount,
+      sessionTokens: this.sessionTokens,
+      compactionCount: this.compactionCount,
+    };
+  }
+
+  private applySessionSnapshot(snapshot: SavedSessionSnapshot): SavedSessionSummary {
+    this.messages = snapshot.messages.map((message) => ({ ...message }));
+    this.turnCount = snapshot.turnCount;
+    this.sessionTokens = snapshot.sessionTokens;
+    this.compactionCount = snapshot.compactionCount;
+    this.sessionId = snapshot.sessionId;
+    this.sessionCreatedAt = snapshot.createdAt;
+    this.pipeline.setSessionId(this.sessionId);
+    this.tokenBudget.syncUsage(this.sessionTokens);
+    this.memoryStore.resetSession();
+    this.sectionRegistry.clearCache();
+    if (this.config.runtime) {
+      this.config = {
+        ...this.config,
+        runtime: {
+          ...this.config.runtime,
+          workspaceDir: snapshot.workspaceDir ?? this.config.runtime.workspaceDir,
+        },
+      };
+    }
+    return {
+      name: snapshot.name,
+      sessionId: snapshot.sessionId,
+      workspaceDir: snapshot.workspaceDir,
+      createdAt: snapshot.createdAt,
+      updatedAt: snapshot.updatedAt,
+      turnCount: snapshot.turnCount,
+      messageCount: snapshot.messages.length,
+      sessionTokens: snapshot.sessionTokens,
+      compactionCount: snapshot.compactionCount,
+    };
+  }
 
   /** 自我反思循环 (v0.5 M2) */
   private async reflectiveThink(tc: ToolCall): Promise<{ decision: "proceed" | "ask" | "block" | "warn", reason: string }> {

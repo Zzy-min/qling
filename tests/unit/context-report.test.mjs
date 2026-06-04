@@ -1,0 +1,138 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { buildContextReport, buildLocalContextReport, formatContextReport, formatTokenUsage } from "../../dist/context-report.js";
+
+function createContext(overrides = {}) {
+  return {
+    workspaceDir: "C:\\repo\\qingling",
+    agentLoop: {
+      getSessionStats: () => ({
+        sessionId: "session-test",
+        turnCount: 3,
+        tokens: 24000,
+        compactions: 2,
+      }),
+      getMessagesSnapshot: () => [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "world" },
+      ],
+      getRuntimeRootDir: () => "C:\\Users\\Lenovo\\.qingling",
+      getWorkspaceDir: () => "C:\\repo\\qingling",
+      ...overrides.agentLoop,
+    },
+    listSavedSessions: overrides.listSavedSessions ?? (async () => [
+      {
+        name: "session-test",
+        sessionId: "session-test",
+        updatedAt: "2026-05-31T10:00:00.000Z",
+        turnCount: 3,
+        messageCount: 2,
+        sessionTokens: 24000,
+        compactionCount: 2,
+      },
+    ]),
+    ...overrides,
+  };
+}
+
+test("context report includes local session statistics and paths", async () => {
+  const report = await buildContextReport(createContext(), {
+    env: {
+      QINGLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qingling",
+      QINGLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qingling\\cache",
+    },
+    maxTokens: 120000,
+  });
+
+  assert.equal(report.sessionId, "session-test");
+  assert.equal(report.turnCount, 3);
+  assert.equal(report.messageCount, 2);
+  assert.equal(report.tokens, 24000);
+  assert.equal(report.compactions, 2);
+  assert.equal(report.tokenUsagePercent, 20);
+  assert.match(report.sessionsDir, /sessions$/);
+});
+
+test("context report handles missing saved sessions", async () => {
+  const report = await buildContextReport(createContext({
+    listSavedSessions: async () => [],
+  }));
+
+  assert.equal(report.savedSessionCount, 0);
+  assert.equal(report.latestSavedSessionAt, null);
+});
+
+test("context report formatter is readable and local-first", async () => {
+  const report = await buildContextReport(createContext());
+  const text = formatContextReport(report).join("\n");
+
+  assert.match(text, /上下文/);
+  assert.match(text, /session-test/);
+  assert.match(text, /本地/);
+});
+
+test("formatTokenUsage degrades for missing or invalid budgets", () => {
+  assert.equal(formatTokenUsage(1000, 0), "1,000 / unknown");
+  assert.equal(formatTokenUsage(1000, 10000), "1,000 / 10,000 (10%)");
+});
+
+test("local context report summarizes saved sessions without exposing message bodies", async () => {
+  const root = mkdtempSync(join(tmpdir(), "qingling-context-"));
+  try {
+    const sessionsDir = join(root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, "older.json"),
+      JSON.stringify({
+        version: 1,
+        name: "older",
+        sessionId: "sid-older",
+        workspaceDir: "C:/repo/qingling",
+        createdAt: "2026-05-31T00:00:00.000Z",
+        updatedAt: "2026-05-31T00:01:00.000Z",
+        messages: [{ role: "user", content: "SECRET_CONTEXT_OLDER" }],
+        turnCount: 1,
+        sessionTokens: 10,
+        compactionCount: 0,
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      join(sessionsDir, "latest.json"),
+      JSON.stringify({
+        version: 1,
+        name: "latest",
+        sessionId: "sid-latest",
+        workspaceDir: "C:/repo/qingling",
+        createdAt: "2026-05-31T00:00:00.000Z",
+        updatedAt: "2026-05-31T00:02:00.000Z",
+        messages: [{ role: "assistant", content: "SECRET_CONTEXT_LATEST" }],
+        turnCount: 2,
+        sessionTokens: 20,
+        compactionCount: 0,
+      }),
+      "utf8"
+    );
+
+    const report = await buildLocalContextReport({
+      workspaceDir: "C:/repo/qingling",
+      stateDir: root,
+      cacheDir: join(root, "cache"),
+      maxTokens: 120000,
+    });
+    const text = formatContextReport(report).join("\n");
+
+    assert.equal(report.sessionId, "-");
+    assert.equal(report.savedSessionCount, 2);
+    assert.equal(report.latestSavedSessionAt, "2026-05-31T00:02:00.000Z");
+    assert.match(text, /本地上下文/);
+    assert.match(text, /已存快照\s*: 2/);
+    assert.doesNotMatch(text, /SECRET_CONTEXT_/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
