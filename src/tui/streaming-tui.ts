@@ -188,10 +188,18 @@ export class StreamUI {
   private progressTimer: NodeJS.Timeout | null = null;
   private progressStartedAt = 0;
   private progressLabel = "agent";
+  private lastEmptyCtrlCAt = 0;
+  private readonly now: () => number;
+  private readonly doubleCtrlCExitWindowMs = 2_000;
 
-  constructor(model: string = "deepseek-chat", tools: number = 0) {
+  constructor(
+    model: string = "deepseek-chat",
+    tools: number = 0,
+    options: { now?: () => number } = {}
+  ) {
     this.model = model;
     this.tools = tools;
+    this.now = options.now ?? (() => Date.now());
   }
 
   start(): void {
@@ -371,6 +379,7 @@ export class StreamUI {
   private handleEnter(): void {
     const cmd = this.input.submit();
     if (!cmd) return;
+    this.lastEmptyCtrlCAt = 0;
     process.stdout.write("\n");
     if (this.inputCallback) {
       this.inputCallback(cmd);
@@ -378,6 +387,29 @@ export class StreamUI {
   }
 
   private handleCtrlC(): void {
+    if (!this.input.value) {
+      const now = this.now();
+      const shouldExit =
+        this.lastEmptyCtrlCAt > 0 &&
+        now - this.lastEmptyCtrlCAt <= this.doubleCtrlCExitWindowMs;
+      this.lastEmptyCtrlCAt = shouldExit ? 0 : now;
+
+      if (shouldExit) {
+        process.stdout.write("\n" + DIM("再次 Ctrl+C 已确认退出") + "\n");
+        if (this.inputCallback) {
+          this.inputCallback("exit");
+        }
+        return;
+      }
+
+      this.backToPrompt();
+      process.stdout.write(S.r("^C") + " " + DIM("再次 Ctrl+C 退出，或输入 exit"));
+      process.stdout.write("\n");
+      this.writeInputValue();
+      return;
+    }
+
+    this.lastEmptyCtrlCAt = 0;
     this.input.clear();
     this.backToPrompt();
     process.stdout.write(S.r("^C") + " ");
