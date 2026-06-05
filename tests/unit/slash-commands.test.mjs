@@ -948,6 +948,14 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /Ctrl\+N/);
   assert.match(joined, /Ctrl\+R/);
   assert.match(joined, /Ctrl\+C/);
+  assert.match(joined, /再次 Ctrl\+C/);
+  assert.match(joined, /Ctrl\+A/);
+  assert.match(joined, /Ctrl\+E/);
+  assert.match(joined, /Ctrl\+U/);
+  assert.match(joined, /Ctrl\+K/);
+  assert.match(joined, /Ctrl\+W/);
+  assert.match(joined, /Ctrl\+D/);
+  assert.match(joined, /Home \/ End/);
   assert.match(joined, /\/queue/);
   assert.match(joined, /\/queue clear/);
   assert.match(joined, /本地 TUI 输入缓冲/);
@@ -958,6 +966,8 @@ test("slash shortcuts chinese alias prints tui shortcut help", async () => {
   const handled = await handleSlashCommand("/快捷键", ctx);
   assert.equal(handled, true);
   assert.match(lines.join("\n"), /Ctrl\+N/);
+  assert.match(lines.join("\n"), /Ctrl\+W/);
+  assert.match(lines.join("\n"), /Ctrl\+D/);
 });
 
 test("slash export writes local markdown file", async () => {
