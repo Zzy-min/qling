@@ -207,6 +207,50 @@ test("stream ui dispatches home and end escape sequences", async () => {
   });
 });
 
+test("stream ui bracketed paste inserts multiline text without submitting", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[200~first line\r\nsecond line\x1b[201~");
+
+      assert.equal(ui.input.value, "first line\nsecond line");
+      assert.equal(ui.input.cursorPos, "first line\nsecond line".length);
+      assert.deepEqual(submitted, []);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui bracketed paste submits only after explicit enter", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[200~alpha\nbeta\x1b[201~");
+      assert.deepEqual(submitted, []);
+
+      dataHandler("\r");
+
+      assert.deepEqual(submitted, ["alpha\nbeta"]);
+      assert.equal(ui.input.value, "");
+
+      ui.running = false;
+    });
+  });
+});
+
 test("stream ui empty ctrl+d submits exit", async () => {
   await withCapturedStdout(async () => {
     const { ui, submitted } = createUi();

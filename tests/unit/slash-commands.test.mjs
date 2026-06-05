@@ -956,6 +956,8 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /Ctrl\+W/);
   assert.match(joined, /Ctrl\+D/);
   assert.match(joined, /Home \/ End/);
+  assert.match(joined, /Paste/);
+  assert.match(joined, /不会自动发送/);
   assert.match(joined, /\/queue/);
   assert.match(joined, /\/queue clear/);
   assert.match(joined, /本地 TUI 输入缓冲/);

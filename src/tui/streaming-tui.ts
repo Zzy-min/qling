@@ -324,6 +324,8 @@ export class StreamUI {
     process.stdin.setEncoding("utf8");
 
     let partial = "";
+    let bracketedPaste = false;
+    let pasteSawCarriageReturn = false;
 
     this.dataHandler = (chunk: string) => {
       if (!this.running) return;
@@ -334,7 +336,32 @@ export class StreamUI {
         }
 
         const seq = partial + ch;
-        if (seq === "\r" || seq === "\n") {
+        if (seq === "\x1b[200~") {
+          partial = "";
+          bracketedPaste = true;
+          pasteSawCarriageReturn = false;
+        } else if (seq === "\x1b[201~") {
+          partial = "";
+          bracketedPaste = false;
+          pasteSawCarriageReturn = false;
+          this.redrawInput();
+        } else if (seq === "\x1b[" || /^\x1b\[\d*$/.test(seq)) {
+          partial = seq;
+        } else if (bracketedPaste) {
+          partial = "";
+          if (seq === "\r") {
+            this.input.insertNewline();
+            pasteSawCarriageReturn = true;
+          } else if (seq === "\n") {
+            if (!pasteSawCarriageReturn) {
+              this.input.insertNewline();
+            }
+            pasteSawCarriageReturn = false;
+          } else if (ch >= " " || ch === "\t") {
+            pasteSawCarriageReturn = false;
+            this.input.insertChar(ch);
+          }
+        } else if (seq === "\r" || seq === "\n") {
           partial = "";
           this.handleEnter();
         } else if (seq === "\x03") {
@@ -379,8 +406,6 @@ export class StreamUI {
         } else if (seq === "\x1b[F" || seq === "\x1b[4~") {
           partial = "";
           this.handleEnd();
-        } else if (seq === "\x1b[" || /^\x1b\[\d$/.test(seq)) {
-          partial = seq;
         } else if (seq === "\x0f") {
           // Ctrl+O — fold toggle (reserved for future expand/collapse)
           partial = "";

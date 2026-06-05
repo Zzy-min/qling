@@ -11,6 +11,7 @@ export const SHORTCUT_LINES = [
   "Ctrl+C   : 非空输入时清空；空输入时再次 Ctrl+C 确认退出",
   "Ctrl+D   : 空输入时退出；非空输入不丢弃内容",
   "Home / End : 移动到输入开头/结尾（兼容常见终端序列）",
+  "Paste    : 支持终端 bracketed paste，多行粘贴先进入输入缓冲，不会自动发送",
   "↑ / ↓    : 切换历史输入",
   "← / →    : 移动光标",
   "Ctrl+O   : 预留用于长输出展开/折叠",
