@@ -265,7 +265,7 @@ export class StreamUI {
       S.s(this.model) + "    " + S.g("online") + "    " +
       S.y("tools") + " " + S.y(String(this.tools));
     const line2 = S.d(pathStr);
-    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Ctrl+R 搜索历史 · Ctrl+C 清空输入");
+    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Ctrl+R 搜索 · Ctrl+W 删词 · Ctrl+D 退出");
     process.stdout.write(line1 + "\n" + line2 + "\n" + line3 + "\n");
   }
 
@@ -328,6 +328,11 @@ export class StreamUI {
     this.dataHandler = (chunk: string) => {
       if (!this.running) return;
       for (const ch of chunk) {
+        if (!partial && ch === "\x1b") {
+          partial = ch;
+          continue;
+        }
+
         const seq = partial + ch;
         if (seq === "\r" || seq === "\n") {
           partial = "";
@@ -350,6 +355,12 @@ export class StreamUI {
         } else if (seq === "\x0b") {
           partial = "";
           this.handleCtrlK();
+        } else if (seq === "\x17") {
+          partial = "";
+          this.handleCtrlW();
+        } else if (seq === "\x04") {
+          partial = "";
+          this.handleCtrlD();
         } else if (seq === "\x1b[A") {
           partial = "";
           this.handleHistoryUp();
@@ -362,6 +373,14 @@ export class StreamUI {
         } else if (seq === "\x1b[D") {
           partial = "";
           this.handleLeft();
+        } else if (seq === "\x1b[H" || seq === "\x1b[1~") {
+          partial = "";
+          this.handleHome();
+        } else if (seq === "\x1b[F" || seq === "\x1b[4~") {
+          partial = "";
+          this.handleEnd();
+        } else if (seq === "\x1b[" || /^\x1b\[\d$/.test(seq)) {
+          partial = seq;
         } else if (seq === "\x0f") {
           // Ctrl+O — fold toggle (reserved for future expand/collapse)
           partial = "";
@@ -373,10 +392,6 @@ export class StreamUI {
           // Ctrl+R restores the latest history entry matching the current input.
           partial = "";
           this.handleHistorySearch();
-        } else if (seq.startsWith("\x1b[") && seq.length > 4) {
-          partial = "";
-        } else if (seq.startsWith("\x1b[")) {
-          partial = seq;
         } else if (ch >= " " || ch === "\t") {
           partial = "";
           this.handleChar(ch);
@@ -453,6 +468,19 @@ export class StreamUI {
     this.redrawInput();
   }
 
+  private handleCtrlW(): void {
+    this.input.deleteWordBeforeCursor();
+    this.redrawInput();
+  }
+
+  private handleCtrlD(): void {
+    if (this.input.value) return;
+    this.lastEmptyCtrlCAt = 0;
+    if (this.inputCallback) {
+      this.inputCallback("exit");
+    }
+  }
+
   private handleHistoryUp(): void {
     this.input.historyUp();
     this.redrawInput();
@@ -476,6 +504,16 @@ export class StreamUI {
   private handleRight(): void {
     this.input.moveRight();
     this.syncCursor();
+  }
+
+  private handleHome(): void {
+    this.input.moveStart();
+    this.redrawInput();
+  }
+
+  private handleEnd(): void {
+    this.input.moveEnd();
+    this.redrawInput();
   }
 
   private handleChar(ch: string): void {

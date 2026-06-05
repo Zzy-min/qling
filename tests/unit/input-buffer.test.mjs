@@ -140,3 +140,26 @@ test("input buffer deletes content before and after cursor", () => {
   assert.equal(buffer.value, "X");
   assert.equal(buffer.cursorPos, 1);
 });
+
+test("input buffer deletes the word before cursor", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "npm run  build") buffer.insertChar(ch);
+
+  buffer.deleteWordBeforeCursor();
+  assert.equal(buffer.value, "npm run  ");
+  assert.equal(buffer.cursorPos, "npm run  ".length);
+
+  buffer.deleteWordBeforeCursor();
+  assert.equal(buffer.value, "npm ");
+  assert.equal(buffer.cursorPos, "npm ".length);
+});
+
+test("input buffer delete word respects cursor position", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "alpha beta gamma") buffer.insertChar(ch);
+  for (let i = 0; i < " gamma".length; i++) buffer.moveLeft();
+
+  buffer.deleteWordBeforeCursor();
+  assert.equal(buffer.value, "alpha  gamma");
+  assert.equal(buffer.cursorPos, "alpha ".length);
+});

@@ -28,6 +28,47 @@ function createUi(now = () => 1_000) {
   return { ui, submitted };
 }
 
+async function withCapturedStdinDataHandler(fn) {
+  const originalOn = process.stdin.on;
+  const originalOff = process.stdin.off;
+  const originalResume = process.stdin.resume;
+  const originalPause = process.stdin.pause;
+  const originalSetEncoding = process.stdin.setEncoding;
+  const originalSetRawMode = process.stdin.setRawMode;
+  let dataHandler = null;
+
+  process.stdin.on = function on(event, handler) {
+    if (event === "data") dataHandler = handler;
+    return process.stdin;
+  };
+  process.stdin.off = function off() {
+    return process.stdin;
+  };
+  process.stdin.resume = function resume() {
+    return process.stdin;
+  };
+  process.stdin.pause = function pause() {
+    return process.stdin;
+  };
+  process.stdin.setEncoding = function setEncoding() {
+    return process.stdin;
+  };
+  process.stdin.setRawMode = function setRawMode() {
+    return process.stdin;
+  };
+
+  try {
+    await fn(() => dataHandler);
+  } finally {
+    process.stdin.on = originalOn;
+    process.stdin.off = originalOff;
+    process.stdin.resume = originalResume;
+    process.stdin.pause = originalPause;
+    process.stdin.setEncoding = originalSetEncoding;
+    process.stdin.setRawMode = originalSetRawMode;
+  }
+}
+
 test("stream ui ctrl+c clears non-empty input without submitting exit", async () => {
   await withCapturedStdout(async () => {
     const { ui, submitted } = createUi();
@@ -106,6 +147,85 @@ test("stream ui ctrl+u and ctrl+k edit buffer without submitting", async () => {
     ui.handleCtrlK();
     assert.equal(ui.input.value, "X");
     assert.equal(ui.input.cursorPos, 1);
+    assert.deepEqual(submitted, []);
+  });
+});
+
+test("stream ui ctrl+w deletes previous word without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "npm run build") ui.input.insertChar(ch);
+
+    ui.handleCtrlW();
+
+    assert.equal(ui.input.value, "npm run ");
+    assert.equal(ui.input.cursorPos, "npm run ".length);
+    assert.deepEqual(submitted, []);
+  });
+});
+
+test("stream ui home and end key handlers move cursor without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "abc") ui.input.insertChar(ch);
+
+    ui.handleHome();
+    assert.equal(ui.input.cursorPos, 0);
+
+    ui.handleEnd();
+    assert.equal(ui.input.cursorPos, 3);
+    assert.deepEqual(submitted, []);
+  });
+});
+
+test("stream ui dispatches home and end escape sequences", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "abc") ui.input.insertChar(ch);
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[H");
+      assert.equal(ui.input.cursorPos, 0);
+
+      dataHandler("\x1b[F");
+      assert.equal(ui.input.cursorPos, 3);
+
+      dataHandler("\x1b[1~");
+      assert.equal(ui.input.cursorPos, 0);
+
+      dataHandler("\x1b[4~");
+      assert.equal(ui.input.cursorPos, 3);
+      assert.deepEqual(submitted, []);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui empty ctrl+d submits exit", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+
+    ui.handleCtrlD();
+
+    assert.deepEqual(submitted, ["exit"]);
+  });
+});
+
+test("stream ui non-empty ctrl+d does not discard input or submit", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "draft") ui.input.insertChar(ch);
+
+    ui.handleCtrlD();
+
+    assert.equal(ui.input.value, "draft");
+    assert.equal(ui.input.cursorPos, "draft".length);
     assert.deepEqual(submitted, []);
   });
 });
