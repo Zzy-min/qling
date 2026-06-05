@@ -77,3 +77,35 @@ test("stream ui empty ctrl+c after timeout does not submit exit", async () => {
     assert.deepEqual(submitted, []);
   });
 });
+
+test("stream ui ctrl+a and ctrl+e move cursor without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "abc") ui.input.insertChar(ch);
+    ui.handleCtrlA();
+    assert.equal(ui.input.cursorPos, 0);
+
+    ui.handleCtrlE();
+    assert.equal(ui.input.cursorPos, 3);
+    assert.deepEqual(submitted, []);
+  });
+});
+
+test("stream ui ctrl+u and ctrl+k edit buffer without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "abcdef") ui.input.insertChar(ch);
+    ui.input.moveLeft();
+    ui.input.moveLeft();
+
+    ui.handleCtrlU();
+    assert.equal(ui.input.value, "ef");
+    assert.equal(ui.input.cursorPos, 0);
+
+    ui.input.insertChar("X");
+    ui.handleCtrlK();
+    assert.equal(ui.input.value, "X");
+    assert.equal(ui.input.cursorPos, 1);
+    assert.deepEqual(submitted, []);
+  });
+});

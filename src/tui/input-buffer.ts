@@ -44,6 +44,25 @@ export class InputBuffer {
     }
   }
 
+  moveStart(): void {
+    this.cursorPos = 0;
+  }
+
+  moveEnd(): void {
+    this.cursorPos = this.value.length;
+  }
+
+  deleteBeforeCursor(): void {
+    if (this.cursorPos <= 0) return;
+    this.value = this.value.slice(this.cursorPos);
+    this.cursorPos = 0;
+  }
+
+  deleteAfterCursor(): void {
+    if (this.cursorPos >= this.value.length) return;
+    this.value = this.value.slice(0, this.cursorPos);
+  }
+
   historyUp(): void {
     if (this.historyIdx > 0) {
       this.historyIdx--;

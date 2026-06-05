@@ -112,3 +112,31 @@ test("input buffer search miss keeps current input", () => {
   assert.equal(buffer.value, "deploy");
   assert.equal(buffer.cursorPos, "deploy".length);
 });
+
+test("input buffer moves to start and end of current input", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "abc") buffer.insertChar(ch);
+  buffer.moveLeft();
+
+  buffer.moveStart();
+  assert.equal(buffer.cursorPos, 0);
+
+  buffer.moveEnd();
+  assert.equal(buffer.cursorPos, 3);
+});
+
+test("input buffer deletes content before and after cursor", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "abcdef") buffer.insertChar(ch);
+  buffer.moveLeft();
+  buffer.moveLeft();
+
+  buffer.deleteBeforeCursor();
+  assert.equal(buffer.value, "ef");
+  assert.equal(buffer.cursorPos, 0);
+
+  buffer.insertChar("X");
+  buffer.deleteAfterCursor();
+  assert.equal(buffer.value, "X");
+  assert.equal(buffer.cursorPos, 1);
+});

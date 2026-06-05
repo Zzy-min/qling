@@ -338,6 +338,18 @@ export class StreamUI {
         } else if (seq === "\x7f") {
           partial = "";
           this.handleBackspace();
+        } else if (seq === "\x01") {
+          partial = "";
+          this.handleCtrlA();
+        } else if (seq === "\x05") {
+          partial = "";
+          this.handleCtrlE();
+        } else if (seq === "\x15") {
+          partial = "";
+          this.handleCtrlU();
+        } else if (seq === "\x0b") {
+          partial = "";
+          this.handleCtrlK();
         } else if (seq === "\x1b[A") {
           partial = "";
           this.handleHistoryUp();
@@ -418,6 +430,26 @@ export class StreamUI {
 
   private handleBackspace(): void {
     this.input.backspace();
+    this.redrawInput();
+  }
+
+  private handleCtrlA(): void {
+    this.input.moveStart();
+    this.redrawInput();
+  }
+
+  private handleCtrlE(): void {
+    this.input.moveEnd();
+    this.redrawInput();
+  }
+
+  private handleCtrlU(): void {
+    this.input.deleteBeforeCursor();
+    this.redrawInput();
+  }
+
+  private handleCtrlK(): void {
+    this.input.deleteAfterCursor();
     this.redrawInput();
   }
 
