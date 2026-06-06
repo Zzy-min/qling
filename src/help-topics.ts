@@ -58,6 +58,17 @@ const TOPICS: HelpTopic[] = [
     boundary: "读取本地运行时快照与配置；成本为本地估算，不调用模型、不联网。",
   },
   {
+    id: "shortcuts",
+    title: "TUI 输入快捷键",
+    summary: "查看本地 TUI 输入编辑、历史搜索、队列和粘贴相关快捷键。",
+    aliases: ["shortcuts", "/shortcuts", "快捷键", "/快捷键"],
+    slashUsage: "/shortcuts",
+    cliUsage: "{bin} shortcuts",
+    slashExamples: ["/shortcuts", "/快捷键", "/help shortcuts"],
+    cliExamples: ["{bin} shortcuts", "{bin} 快捷键", "{bin} help shortcuts"],
+    boundary: "只读取本地静态快捷键说明；不读取会话正文、不修改输入缓冲、不调用模型、不联网。",
+  },
+  {
     id: "doctor",
     title: "本地诊断",
     summary: "汇总配置、存储、MCP、hooks、daemon 与本地数据留存健康度。",

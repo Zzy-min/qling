@@ -182,6 +182,52 @@ test("slash question-mark help topic accepts chinese alias", async () => {
   assert.match(joined, /\/权限 解释 <tool>/);
 });
 
+test("slash help shortcuts topic shows focused local shortcut help", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/help shortcuts", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /聚焦帮助/);
+  assert.match(joined, /Topic\s*: shortcuts/);
+  assert.match(joined, /Usage\s*: \/shortcuts/);
+  assert.match(joined, /TUI 输入快捷键/);
+  assert.match(joined, /只读取本地静态快捷键说明/);
+});
+
+test("slash help shortcuts topic accepts chinese alias", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/help 快捷键", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /Topic\s*: shortcuts/);
+  assert.match(joined, /Usage\s*: \/shortcuts/);
+  assert.match(joined, /Aliases\s*: \/快捷键/);
+});
+
+test("slash shortcuts help flag shows focused help instead of full shortcut table", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/shortcuts --help", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /聚焦帮助/);
+  assert.match(joined, /Topic\s*: shortcuts/);
+  assert.match(joined, /Usage\s*: \/shortcuts/);
+  assert.doesNotMatch(joined, /Enter\s+: 发送当前输入/);
+});
+
+test("slash chinese shortcuts help flag shows focused help", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/快捷键 -h", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /Topic\s*: shortcuts/);
+  assert.match(joined, /\/快捷键/);
+});
+
 test("slash unknown command suggests nearest english command", async () => {
   const { ctx, errors } = createContext();
   const handled = await handleSlashCommand("/expors", ctx);

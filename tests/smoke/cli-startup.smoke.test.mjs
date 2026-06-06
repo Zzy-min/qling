@@ -106,6 +106,24 @@ test("cli startup smoke: focused help typo suggests local topic without model ru
   assert.doesNotMatch(result.stderr, /sk-focused-help-typo-secret/);
 });
 
+test("cli startup smoke: focused shortcuts help exits with code 0 and keeps static boundary", () => {
+  const result = spawnSync(process.execPath, [ENTRY, "help", "shortcuts"], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      QLING_LLM_API_KEY: "sk-shortcuts-help-secret",
+    },
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /聚焦帮助/);
+  assert.match(result.stdout, /Topic\s*: shortcuts/);
+  assert.match(result.stdout, /Usage\s*: qling shortcuts/);
+  assert.match(result.stdout, /只读取本地静态快捷键说明/);
+  assert.doesNotMatch(result.stdout, /sk-shortcuts-help-secret/);
+  assert.doesNotMatch(result.stderr, /sk-shortcuts-help-secret/);
+});
+
 test("cli startup smoke: top-level typo suggests local command without model run", () => {
   const result = spawnSync(process.execPath, [ENTRY, "expors"], {
     encoding: "utf-8",
