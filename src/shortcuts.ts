@@ -8,6 +8,7 @@ export const SHORTCUT_LINES = [
   "Ctrl+A / Ctrl+E : 移动到输入开头/结尾",
   "Ctrl+U / Ctrl+K : 删除光标前/后的输入内容",
   "Ctrl+W   : 删除光标前一个词",
+  "Ctrl+L   : 清空当前终端视图并重绘输入栏，不丢弃正在编辑的内容",
   "Ctrl+C   : 非空输入时清空；空输入时再次 Ctrl+C 确认退出",
   "Ctrl+D   : 空输入时退出；非空输入不丢弃内容",
   "Home / End : 移动到输入开头/结尾（兼容常见终端序列）",

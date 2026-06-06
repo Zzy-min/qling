@@ -164,6 +164,48 @@ test("stream ui ctrl+w deletes previous word without submitting", async () => {
   });
 });
 
+test("stream ui ctrl+l clears screen and redraws without losing input", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    ui.setStatusLine("model=test session=session-1");
+    for (const ch of "draft prompt") ui.input.insertChar(ch);
+    ui.input.moveLeft();
+    ui.input.moveLeft();
+
+    ui.handleCtrlL();
+
+    assert.equal(ui.input.value, "draft prompt");
+    assert.equal(ui.input.cursorPos, "draft prom".length);
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
+    assert.match(getOutput(), /轻灵 Agent CLI/);
+    assert.match(getOutput(), /model=test session=session-1/);
+    assert.match(getOutput(), /draft prompt/);
+  });
+});
+
+test("stream ui dispatches ctrl+l from raw stdin without submitting", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "draft") ui.input.insertChar(ch);
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x0c");
+
+      assert.equal(ui.input.value, "draft");
+      assert.deepEqual(submitted, []);
+      assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
+
+      ui.running = false;
+    });
+  });
+});
+
 test("stream ui home and end key handlers move cursor without submitting", async () => {
   await withCapturedStdout(async () => {
     const { ui, submitted } = createUi();

@@ -265,7 +265,7 @@ export class StreamUI {
       S.s(this.model) + "    " + S.g("online") + "    " +
       S.y("tools") + " " + S.y(String(this.tools));
     const line2 = S.d(pathStr);
-    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Ctrl+R 搜索 · Ctrl+W 删词 · Ctrl+D 退出");
+    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Ctrl+R 搜索 · Ctrl+W 删词 · Ctrl+L 清屏 · Ctrl+D 退出");
     process.stdout.write(line1 + "\n" + line2 + "\n" + line3 + "\n");
   }
 
@@ -385,6 +385,9 @@ export class StreamUI {
         } else if (seq === "\x17") {
           partial = "";
           this.handleCtrlW();
+        } else if (seq === "\x0c") {
+          partial = "";
+          this.handleCtrlL();
         } else if (seq === "\x04") {
           partial = "";
           this.handleCtrlD();
@@ -496,6 +499,13 @@ export class StreamUI {
   private handleCtrlW(): void {
     this.input.deleteWordBeforeCursor();
     this.redrawInput();
+  }
+
+  private handleCtrlL(): void {
+    process.stdout.write("\x1b[2J\x1b[H");
+    this.printHeader();
+    this.printInputBar();
+    this.syncCursor();
   }
 
   private handleCtrlD(): void {
