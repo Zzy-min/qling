@@ -841,6 +841,8 @@ test("cli startup smoke: chinese shortcuts alias exits with code 0 and prints lo
   assert.match(result.stdout, /TUI 快捷键/);
   assert.match(result.stdout, /Ctrl\+N/);
   assert.match(result.stdout, /Ctrl\+R/);
+  assert.match(result.stdout, /Alt\+←/);
+  assert.match(result.stdout, /按词/);
   assert.match(result.stdout, /Ctrl\+W/);
   assert.match(result.stdout, /Ctrl\+L/);
   assert.match(result.stdout, /不丢弃正在编辑的内容/);

@@ -265,7 +265,7 @@ export class StreamUI {
       S.s(this.model) + "    " + S.g("online") + "    " +
       S.y("tools") + " " + S.y(String(this.tools));
     const line2 = S.d(pathStr);
-    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Ctrl+R 搜索 · Ctrl+W 删词 · Ctrl+L 清屏 · Ctrl+D 退出");
+    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Alt+←/→ 按词移动 · Ctrl+W 删词 · Ctrl+L 清屏 · Ctrl+D 退出");
     process.stdout.write(line1 + "\n" + line2 + "\n" + line3 + "\n");
   }
 
@@ -345,7 +345,7 @@ export class StreamUI {
           bracketedPaste = false;
           pasteSawCarriageReturn = false;
           this.redrawInput();
-        } else if (seq === "\x1b[" || /^\x1b\[\d*$/.test(seq)) {
+        } else if (seq === "\x1b[" || /^\x1b\[\d*(?:;\d*)?$/.test(seq)) {
           partial = seq;
         } else if (bracketedPaste) {
           partial = "";
@@ -397,6 +397,12 @@ export class StreamUI {
         } else if (seq === "\x1b[B") {
           partial = "";
           this.handleHistoryDown();
+        } else if (seq === "\x1bb" || seq === "\x1b[1;3D" || seq === "\x1b[1;5D" || seq === "\x1b[5D") {
+          partial = "";
+          this.handleWordLeft();
+        } else if (seq === "\x1bf" || seq === "\x1b[1;3C" || seq === "\x1b[1;5C" || seq === "\x1b[5C") {
+          partial = "";
+          this.handleWordRight();
         } else if (seq === "\x1b[C") {
           partial = "";
           this.handleRight();
@@ -538,6 +544,16 @@ export class StreamUI {
 
   private handleRight(): void {
     this.input.moveRight();
+    this.syncCursor();
+  }
+
+  private handleWordLeft(): void {
+    this.input.moveWordLeft();
+    this.syncCursor();
+  }
+
+  private handleWordRight(): void {
+    this.input.moveWordRight();
     this.syncCursor();
   }
 

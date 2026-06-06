@@ -44,6 +44,34 @@ export class InputBuffer {
     }
   }
 
+  moveWordLeft(): void {
+    if (this.cursorPos <= 0) return;
+
+    let nextPos = this.cursorPos;
+    while (nextPos > 0 && /\s/.test(this.value[nextPos - 1] ?? "")) {
+      nextPos--;
+    }
+    while (nextPos > 0 && !/\s/.test(this.value[nextPos - 1] ?? "")) {
+      nextPos--;
+    }
+
+    this.cursorPos = nextPos;
+  }
+
+  moveWordRight(): void {
+    if (this.cursorPos >= this.value.length) return;
+
+    let nextPos = this.cursorPos;
+    while (nextPos < this.value.length && !/\s/.test(this.value[nextPos] ?? "")) {
+      nextPos++;
+    }
+    while (nextPos < this.value.length && /\s/.test(this.value[nextPos] ?? "")) {
+      nextPos++;
+    }
+
+    this.cursorPos = nextPos;
+  }
+
   moveStart(): void {
     this.cursorPos = 0;
   }

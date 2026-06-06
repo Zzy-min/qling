@@ -951,6 +951,9 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /再次 Ctrl\+C/);
   assert.match(joined, /Ctrl\+A/);
   assert.match(joined, /Ctrl\+E/);
+  assert.match(joined, /Alt\+←/);
+  assert.match(joined, /Alt\+F/);
+  assert.match(joined, /按词/);
   assert.match(joined, /Ctrl\+U/);
   assert.match(joined, /Ctrl\+K/);
   assert.match(joined, /Ctrl\+W/);
@@ -972,6 +975,7 @@ test("slash shortcuts chinese alias prints tui shortcut help", async () => {
   assert.match(lines.join("\n"), /Ctrl\+N/);
   assert.match(lines.join("\n"), /Ctrl\+W/);
   assert.match(lines.join("\n"), /Ctrl\+L/);
+  assert.match(lines.join("\n"), /Alt\+←/);
   assert.match(lines.join("\n"), /Ctrl\+D/);
 });
 

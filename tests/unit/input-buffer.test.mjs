@@ -163,3 +163,32 @@ test("input buffer delete word respects cursor position", () => {
   assert.equal(buffer.value, "alpha  gamma");
   assert.equal(buffer.cursorPos, "alpha ".length);
 });
+
+test("input buffer moves left by word across whitespace", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "alpha beta  gamma") buffer.insertChar(ch);
+
+  buffer.moveWordLeft();
+  assert.equal(buffer.cursorPos, "alpha beta  ".length);
+
+  buffer.moveWordLeft();
+  assert.equal(buffer.cursorPos, "alpha ".length);
+
+  buffer.moveWordLeft();
+  assert.equal(buffer.cursorPos, 0);
+});
+
+test("input buffer moves right by word across whitespace and newlines", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "alpha\n beta gamma") buffer.insertChar(ch);
+  buffer.moveStart();
+
+  buffer.moveWordRight();
+  assert.equal(buffer.cursorPos, "alpha\n ".length);
+
+  buffer.moveWordRight();
+  assert.equal(buffer.cursorPos, "alpha\n beta ".length);
+
+  buffer.moveWordRight();
+  assert.equal(buffer.cursorPos, "alpha\n beta gamma".length);
+});

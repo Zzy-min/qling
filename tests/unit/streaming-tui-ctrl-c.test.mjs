@@ -220,6 +220,23 @@ test("stream ui home and end key handlers move cursor without submitting", async
   });
 });
 
+test("stream ui word navigation handlers move cursor without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "alpha beta gamma") ui.input.insertChar(ch);
+
+    ui.handleWordLeft();
+    assert.equal(ui.input.cursorPos, "alpha beta ".length);
+
+    ui.handleWordLeft();
+    assert.equal(ui.input.cursorPos, "alpha ".length);
+
+    ui.handleWordRight();
+    assert.equal(ui.input.cursorPos, "alpha beta ".length);
+    assert.deepEqual(submitted, []);
+  });
+});
+
 test("stream ui dispatches home and end escape sequences", async () => {
   await withCapturedStdout(async () => {
     await withCapturedStdinDataHandler(async (getDataHandler) => {
@@ -242,6 +259,35 @@ test("stream ui dispatches home and end escape sequences", async () => {
 
       dataHandler("\x1b[4~");
       assert.equal(ui.input.cursorPos, 3);
+      assert.deepEqual(submitted, []);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui dispatches word navigation escape sequences", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "alpha beta gamma") ui.input.insertChar(ch);
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1bb");
+      assert.equal(ui.input.cursorPos, "alpha beta ".length);
+
+      dataHandler("\x1b[1;5D");
+      assert.equal(ui.input.cursorPos, "alpha ".length);
+
+      dataHandler("\x1bf");
+      assert.equal(ui.input.cursorPos, "alpha beta ".length);
+
+      dataHandler("\x1b[1;3C");
+      assert.equal(ui.input.cursorPos, "alpha beta gamma".length);
       assert.deepEqual(submitted, []);
 
       ui.running = false;

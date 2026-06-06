@@ -6,6 +6,7 @@ export const SHORTCUT_LINES = [
   "Ctrl+N   : 插入换行，继续编辑多行 prompt",
   "Ctrl+R   : 用当前输入搜索本会话内历史；空输入时恢复最近历史",
   "Ctrl+A / Ctrl+E : 移动到输入开头/结尾",
+  "Alt+← / Alt+→, Alt+B / Alt+F : 按词向前/向后移动光标（兼容常见 Ctrl+←/→ 序列）",
   "Ctrl+U / Ctrl+K : 删除光标前/后的输入内容",
   "Ctrl+W   : 删除光标前一个词",
   "Ctrl+L   : 清空当前终端视图并重绘输入栏，不丢弃正在编辑的内容",
