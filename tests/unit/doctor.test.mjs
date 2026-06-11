@@ -112,6 +112,7 @@ test("doctor report warns for missing local data directories", async () => {
 
   assert.equal(report.checks.find((check) => check.id === "cache_dir")?.status, "warn");
   assert.equal(report.summary.fail, 0);
+  assert.ok(report.recommendations.some((line) => line.includes("首次运行会初始化本地数据")));
 });
 
 test("doctor report treats daemon probe failure as warn", async () => {
@@ -125,6 +126,7 @@ test("doctor report treats daemon probe failure as warn", async () => {
 
   assert.equal(report.checks.find((check) => check.id === "daemon")?.status, "warn");
   assert.equal(report.summary.fail, 0);
+  assert.ok(report.recommendations.some((line) => line.includes("qling daemon start")));
 });
 
 test("doctor config check warns when api key is missing", async () => {
@@ -144,11 +146,17 @@ test("doctor config check warns when api key is missing", async () => {
   const config = report.checks.find((check) => check.id === "config");
   assert.equal(config?.status, "warn");
   assert.match(config?.detail ?? "", /api_key=missing/);
+  assert.ok(report.recommendations.some((line) => line.includes("qling setup")));
 });
 
 test("doctor formatter emits readable local diagnostics", async () => {
   const report = await buildDoctorReport(createContext(), {
-    env: {},
+    env: {
+      QLING_LLM_PROVIDER: "deepseek",
+      QLING_LLM_MODEL: "deepseek-chat",
+      QLING_LLM_ENDPOINT: "https://api.deepseek.com",
+      QLING_LLM_API_KEY: "sk-test",
+    },
     exists: () => true,
     gitBranch: () => "main",
     nodeVersion: "22.22.1",
@@ -163,4 +171,25 @@ test("doctor formatter emits readable local diagnostics", async () => {
   assert.match(text, /MCP/);
   assert.match(text, /hooks/);
   assert.match(text, /本地/);
+  assert.doesNotMatch(text, /Next steps/);
+});
+
+test("doctor formatter emits next steps only when checks need action", async () => {
+  const report = await buildDoctorReport(createContext(), {
+    env: {
+      QLING_LLM_ENDPOINT: "https://user:pass@example.com/v1?token=DOCTOR_ENDPOINT_SECRET",
+      QLING_LLM_API_KEY: undefined,
+    },
+    exists: () => true,
+    gitBranch: () => null,
+    nodeVersion: "22.22.1",
+    daemonProbe: async () => ({ ok: false, detail: "not running" }),
+  });
+  const text = formatDoctorReport(report).join("\n");
+
+  assert.match(text, /Next steps/);
+  assert.match(text, /qling setup/);
+  assert.match(text, /qling daemon start/);
+  assert.doesNotMatch(text, /DOCTOR_ENDPOINT_SECRET/);
+  assert.doesNotMatch(text, /user:pass/);
 });

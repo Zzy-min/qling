@@ -20,6 +20,7 @@ export interface DoctorCheck {
 export interface DoctorReport {
   checks: DoctorCheck[];
   summary: Record<DoctorStatus, number>;
+  recommendations: string[];
 }
 
 export interface DoctorOptions {
@@ -82,6 +83,31 @@ function buildConfigCheck(env: DoctorOptions["env"]): DoctorCheck {
     status: apiKeyStatus === "missing" ? "warn" : "pass",
     detail: `provider=${provider} model=${model} endpoint=${endpoint} api_key=${apiKeyStatus}`,
   };
+}
+
+function buildRecommendations(checks: DoctorCheck[]): string[] {
+  const recommendations: string[] = [];
+  const byId = new Map(checks.map((check) => [check.id, check]));
+
+  if (byId.get("config")?.status === "warn") {
+    recommendations.push("- 运行 `qling setup` 配置本地 Provider、模型和 API key。");
+  }
+
+  const stateDir = byId.get("state_dir");
+  const cacheDir = byId.get("cache_dir");
+  if (stateDir?.status === "warn" || cacheDir?.status === "warn") {
+    recommendations.push("- 首次运行会初始化本地数据目录；如需预先创建，可检查 `qling storage` 输出的路径。");
+  }
+
+  if (byId.get("daemon")?.status === "warn") {
+    recommendations.push("- 如需后台任务或使命附着，运行 `qling daemon start` 后再执行 `qling doctor`。");
+  }
+
+  if (byId.get("git")?.status === "warn") {
+    recommendations.push("- 在 Git 仓库内运行可获得更完整的分支和工作区诊断。");
+  }
+
+  return recommendations;
 }
 
 function buildMcpCheck(env: DoctorOptions["env"]): DoctorCheck {
@@ -198,6 +224,7 @@ export async function buildDoctorReport(
   return {
     checks,
     summary: summarize(checks),
+    recommendations: buildRecommendations(checks),
   };
 }
 
@@ -216,6 +243,11 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   ];
   for (const check of report.checks) {
     lines.push(`[${icon(check.status)}] ${check.label}: ${check.detail}`);
+  }
+  if (report.recommendations.length > 0) {
+    lines.push("");
+    lines.push("Next steps:");
+    lines.push(...report.recommendations);
   }
   lines.push("-----------------------------------------");
   lines.push("说明: Doctor 只读取本地状态与本机 loopback，不上传诊断数据。");
