@@ -75,6 +75,24 @@ export class InputBuffer {
     this.cursorPos = nextPos;
   }
 
+  moveLineUp(): void {
+    const position = this.getLinePosition();
+    if (position.lineIndex <= 0) return;
+
+    const targetLine = position.lines[position.lineIndex - 1] ?? "";
+    const targetColumn = Math.min(position.column, targetLine.length);
+    this.cursorPos = position.lineStartOffsets[position.lineIndex - 1] + targetColumn;
+  }
+
+  moveLineDown(): void {
+    const position = this.getLinePosition();
+    if (position.lineIndex >= position.lines.length - 1) return;
+
+    const targetLine = position.lines[position.lineIndex + 1] ?? "";
+    const targetColumn = Math.min(position.column, targetLine.length);
+    this.cursorPos = position.lineStartOffsets[position.lineIndex + 1] + targetColumn;
+  }
+
   moveStart(): void {
     this.cursorPos = 0;
   }
@@ -203,5 +221,39 @@ export class InputBuffer {
   private clearHistoryDraft(): void {
     this.historyDraft = null;
     this.historyDraftCursorPos = 0;
+  }
+
+  private getLinePosition(): {
+    lines: string[];
+    lineStartOffsets: number[];
+    lineIndex: number;
+    column: number;
+  } {
+    const lines = this.value.split("\n");
+    const lineStartOffsets: number[] = [];
+    let offset = 0;
+
+    for (const line of lines) {
+      lineStartOffsets.push(offset);
+      offset += line.length + 1;
+    }
+
+    let lineIndex = 0;
+    for (let i = 0; i < lineStartOffsets.length; i++) {
+      const start = lineStartOffsets[i];
+      const line = lines[i] ?? "";
+      const end = start + line.length;
+      if (this.cursorPos <= end || i === lineStartOffsets.length - 1) {
+        lineIndex = i;
+        break;
+      }
+    }
+
+    return {
+      lines,
+      lineStartOffsets,
+      lineIndex,
+      column: this.cursorPos - lineStartOffsets[lineIndex],
+    };
   }
 }

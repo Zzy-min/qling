@@ -270,3 +270,32 @@ test("input buffer moves right by word across whitespace and newlines", () => {
   buffer.moveWordRight();
   assert.equal(buffer.cursorPos, "alpha\n beta gamma".length);
 });
+
+test("input buffer moves between multiline rows preserving column", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "alpha\nbeta gamma\nxy") buffer.insertChar(ch);
+  buffer.moveStart();
+  for (let i = 0; i < "alpha\nbeta ".length; i++) buffer.moveRight();
+
+  buffer.moveLineUp();
+  assert.equal(buffer.cursorPos, "alpha".length);
+
+  buffer.moveLineDown();
+  assert.equal(buffer.cursorPos, "alpha\nbeta ".length);
+
+  buffer.moveLineDown();
+  assert.equal(buffer.cursorPos, "alpha\nbeta gamma\nxy".length);
+});
+
+test("input buffer line movement no-ops at first and last row", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "one\ntwo") buffer.insertChar(ch);
+
+  buffer.moveStart();
+  buffer.moveLineUp();
+  assert.equal(buffer.cursorPos, 0);
+
+  buffer.moveEnd();
+  buffer.moveLineDown();
+  assert.equal(buffer.cursorPos, "one\ntwo".length);
+});

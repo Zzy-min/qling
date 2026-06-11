@@ -398,6 +398,12 @@ export class StreamUI {
         } else if (seq === "\x1b[B") {
           partial = "";
           this.handleHistoryDown();
+        } else if (seq === "\x1b[1;3A" || seq === "\x1b[1;5A" || seq === "\x1b[5A") {
+          partial = "";
+          this.handleLineUp();
+        } else if (seq === "\x1b[1;3B" || seq === "\x1b[1;5B" || seq === "\x1b[5B") {
+          partial = "";
+          this.handleLineDown();
         } else if (seq === "\x1bd" || seq === "\x1b[3;5~" || seq === "\x1b[3;3~") {
           partial = "";
           this.handleAltD();
@@ -573,6 +579,16 @@ export class StreamUI {
 
   private handleWordRight(): void {
     this.input.moveWordRight();
+    this.syncCursor();
+  }
+
+  private handleLineUp(): void {
+    this.input.moveLineUp();
+    this.syncCursor();
+  }
+
+  private handleLineDown(): void {
+    this.input.moveLineDown();
     this.syncCursor();
   }
 
