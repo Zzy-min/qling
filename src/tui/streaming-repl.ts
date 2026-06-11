@@ -205,8 +205,8 @@ export class StreamingREPL {
       setImmediatePrompt: (prompt: string) => {
         this.immediatePrompt = prompt;
       },
-      writeLine: (line = "") => console.log(line),
-      writeError: (line = "") => console.error(line),
+      writeLine: (line = "") => this.ui.appendOutput(line),
+      writeError: (line = "") => this.ui.appendError(line),
     };
   }
 

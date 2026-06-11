@@ -715,6 +715,13 @@ export class StreamUI {
     process.stdout.write("\n" + icon + " " + label + "  " + S.d(text));
   }
 
+  appendOutput(text: string): void {
+    const lines = text.split("\n");
+    for (const line of lines) {
+      process.stdout.write(line.trim() ? "\n" + S.b("› ") + line : "\n");
+    }
+  }
+
   appendRepair(reason: string, action: string, retryCount: number): void {
     process.stdout.write("\n" + S.y("[repair]"));
     process.stdout.write("\n  " + S.d("原因:") + " " + S.r(reason));

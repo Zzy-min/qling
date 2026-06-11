@@ -40,10 +40,14 @@ function createAgent(stateDir) {
 function createUiRecorder() {
   const prompts = [];
   const validations = [];
+  const outputs = [];
+  const errors = [];
   let statusLine = null;
   return {
     prompts,
     validations,
+    outputs,
+    errors,
     setStatusLine: (line) => {
       statusLine = line;
     },
@@ -53,7 +57,12 @@ function createUiRecorder() {
     appendValidation: (_status, text) => {
       validations.push(String(text));
     },
-    appendError: () => {},
+    appendOutput: (text = "") => {
+      outputs.push(String(text));
+    },
+    appendError: (text = "") => {
+      errors.push(String(text));
+    },
     setStatusLineEnabled: () => {},
   };
 }
@@ -404,6 +413,58 @@ test("streaming repl does not persist slash control commands to input history", 
     assert.deepEqual(seen, []);
     assert.equal(await pathExists(join(stateDir, "input-history.json")), false);
   } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl routes slash command output through ui instead of console", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-slash-output-"));
+  const originalLog = console.log;
+  const consoleLines = [];
+  try {
+    console.log = (line = "") => {
+      consoleLines.push(String(line));
+    };
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+    repl.scheduler = {
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async () => {};
+
+    await repl.handleUserInput("/sessions");
+
+    assert.deepEqual(consoleLines, []);
+    assert.equal(ui.outputs.some((line) => /已保存会话|\(无\)/.test(line)), true);
+  } finally {
+    console.log = originalLog;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl routes slash command errors through ui instead of console", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-slash-error-"));
+  const originalError = console.error;
+  const consoleLines = [];
+  try {
+    console.error = (line = "") => {
+      consoleLines.push(String(line));
+    };
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+
+    repl.createSlashContext().writeError("slash error line");
+
+    assert.deepEqual(consoleLines, []);
+    assert.deepEqual(ui.errors, ["slash error line"]);
+  } finally {
+    console.error = originalError;
     await rm(stateDir, { recursive: true, force: true });
   }
 });
