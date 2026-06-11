@@ -1010,6 +1010,7 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /Ctrl\+L/);
   assert.match(joined, /不丢弃正在编辑的内容/);
   assert.match(joined, /Ctrl\+D/);
+  assert.match(joined, /Esc/);
   assert.match(joined, /Home \/ End/);
   assert.match(joined, /Paste/);
   assert.match(joined, /不会自动发送/);

@@ -330,6 +330,11 @@ export class StreamUI {
 
     this.dataHandler = (chunk: string) => {
       if (!this.running) return;
+      if (chunk === "\x1b") {
+        partial = "";
+        return;
+      }
+
       for (const ch of chunk) {
         if (!partial && ch === "\x1b") {
           partial = ch;

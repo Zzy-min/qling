@@ -291,6 +291,28 @@ test("stream ui dispatches ctrl+o from raw stdin without submitting", async () =
   });
 });
 
+test("stream ui bare escape does not pollute following input", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b");
+      dataHandler("[");
+
+      assert.equal(ui.input.value, "[");
+      assert.equal(ui.input.cursorPos, 1);
+      assert.deepEqual(submitted, []);
+
+      ui.running = false;
+    });
+  });
+});
+
 test("stream ui home and end key handlers move cursor without submitting", async () => {
   await withCapturedStdout(async () => {
     const { ui, submitted } = createUi();
