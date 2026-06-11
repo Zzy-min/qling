@@ -377,7 +377,6 @@ export class StreamingREPL {
   }
 
   private async handleQueuedUserInput(cmd: string): Promise<void> {
-    await this.recordLocalInputHistory(cmd);
     const input = cmd.trim();
     if (!input) {
       return;
@@ -403,6 +402,7 @@ export class StreamingREPL {
       return;
     }
 
+    await this.recordLocalInputHistory(input);
     await this.processPrompt(input);
   }
 

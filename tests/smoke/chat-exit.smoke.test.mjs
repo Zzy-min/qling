@@ -68,8 +68,7 @@ test("chat smoke: exit command triggers graceful shutdown", async () => {
     assert.equal(code, 0, `unexpected exit code: ${code}; stderr=${stderr.slice(0, 500)}`);
 
     const historyPath = join(stateDir, "input-history.json");
-    assert.equal(existsSync(historyPath), true);
-    assert.deepEqual(JSON.parse(readFileSync(historyPath, "utf8")), ["exit"]);
+    assert.equal(existsSync(historyPath), false);
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }

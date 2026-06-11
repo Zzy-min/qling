@@ -1,10 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { StreamingREPL } from "../../dist/tui/streaming-repl.js";
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function deferred() {
   let resolve;
@@ -340,6 +349,87 @@ test("streaming repl immediate queue clear removes pending input without leaking
     await Promise.all([active, pending]);
 
     assert.deepEqual(seen, ["active private prompt"]);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl does not persist queue control commands to input history", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-history-control-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    const seen = [];
+    repl.ui = ui;
+    repl.scheduler = {
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async (input) => {
+      seen.push(input);
+    };
+
+    await repl.handleUserInput("/queue status");
+
+    assert.deepEqual(seen, []);
+    assert.equal(await pathExists(join(stateDir, "input-history.json")), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl does not persist slash control commands to input history", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-history-slash-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    const seen = [];
+    repl.ui = ui;
+    repl.scheduler = {
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async (input) => {
+      seen.push(input);
+    };
+
+    await repl.handleUserInput("/sessions");
+
+    assert.deepEqual(seen, []);
+    assert.equal(await pathExists(join(stateDir, "input-history.json")), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl persists real prompts to input history", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-history-prompt-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    const seen = [];
+    repl.ui = ui;
+    repl.scheduler = {
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async (input) => {
+      seen.push(input);
+    };
+
+    await repl.handleUserInput("real user prompt");
+
+    assert.deepEqual(seen, ["real user prompt"]);
+    assert.deepEqual(JSON.parse(await readFile(join(stateDir, "input-history.json"), "utf8")), ["real user prompt"]);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
