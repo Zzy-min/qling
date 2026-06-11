@@ -184,6 +184,39 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
   });
 });
 
+test("stream ui ctrl+o toggles future long tool output without submitting", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    for (const ch of "draft") ui.input.insertChar(ch);
+
+    ui.handleCtrlO();
+
+    assert.equal(ui.input.value, "draft");
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /展开后续工具输出/);
+  });
+});
+
+test("stream ui ctrl+o expands and collapses future long tool output", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+    const longOutput = Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n");
+
+    ui.appendToolSuccess("bash", "long command", longOutput, 100);
+    assert.match(getOutput(), /\.\.\. \+5 lines/);
+    assert.match(getOutput(), /Ctrl\+O to expand/);
+
+    ui.handleCtrlO();
+    ui.appendToolSuccess("bash", "long command", longOutput, 100);
+    assert.match(getOutput(), /line-9/);
+    assert.doesNotMatch(getOutput().split("展开后续工具输出").at(-1), /\.\.\. \+5 lines/);
+
+    ui.handleCtrlO();
+    ui.appendToolSuccess("bash", "long command", longOutput, 100);
+    assert.match(getOutput().split("折叠后续工具输出").at(-1), /\.\.\. \+5 lines/);
+  });
+});
+
 test("stream ui dispatches ctrl+l from raw stdin without submitting", async () => {
   await withCapturedStdout(async (getOutput) => {
     await withCapturedStdinDataHandler(async (getDataHandler) => {
@@ -200,6 +233,28 @@ test("stream ui dispatches ctrl+l from raw stdin without submitting", async () =
       assert.equal(ui.input.value, "draft");
       assert.deepEqual(submitted, []);
       assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui dispatches ctrl+o from raw stdin without submitting", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "draft") ui.input.insertChar(ch);
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x0f");
+
+      assert.equal(ui.input.value, "draft");
+      assert.deepEqual(submitted, []);
+      assert.match(getOutput(), /展开后续工具输出/);
 
       ui.running = false;
     });

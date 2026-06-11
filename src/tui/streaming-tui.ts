@@ -189,6 +189,7 @@ export class StreamUI {
   private progressStartedAt = 0;
   private progressLabel = "agent";
   private lastEmptyCtrlCAt = 0;
+  private expandLongToolOutput = false;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
 
@@ -416,8 +417,8 @@ export class StreamUI {
           partial = "";
           this.handleEnd();
         } else if (seq === "\x0f") {
-          // Ctrl+O — fold toggle (reserved for future expand/collapse)
           partial = "";
+          this.handleCtrlO();
         } else if (seq === "\x0e") {
           // Ctrl+N inserts a newline while Enter still submits.
           partial = "";
@@ -514,6 +515,16 @@ export class StreamUI {
     this.syncCursor();
   }
 
+  private handleCtrlO(): void {
+    this.expandLongToolOutput = !this.expandLongToolOutput;
+    this.backToPrompt();
+    const state = this.expandLongToolOutput ? "展开后续工具输出" : "折叠后续工具输出";
+    process.stdout.write(S.s("长输出：") + DIM(state));
+    process.stdout.write("\n");
+    this.writeInputValue();
+    this.syncCursor();
+  }
+
   private handleCtrlD(): void {
     if (this.input.value) return;
     this.lastEmptyCtrlCAt = 0;
@@ -589,6 +600,14 @@ export class StreamUI {
   private printToolOutput(output: string, status: "success" | "error"): void {
     const lines = output.split("\n");
     const isLong = lines.length > 12;
+    if (isLong && this.expandLongToolOutput) {
+      for (const line of lines) {
+        process.stdout.write("  " + DIM(line) + "\n");
+      }
+      const expandedMsg = "... " + lines.length + " lines total  " + S.d("(Ctrl+O to collapse future long output)");
+      process.stdout.write("  " + DIM(expandedMsg) + "\n");
+      return;
+    }
     const collapsed = collapseLines(lines, 8, 2);
     for (const line of collapsed.top) {
       process.stdout.write("  " + DIM(line) + "\n");
