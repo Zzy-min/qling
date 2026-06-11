@@ -62,6 +62,53 @@ test("input buffer history restores multiline entries", () => {
   assert.equal(buffer.value, "");
 });
 
+test("input buffer restores unsent draft after history navigation", () => {
+  const buffer = new InputBuffer(["first", "second"]);
+  for (const ch of "draft prompt") buffer.insertChar(ch);
+
+  buffer.historyUp();
+  assert.equal(buffer.value, "second");
+
+  buffer.historyUp();
+  assert.equal(buffer.value, "first");
+
+  buffer.historyDown();
+  assert.equal(buffer.value, "second");
+
+  buffer.historyDown();
+  assert.equal(buffer.value, "draft prompt");
+  assert.equal(buffer.cursorPos, "draft prompt".length);
+});
+
+test("input buffer restores multiline draft and cursor position", () => {
+  const buffer = new InputBuffer(["previous"]);
+  for (const ch of "alpha\nbeta") buffer.insertChar(ch);
+  buffer.moveLeft();
+  buffer.moveLeft();
+
+  buffer.historyUp();
+  assert.equal(buffer.value, "previous");
+
+  buffer.historyDown();
+  assert.equal(buffer.value, "alpha\nbeta");
+  assert.equal(buffer.cursorPos, "alpha\nbe".length);
+});
+
+test("input buffer restores draft after history search navigation", () => {
+  const buffer = new InputBuffer(["npm run build", "npm test"]);
+  for (const ch of "run") buffer.insertChar(ch);
+
+  assert.equal(buffer.searchHistory(), true);
+  assert.equal(buffer.value, "npm run build");
+
+  buffer.historyDown();
+  assert.equal(buffer.value, "npm test");
+
+  buffer.historyDown();
+  assert.equal(buffer.value, "run");
+  assert.equal(buffer.cursorPos, "run".length);
+});
+
 test("input buffer searches most recent matching history entry", () => {
   const buffer = new InputBuffer();
   for (const ch of "npm run build") buffer.insertChar(ch);

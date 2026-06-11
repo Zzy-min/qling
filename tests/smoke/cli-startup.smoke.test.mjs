@@ -868,6 +868,7 @@ test("cli startup smoke: chinese shortcuts alias exits with code 0 and prints lo
   assert.match(result.stdout, /Home \/ End/);
   assert.match(result.stdout, /Paste/);
   assert.match(result.stdout, /不会自动发送/);
+  assert.match(result.stdout, /恢复未发送草稿/);
   assert.match(result.stdout, /只作用于本地 TUI 输入缓冲/);
 });
 

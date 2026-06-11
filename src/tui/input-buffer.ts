@@ -3,6 +3,8 @@ export class InputBuffer {
   cursorPos = 0;
   private history: string[] = [];
   private historyIdx = -1;
+  private historyDraft: string | null = null;
+  private historyDraftCursorPos = 0;
 
   constructor(initialHistory: string[] = []) {
     this.setHistory(initialHistory);
@@ -11,6 +13,7 @@ export class InputBuffer {
   setHistory(entries: string[]): void {
     this.history = entries.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim());
     this.historyIdx = this.history.length;
+    this.clearHistoryDraft();
   }
 
   getHistory(): string[] {
@@ -108,6 +111,7 @@ export class InputBuffer {
 
   historyUp(): void {
     if (this.historyIdx > 0) {
+      this.saveHistoryDraft();
       this.historyIdx--;
       this.value = this.history[this.historyIdx] ?? "";
       this.cursorPos = this.value.length;
@@ -120,7 +124,8 @@ export class InputBuffer {
       this.value = this.history[this.historyIdx] ?? "";
     } else {
       this.historyIdx = this.history.length;
-      this.value = "";
+      this.restoreHistoryDraft();
+      return;
     }
     this.cursorPos = this.value.length;
   }
@@ -137,6 +142,7 @@ export class InputBuffer {
     for (let i = this.history.length - 1; i >= 0; i--) {
       const entry = this.history[i] ?? "";
       if (entry.includes(query)) {
+        this.saveHistoryDraft();
         this.historyIdx = i;
         this.value = entry;
         this.cursorPos = entry.length;
@@ -150,6 +156,8 @@ export class InputBuffer {
   clear(): void {
     this.value = "";
     this.cursorPos = 0;
+    this.historyIdx = this.history.length;
+    this.clearHistoryDraft();
   }
 
   submit(): string | null {
@@ -159,5 +167,22 @@ export class InputBuffer {
     this.historyIdx = this.history.length;
     this.clear();
     return cmd;
+  }
+
+  private saveHistoryDraft(): void {
+    if (this.historyIdx !== this.history.length || this.historyDraft !== null) return;
+    this.historyDraft = this.value;
+    this.historyDraftCursorPos = this.cursorPos;
+  }
+
+  private restoreHistoryDraft(): void {
+    this.value = this.historyDraft ?? "";
+    this.cursorPos = this.historyDraft === null ? this.value.length : this.historyDraftCursorPos;
+    this.clearHistoryDraft();
+  }
+
+  private clearHistoryDraft(): void {
+    this.historyDraft = null;
+    this.historyDraftCursorPos = 0;
   }
 }
