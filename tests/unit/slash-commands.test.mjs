@@ -1002,6 +1002,8 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /Alt\+↑\/↓/);
   assert.match(joined, /按列上下移动/);
   assert.match(joined, /按词/);
+  assert.match(joined, /Delete/);
+  assert.match(joined, /删除光标后的一个字符/);
   assert.match(joined, /Ctrl\+U/);
   assert.match(joined, /Ctrl\+K/);
   assert.match(joined, /Ctrl\+W/);

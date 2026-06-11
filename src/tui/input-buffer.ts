@@ -112,6 +112,11 @@ export class InputBuffer {
     this.value = this.value.slice(0, this.cursorPos);
   }
 
+  deleteAfterCursorChar(): void {
+    if (this.cursorPos >= this.value.length) return;
+    this.value = this.value.slice(0, this.cursorPos) + this.value.slice(this.cursorPos + 1);
+  }
+
   deleteWordBeforeCursor(): void {
     if (this.cursorPos <= 0) return;
 

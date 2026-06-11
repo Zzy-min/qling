@@ -299,3 +299,20 @@ test("input buffer line movement no-ops at first and last row", () => {
   buffer.moveLineDown();
   assert.equal(buffer.cursorPos, "one\ntwo".length);
 });
+
+test("input buffer deletes character after cursor", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "abc") buffer.insertChar(ch);
+  buffer.moveStart();
+  buffer.moveRight();
+
+  buffer.deleteAfterCursorChar();
+
+  assert.equal(buffer.value, "ac");
+  assert.equal(buffer.cursorPos, 1);
+
+  buffer.moveEnd();
+  buffer.deleteAfterCursorChar();
+  assert.equal(buffer.value, "ac");
+  assert.equal(buffer.cursorPos, 2);
+});

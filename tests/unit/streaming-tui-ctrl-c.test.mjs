@@ -179,6 +179,21 @@ test("stream ui alt+d deletes next word without submitting", async () => {
   });
 });
 
+test("stream ui delete key deletes next character without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "abc") ui.input.insertChar(ch);
+    ui.input.moveStart();
+    ui.input.moveRight();
+
+    ui.handleDelete();
+
+    assert.equal(ui.input.value, "ac");
+    assert.equal(ui.input.cursorPos, 1);
+    assert.deepEqual(submitted, []);
+  });
+});
+
 test("stream ui ctrl+l clears screen and redraws without losing input", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
@@ -423,6 +438,30 @@ test("stream ui dispatches alt+d and ctrl+delete escape sequences", async () => 
 
       dataHandler("\x1b[3;5~");
       assert.equal(ui.input.value, "  gamma");
+      assert.deepEqual(submitted, []);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui dispatches delete escape sequence", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "abc") ui.input.insertChar(ch);
+      ui.input.moveStart();
+      ui.input.moveRight();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[3~");
+
+      assert.equal(ui.input.value, "ac");
+      assert.equal(ui.input.cursorPos, 1);
       assert.deepEqual(submitted, []);
 
       ui.running = false;
