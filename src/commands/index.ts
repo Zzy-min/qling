@@ -12,6 +12,7 @@ import { loopCommand } from "./loop.js";
 import { tasksCommand } from "./tasks.js";
 import { sessionsCommand } from "./sessions.js";
 import { resumeCommand } from "./resume.js";
+import { checkpointCommand } from "./checkpoint.js";
 import { permissionsCommand } from "./permissions.js";
 import { statuslineCommand } from "./statusline.js";
 import { doctorCommand } from "./doctor.js";
@@ -34,6 +35,7 @@ export const COMMANDS: SlashCommand[] = [
   helpCommand,
   sessionsCommand,
   resumeCommand,
+  checkpointCommand,
   clearCommand,
   statusCommand,
   skillCommand,

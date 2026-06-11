@@ -58,6 +58,17 @@ const TOPICS: HelpTopic[] = [
     boundary: "读取本地运行时快照与配置；成本为本地估算，不调用模型、不联网。",
   },
   {
+    id: "checkpoint",
+    title: "本地会话检查点",
+    summary: "手动保存当前会话快照，便于长任务或高风险改动前建立恢复点。",
+    aliases: ["checkpoint", "/checkpoint", "检查点", "/检查点"],
+    slashUsage: "/checkpoint [name]",
+    cliUsage: "{bin} checkpoint [name]",
+    slashExamples: ["/checkpoint", "/checkpoint before-refactor", "/检查点 发布前"],
+    cliExamples: ["{bin} checkpoint", "{bin} checkpoint before-refactor", "{bin} 检查点 发布前"],
+    boundary: "只写入本地 session 快照；不读取无关会话正文、不调用模型、不联网、不上传。",
+  },
+  {
     id: "shortcuts",
     title: "TUI 输入快捷键",
     summary: "查看本地 TUI 输入编辑、历史搜索、队列和粘贴相关快捷键。",

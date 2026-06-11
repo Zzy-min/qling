@@ -93,6 +93,7 @@ test("slash help includes loop/tasks/compact", async () => {
   assert.match(joined, /\/goal/);
   assert.match(joined, /\/sessions/);
   assert.match(joined, /\/resume/);
+  assert.match(joined, /\/checkpoint/);
   assert.match(joined, /\/permissions/);
   assert.match(joined, /\/permissions explain/);
   assert.match(joined, /\/statusline/);
@@ -114,6 +115,18 @@ test("slash help includes loop/tasks/compact", async () => {
   assert.match(joined, /\/memory practices/);
   assert.match(joined, /\/memory graph/);
   assert.match(joined, /\/记忆/);
+});
+
+test("slash checkpoint help topic shows local-only boundary", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/help checkpoint", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /Topic\s*: checkpoint/);
+  assert.match(joined, /Usage\s*: \/checkpoint \[name\]/);
+  assert.match(joined, /本地/);
+  assert.match(joined, /不调用模型/);
 });
 
 test("slash help topic shows focused local command help", async () => {
@@ -1705,4 +1718,47 @@ test("slash resume target delegates to session switcher", async () => {
   assert.equal(handled, true);
   assert.equal(targetSeen, "session-456");
   assert.match(lines.join("\n"), /session-456/);
+});
+
+test("slash checkpoint saves named local session", async () => {
+  let savedName = null;
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      saveSession: async (name) => {
+        savedName = name;
+        return `C:\\runtime\\sessions\\${name}.json`;
+      },
+      getSessionStats: () => ({ sessionId: "session-checkpoint", turnCount: 7, tokens: 2048, compactions: 2 }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/checkpoint before-refactor", ctx);
+
+  assert.equal(handled, true);
+  assert.equal(savedName, "before-refactor");
+  const joined = lines.join("\n");
+  assert.match(joined, /会话检查点|checkpoint/i);
+  assert.match(joined, /before-refactor\.json/);
+  assert.match(joined, /session-checkpoint/);
+  assert.match(joined, /Turns\s*: 7/);
+  assert.match(joined, /Compactions\s*: 2/);
+});
+
+test("slash chinese checkpoint alias falls back to default checkpoint API", async () => {
+  let checkpointCalled = false;
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      checkpointSession: async () => {
+        checkpointCalled = true;
+        return "C:\\runtime\\sessions\\session-default.json";
+      },
+      getSessionStats: () => ({ sessionId: "session-default", turnCount: 1, tokens: 12, compactions: 0 }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/检查点", ctx);
+
+  assert.equal(handled, true);
+  assert.equal(checkpointCalled, true);
+  assert.match(lines.join("\n"), /session-default\.json/);
 });
