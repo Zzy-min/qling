@@ -17,6 +17,17 @@ function getConversationMessages(context: SlashCommandContext): Message[] {
   return messages.filter((message: Message) => message.role === "user" || message.role === "assistant");
 }
 
+function getExistingMemoryContents(memoryStore: any): Set<string> {
+  if (typeof memoryStore.exportPersisted !== "function") return new Set();
+  const entries = memoryStore.exportPersisted();
+  if (!Array.isArray(entries)) return new Set();
+  return new Set(
+    entries
+      .map((entry) => typeof entry?.content === "string" ? entry.content : null)
+      .filter((content): content is string => Boolean(content))
+  );
+}
+
 export const dreamCommand: SlashCommand = {
   name: "/dream",
   aliases: ["/记梦", "/沉淀"],
@@ -37,13 +48,15 @@ export const dreamCommand: SlashCommand = {
       { turnCount: Math.max(transcript.length, count), transcript },
       { enabled: true, turnThreshold: 1, transcriptWindow: count }
     );
+    const existingContents = getExistingMemoryContents(memoryStore);
+    const newMemories = memories.filter((memory) => !existingContents.has(memory));
 
-    if (memories.length === 0) {
+    if (newMemories.length === 0) {
       context.writeLine("dream: 没有新的本地记忆候选；未写入、不调用模型、不联网。");
       return;
     }
 
-    for (const memory of memories) {
+    for (const memory of newMemories) {
       memoryStore.add(memory, "manual-dream", 0.7);
     }
     if (typeof memoryStore.compactPersisted === "function") {
@@ -51,7 +64,7 @@ export const dreamCommand: SlashCommand = {
     }
     await memoryStore.saveToDisk();
 
-    context.writeLine(`dream: 已沉淀 ${memories.length} 条本地记忆。`);
+    context.writeLine(`dream: 已沉淀 ${newMemories.length} 条本地记忆。`);
     context.writeLine("边界: 未输出记忆正文；只读取当前 user/assistant 消息；不调用模型、不联网。");
   },
 };

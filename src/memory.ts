@@ -561,9 +561,9 @@ export async function extractDreamMemories(
   const combined = recent.join("\n---\n");
 
   const patterns = [
-    /(?:记住|记得|重要|不要忘记)[：:](.+)/gi,
-    /(?:项目|技术栈|框架)[：:](\S+)/gi,
-    /(?:工作目录)[：:](\S+)/gi,
+    /(?:记住|记得|重要|不要忘记)[：:]\s*(.+)/gi,
+    /(?:项目|技术栈|框架)[：:]\s*(\S+)/gi,
+    /(?:工作目录)[：:]\s*(\S+)/gi,
     /(?:使用|调用)[：:]\s*(\S+)/gi,
     /([/\.a-zA-Z0-9_-]+\.(?:ts|js|py|md|json|yml|yaml|sh))/g,
   ];

@@ -568,6 +568,66 @@ test("slash dream reports no local candidates without writing memory", async () 
   assert.match(lines.join("\n"), /没有新的本地记忆|no new/i);
 });
 
+test("slash dream skips duplicate local memories without saving", async () => {
+  const added = [];
+  let saved = false;
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getMessagesSnapshot: () => [
+        { role: "user", content: "记住: DREAM_DUPLICATE_MEMORY" },
+      ],
+      getMemoryStore: () => ({
+        exportPersisted: () => [{ content: "DREAM_DUPLICATE_MEMORY", source: "manual-dream" }],
+        add: (content, source, importance) => added.push({ content, source, importance }),
+        compactPersisted: () => {},
+        saveToDisk: async () => {
+          saved = true;
+        },
+      }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/dream", ctx);
+
+  assert.equal(handled, true);
+  assert.deepEqual(added, []);
+  assert.equal(saved, false);
+  const joined = lines.join("\n");
+  assert.match(joined, /没有新的本地记忆|no new/i);
+  assert.doesNotMatch(joined, /DREAM_DUPLICATE_MEMORY/);
+});
+
+test("slash dream writes only new memories when some candidates already exist", async () => {
+  const added = [];
+  let saved = false;
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getMessagesSnapshot: () => [
+        { role: "user", content: "记住: DREAM_DUPLICATE_MEMORY" },
+        { role: "assistant", content: "工作目录: C:\\repo\\new-dream-path" },
+      ],
+      getMemoryStore: () => ({
+        exportPersisted: () => [{ content: "DREAM_DUPLICATE_MEMORY", source: "manual-dream" }],
+        add: (content, source, importance) => added.push({ content, source, importance }),
+        compactPersisted: () => {},
+        saveToDisk: async () => {
+          saved = true;
+        },
+      }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/dream 8", ctx);
+
+  assert.equal(handled, true);
+  assert.deepEqual(added, [{ content: "C:\\repo\\new-dream-path", source: "manual-dream", importance: 0.7 }]);
+  assert.equal(saved, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /1/);
+  assert.doesNotMatch(joined, /DREAM_DUPLICATE_MEMORY/);
+  assert.doesNotMatch(joined, /new-dream-path/);
+});
+
 test("slash distill lists local distilled practices without reading sessions", async () => {
   await withTempDir(async (root) => {
     await mkdir(join(root, "memory"), { recursive: true });
