@@ -36,6 +36,8 @@ export const HELP_LINES = [
   "/memory practices [count] - 查看本地蒸馏实践摘要",
   "/memory graph [count]   - 查看本地知识图谱节点摘要",
   "/memory show <id>       - 查看指定本地记忆详情",
+  "/dream [count], /沉淀    - 从当前会话沉淀本地记忆",
+  "/distill [count], /蒸馏  - 查看本地蒸馏实践摘要",
   "/storage, /存储         - 查看本地数据存储占用",
   "/mcp, /外部工具         - 查看本地 MCP server 配置摘要",
   "/hooks, /钩子           - 查看本地 hooks/guard 配置摘要",

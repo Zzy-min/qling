@@ -506,6 +506,111 @@ test("slash memory chinese practices alias lists local distilled practices", asy
   });
 });
 
+test("slash dream extracts current conversation memories locally without printing bodies", async () => {
+  const added = [];
+  let saved = false;
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getMessagesSnapshot: () => [
+        { role: "user", content: "记住: DREAM_SECRET_DO_NOT_PRINT" },
+        { role: "assistant", content: "已记录这个本地偏好。" },
+        { role: "tool", content: "记住: TOOL_SECRET_SHOULD_NOT_BE_READ" },
+      ],
+      getMemoryStore: () => ({
+        add: (content, source, importance) => added.push({ content, source, importance }),
+        compactPersisted: () => {},
+        saveToDisk: async () => {
+          saved = true;
+        },
+      }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/dream", ctx);
+
+  assert.equal(handled, true);
+  assert.equal(added.length, 1);
+  assert.equal(added[0].content, "DREAM_SECRET_DO_NOT_PRINT");
+  assert.equal(added[0].source, "manual-dream");
+  assert.equal(added[0].importance, 0.7);
+  assert.equal(saved, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /dream/i);
+  assert.match(joined, /1/);
+  assert.doesNotMatch(joined, /DREAM_SECRET_DO_NOT_PRINT/);
+  assert.doesNotMatch(joined, /TOOL_SECRET_SHOULD_NOT_BE_READ/);
+});
+
+test("slash dream reports no local candidates without writing memory", async () => {
+  const added = [];
+  let saved = false;
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getMessagesSnapshot: () => [
+        { role: "user", content: "普通对话，没有可沉淀模式" },
+        { role: "assistant", content: "普通回答" },
+      ],
+      getMemoryStore: () => ({
+        add: (content, source, importance) => added.push({ content, source, importance }),
+        compactPersisted: () => {},
+        saveToDisk: async () => {
+          saved = true;
+        },
+      }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/dream", ctx);
+
+  assert.equal(handled, true);
+  assert.deepEqual(added, []);
+  assert.equal(saved, false);
+  assert.match(lines.join("\n"), /没有新的本地记忆|no new/i);
+});
+
+test("slash distill lists local distilled practices without reading sessions", async () => {
+  await withTempDir(async (root) => {
+    await mkdir(join(root, "memory"), { recursive: true });
+    await mkdir(join(root, "sessions"), { recursive: true });
+    await writeFile(join(root, "sessions", "session.json"), "SECRET_SLASH_DISTILL_SESSION_BODY", "utf8");
+
+    const Database = (await import("better-sqlite3")).default;
+    const db = new Database(join(root, "memory", "cognitive_knowledge.db"));
+    try {
+      db.exec(`
+        CREATE TABLE distilled_practices (
+          id TEXT PRIMARY KEY,
+          task_pattern TEXT NOT NULL,
+          action_json TEXT NOT NULL,
+          context_json TEXT NOT NULL,
+          confidence REAL DEFAULT 1.0,
+          hit_count INTEGER DEFAULT 1,
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO distilled_practices (id, task_pattern, action_json, context_json, confidence, hit_count, created_at)
+        VALUES ('prac_distill_slash', 'distill practice', '["npm test"]', '["src/commands/distill.ts"]', 0.85, 2, 4000);
+      `);
+    } finally {
+      db.close();
+    }
+
+    const { ctx, lines } = createContext({
+      agentLoop: {
+        getRuntimeRootDir: () => root,
+      },
+    });
+
+    const handled = await handleSlashCommand("/distill 5", ctx);
+
+    assert.equal(handled, true);
+    const joined = lines.join("\n");
+    assert.match(joined, /本地蒸馏实践/);
+    assert.match(joined, /prac_distill_slash/);
+    assert.match(joined, /distill practice/);
+    assert.doesNotMatch(joined, /SECRET_SLASH_DISTILL_SESSION_BODY/);
+  });
+});
+
 test("slash memory graph lists local kg nodes without reading sessions", async () => {
   await withTempDir(async (root) => {
     await mkdir(join(root, "memory"), { recursive: true });
