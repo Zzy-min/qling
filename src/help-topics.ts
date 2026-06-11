@@ -65,7 +65,7 @@ const TOPICS: HelpTopic[] = [
     slashUsage: "/checkpoint [name]",
     cliUsage: "{bin} checkpoint [name]",
     slashExamples: ["/checkpoint", "/checkpoint before-refactor", "/检查点 发布前"],
-    cliExamples: ["{bin} checkpoint", "{bin} checkpoint before-refactor", "{bin} 检查点 发布前"],
+    cliExamples: ["{bin} checkpoint", "{bin} checkpoint before-refactor", "{bin} checkpoint release --session session-123", "{bin} 检查点 发布前"],
     boundary: "只写入本地 session 快照；不读取无关会话正文、不调用模型、不联网、不上传。",
   },
   {

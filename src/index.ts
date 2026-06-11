@@ -35,6 +35,7 @@ import { buildDoctorReport, formatDoctorReport } from "./doctor.js";
 import { buildLocalStorageReport, formatLocalStorageReport } from "./local-storage-report.js";
 import { formatSessionExportIndex, listSessionExportFiles, parseSessionExportCount } from "./session-export-index.js";
 import { formatSessionListReport, listLocalSessions, parseSessionListCount } from "./session-list-report.js";
+import { createLocalSessionCheckpoint, formatLocalSessionCheckpointResult, parseLocalSessionCheckpointArgs } from "./session-checkpoint-report.js";
 import { cancelLocalSessionTask, formatCanceledSessionTask, formatSessionTaskReport, listLocalSessionTasks, parseSessionTaskCount } from "./session-task-report.js";
 import { clearLocalSessionGoal, formatSessionGoalMutation, formatSessionGoalReport, listLocalSessionGoals, setLocalSessionGoal } from "./session-goal-report.js";
 import { buildLocalMemoryReport, findLocalMemoryEntry, formatLocalMemoryEntry, formatLocalMemoryGraphReport, formatLocalMemoryPracticesReport, formatLocalMemoryReport, formatLocalMemorySearchReport, listLocalMemoryGraph, listLocalMemoryPractices, parseMemoryReportCount, parseMemorySearchArgs, searchLocalMemoryEntries } from "./memory-report.js";
@@ -454,6 +455,20 @@ async function main() {
     });
     console.log(formatSessionListReport(report).join("\n"));
     return;
+  }
+
+  if (decision.mode === "checkpoint") {
+    try {
+      const result = await createLocalSessionCheckpoint(
+        loaded.config.runtime.file_state_dir,
+        parseLocalSessionCheckpointArgs(decision.subArgs)
+      );
+      console.log(formatLocalSessionCheckpointResult(result).join("\n"));
+      return;
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
   }
 
   if (decision.mode === "tasks") {

@@ -1,10 +1,10 @@
 import type { CliGlobalOptions } from "../config.js";
 import { formatFocusedHelp } from "../help-topics.js";
 
-export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks";
+export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks";
 
-const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
+const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "诊断": "doctor",
@@ -12,6 +12,7 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "存储": "storage",
   "导出列表": "exports",
   "会话列表": "sessions",
+  "检查点": "checkpoint",
   "任务": "tasks",
   "目标": "goal",
   "隐私": "privacy",
@@ -474,6 +475,7 @@ ${binName} - 通用 CLI Agent
   ${binName} storage                  # 只读盘点本地 state/sessions/exports/cache
   ${binName} exports [count]          # 查看本地 Markdown 会话导出
   ${binName} sessions [count]         # 查看本地保存的会话快照
+  ${binName} checkpoint [name]        # 复制最近会话为本地恢复检查点
   ${binName} tasks list [count]       # 查看本地持久化 loop/daemon 任务
   ${binName} tasks cancel <id>        # 取消本地持久化任务
   ${binName} goal status [session]    # 查看本地 session goal 状态
@@ -537,7 +539,7 @@ ${binName} - 通用 CLI Agent
 兼容别名:
   ${binName} --tui, --repl, --once "task", "task"
 中文别名:
-  ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 记忆 | 使命 | 代理 | 日志 <id>
+  ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 检查点 [name] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 记忆 | 使命 | 代理 | 日志 <id>
 
 模式冲突示例:
   ${binName} repl --once "x"          # Error: [CLI_INVALID_MODE_COMBINATION]

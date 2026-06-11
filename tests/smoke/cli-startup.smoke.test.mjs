@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -286,6 +286,48 @@ test("cli startup smoke: sessions exits with code 0 and prints local session sum
     assert.match(result.stdout, /sid-local/);
     assert.match(result.stdout, /messages=1/);
     assert.doesNotMatch(result.stdout, /SECRET_CLI_SESSION_BODY/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli startup smoke: checkpoint copies latest local session without body leak", () => {
+  const root = mkdtempSync(join(tmpdir(), "qling-cli-checkpoint-"));
+  try {
+    const sessionsDir = join(root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, "session-local.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          name: "session-local",
+          sessionId: "sid-local-checkpoint",
+          workspaceDir: "C:/repo/qling",
+          createdAt: "2026-05-31T00:00:00.000Z",
+          updatedAt: "2026-05-31T00:01:00.000Z",
+          messages: [{ role: "user", content: "SECRET_CLI_CHECKPOINT_BODY" }],
+          turnCount: 4,
+          sessionTokens: 256,
+          compactionCount: 1,
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const result = spawnSync(process.execPath, [ENTRY, "--file-state-dir", root, "checkpoint", "before-refactor"], {
+      encoding: "utf-8",
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /本地会话检查点/);
+    assert.match(result.stdout, /session-local/);
+    assert.match(result.stdout, /before-refactor/);
+    assert.match(result.stdout, /sid-local-checkpoint/);
+    assert.doesNotMatch(result.stdout, /SECRET_CLI_CHECKPOINT_BODY/);
+    assert.equal(existsSync(join(sessionsDir, "before-refactor.json")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

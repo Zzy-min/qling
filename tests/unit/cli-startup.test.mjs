@@ -67,6 +67,8 @@ test("cli: explicit subcommands route correctly", () => {
   const storage = parseCliArgs(["storage"]);
   const exportsList = parseCliArgs(["exports", "2"]);
   const sessions = parseCliArgs(["sessions", "2"]);
+  const checkpoint = parseCliArgs(["checkpoint", "before-refactor"]);
+  const checkpointSession = parseCliArgs(["checkpoint", "manual-save", "--session", "session-123"]);
   const privacy = parseCliArgs(["privacy"]);
   const context = parseCliArgs(["context"]);
   const shortcuts = parseCliArgs(["shortcuts"]);
@@ -115,6 +117,12 @@ test("cli: explicit subcommands route correctly", () => {
   assert.equal(sessions.kind, "ok");
   assert.equal(sessions.mode, "sessions");
   assert.deepEqual(sessions.subArgs, ["2"]);
+  assert.equal(checkpoint.kind, "ok");
+  assert.equal(checkpoint.mode, "checkpoint");
+  assert.deepEqual(checkpoint.subArgs, ["before-refactor"]);
+  assert.equal(checkpointSession.kind, "ok");
+  assert.equal(checkpointSession.mode, "checkpoint");
+  assert.deepEqual(checkpointSession.subArgs, ["manual-save", "--session", "session-123"]);
   assert.equal(privacy.kind, "ok");
   assert.equal(privacy.mode, "privacy");
   assert.equal(context.kind, "ok");
@@ -168,6 +176,7 @@ test("cli: chinese local management aliases route to canonical modes", () => {
   const storage = parseCliArgs(["存储"]);
   const exportsList = parseCliArgs(["导出列表", "2"]);
   const sessions = parseCliArgs(["会话列表", "2"]);
+  const checkpoint = parseCliArgs(["检查点", "发布前"]);
   const privacy = parseCliArgs(["隐私"]);
   const context = parseCliArgs(["上下文"]);
   const shortcuts = parseCliArgs(["快捷键"]);
@@ -200,6 +209,9 @@ test("cli: chinese local management aliases route to canonical modes", () => {
   assert.equal(sessions.kind, "ok");
   assert.equal(sessions.mode, "sessions");
   assert.deepEqual(sessions.subArgs, ["2"]);
+  assert.equal(checkpoint.kind, "ok");
+  assert.equal(checkpoint.mode, "checkpoint");
+  assert.deepEqual(checkpoint.subArgs, ["发布前"]);
   assert.equal(privacy.kind, "ok");
   assert.equal(privacy.mode, "privacy");
   assert.equal(context.kind, "ok");
@@ -367,6 +379,7 @@ test("cli: help text includes subcommands and compatibility hints", () => {
   assert.match(help, /qling storage/);
   assert.match(help, /qling exports \[count\]/);
   assert.match(help, /qling sessions \[count\]/);
+  assert.match(help, /qling checkpoint \[name\]/);
   assert.match(help, /qling privacy/);
   assert.match(help, /qling context/);
   assert.match(help, /qling shortcuts/);
@@ -392,6 +405,7 @@ test("cli: help text includes subcommands and compatibility hints", () => {
   assert.match(help, /存储/);
   assert.match(help, /导出列表/);
   assert.match(help, /会话列表/);
+  assert.match(help, /检查点/);
   assert.match(help, /隐私/);
   assert.match(help, /上下文/);
   assert.match(help, /快捷键/);
@@ -435,4 +449,10 @@ test("cli: help text can focus on a single local topic", () => {
   assert.match(permissionsHelp, /Topic\s*: permissions/);
   assert.match(permissionsHelp, /qling permissions explain <tool>/);
   assert.match(permissionsHelp, /qling 权限 解释 <tool>/);
+
+  const checkpointHelp = buildHelpText("qling", "checkpoint");
+  assert.match(checkpointHelp, /Topic\s*: checkpoint/);
+  assert.match(checkpointHelp, /Usage\s*: qling checkpoint \[name\]/);
+  assert.match(checkpointHelp, /qling checkpoint before-refactor/);
+  assert.match(checkpointHelp, /不调用模型/);
 });
