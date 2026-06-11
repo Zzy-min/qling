@@ -109,6 +109,25 @@ export class InputBuffer {
     this.cursorPos = start;
   }
 
+  deleteWordAfterCursor(): void {
+    if (this.cursorPos >= this.value.length) return;
+
+    let start = this.cursorPos;
+    while (start < this.value.length && /\s/.test(this.value[start] ?? "")) {
+      start++;
+    }
+
+    let end = start;
+    while (end < this.value.length && /\s/.test(this.value[end] ?? "")) {
+      end++;
+    }
+    while (end < this.value.length && !/\s/.test(this.value[end] ?? "")) {
+      end++;
+    }
+
+    this.value = this.value.slice(0, start) + this.value.slice(end);
+  }
+
   historyUp(): void {
     if (this.historyIdx > 0) {
       this.saveHistoryDraft();

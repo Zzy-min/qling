@@ -164,6 +164,21 @@ test("stream ui ctrl+w deletes previous word without submitting", async () => {
   });
 });
 
+test("stream ui alt+d deletes next word without submitting", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+    for (const ch of "npm run build") ui.input.insertChar(ch);
+    ui.input.moveStart();
+    for (let i = 0; i < "npm ".length; i++) ui.input.moveRight();
+
+    ui.handleAltD();
+
+    assert.equal(ui.input.value, "npm  build");
+    assert.equal(ui.input.cursorPos, "npm ".length);
+    assert.deepEqual(submitted, []);
+  });
+});
+
 test("stream ui ctrl+l clears screen and redraws without losing input", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
@@ -343,6 +358,30 @@ test("stream ui dispatches word navigation escape sequences", async () => {
 
       dataHandler("\x1b[1;3C");
       assert.equal(ui.input.cursorPos, "alpha beta gamma".length);
+      assert.deepEqual(submitted, []);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui dispatches alt+d and ctrl+delete escape sequences", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "alpha beta gamma") ui.input.insertChar(ch);
+      ui.input.moveStart();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1bd");
+      assert.equal(ui.input.value, " beta gamma");
+
+      dataHandler("\x1b[3;5~");
+      assert.equal(ui.input.value, "  gamma");
       assert.deepEqual(submitted, []);
 
       ui.running = false;

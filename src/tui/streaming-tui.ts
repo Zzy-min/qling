@@ -398,6 +398,9 @@ export class StreamUI {
         } else if (seq === "\x1b[B") {
           partial = "";
           this.handleHistoryDown();
+        } else if (seq === "\x1bd" || seq === "\x1b[3;5~" || seq === "\x1b[3;3~") {
+          partial = "";
+          this.handleAltD();
         } else if (seq === "\x1bb" || seq === "\x1b[1;3D" || seq === "\x1b[1;5D" || seq === "\x1b[5D") {
           partial = "";
           this.handleWordLeft();
@@ -505,6 +508,11 @@ export class StreamUI {
 
   private handleCtrlW(): void {
     this.input.deleteWordBeforeCursor();
+    this.redrawInput();
+  }
+
+  private handleAltD(): void {
+    this.input.deleteWordAfterCursor();
     this.redrawInput();
   }
 

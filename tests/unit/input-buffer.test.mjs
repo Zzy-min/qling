@@ -211,6 +211,37 @@ test("input buffer delete word respects cursor position", () => {
   assert.equal(buffer.cursorPos, "alpha ".length);
 });
 
+test("input buffer deletes the word after cursor", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "npm run build --watch") buffer.insertChar(ch);
+  buffer.moveStart();
+  for (let i = 0; i < "npm ".length; i++) buffer.moveRight();
+
+  buffer.deleteWordAfterCursor();
+  assert.equal(buffer.value, "npm  build --watch");
+  assert.equal(buffer.cursorPos, "npm ".length);
+
+  buffer.deleteWordAfterCursor();
+  assert.equal(buffer.value, "npm   --watch");
+  assert.equal(buffer.cursorPos, "npm ".length);
+});
+
+test("input buffer delete word after cursor skips whitespace and handles end", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "alpha \n beta") buffer.insertChar(ch);
+  buffer.moveStart();
+  for (let i = 0; i < "alpha".length; i++) buffer.moveRight();
+
+  buffer.deleteWordAfterCursor();
+  assert.equal(buffer.value, "alpha \n ");
+  assert.equal(buffer.cursorPos, "alpha".length);
+
+  buffer.moveEnd();
+  buffer.deleteWordAfterCursor();
+  assert.equal(buffer.value, "alpha \n ");
+  assert.equal(buffer.cursorPos, "alpha \n ".length);
+});
+
 test("input buffer moves left by word across whitespace", () => {
   const buffer = new InputBuffer();
   for (const ch of "alpha beta  gamma") buffer.insertChar(ch);
