@@ -1744,6 +1744,63 @@ test("slash checkpoint saves named local session", async () => {
   assert.match(joined, /Compactions\s*: 2/);
 });
 
+test("slash checkpoint refuses to overwrite existing local session name", async () => {
+  let savedName = null;
+  const { ctx, errors } = createContext({
+    listSavedSessions: async () => [
+      {
+        name: "existing",
+        sessionId: "session-existing",
+        updatedAt: "2026-06-11T00:00:00.000Z",
+        turnCount: 1,
+        messageCount: 2,
+      },
+    ],
+    agentLoop: {
+      saveSession: async (name) => {
+        savedName = name;
+        return `C:\\runtime\\sessions\\${name}.json`;
+      },
+    },
+  });
+
+  const handled = await handleSlashCommand("/checkpoint existing", ctx);
+
+  assert.equal(handled, true);
+  assert.equal(savedName, null);
+  assert.match(errors.join("\n"), /已存在|exists/i);
+  assert.match(errors.join("\n"), /--force/);
+});
+
+test("slash checkpoint force overwrites existing local session name", async () => {
+  let savedName = null;
+  const { ctx, lines, errors } = createContext({
+    listSavedSessions: async () => [
+      {
+        name: "existing",
+        sessionId: "session-existing",
+        updatedAt: "2026-06-11T00:00:00.000Z",
+        turnCount: 1,
+        messageCount: 2,
+      },
+    ],
+    agentLoop: {
+      saveSession: async (name) => {
+        savedName = name;
+        return `C:\\runtime\\sessions\\${name}.json`;
+      },
+      getSessionStats: () => ({ sessionId: "session-checkpoint", turnCount: 7, tokens: 2048, compactions: 2 }),
+    },
+  });
+
+  const handled = await handleSlashCommand("/checkpoint existing --force", ctx);
+
+  assert.equal(handled, true);
+  assert.equal(savedName, "existing");
+  assert.equal(errors.length, 0);
+  assert.match(lines.join("\n"), /existing\.json/);
+});
+
 test("slash chinese checkpoint alias falls back to default checkpoint API", async () => {
   let checkpointCalled = false;
   const { ctx, lines } = createContext({

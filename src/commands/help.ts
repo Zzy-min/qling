@@ -9,7 +9,7 @@ export const HELP_LINES = [
   "/skill [name]           - 查询或挂载技能",
   "/sessions               - 查看最近保存的会话快照",
   "/resume [session|latest] - 恢复最近一次或指定会话",
-  "/checkpoint [name], /检查点 - 保存当前会话为本地恢复检查点",
+  "/checkpoint [name] [--force], /检查点 - 保存当前会话为本地恢复检查点",
   "/clear, /reset          - 清空当前对话上下文",
   "/compact                - 手动触发上下文压缩",
   "/goal [condition|clear] - 设定、查询或清除当前 session 的目标条件",

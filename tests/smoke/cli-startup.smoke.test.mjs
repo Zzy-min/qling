@@ -333,6 +333,63 @@ test("cli startup smoke: checkpoint copies latest local session without body lea
   }
 });
 
+test("cli startup smoke: checkpoint refuses existing name unless forced", () => {
+  const root = mkdtempSync(join(tmpdir(), "qling-cli-checkpoint-guard-"));
+  try {
+    const sessionsDir = join(root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const source = {
+      version: 1,
+      name: "session-local",
+      sessionId: "sid-local-checkpoint-guard",
+      workspaceDir: "C:/repo/qling",
+      createdAt: "2026-05-31T00:00:00.000Z",
+      updatedAt: "2026-05-31T00:01:00.000Z",
+      messages: [{ role: "user", content: "SECRET_CLI_CHECKPOINT_GUARD_BODY" }],
+      turnCount: 4,
+      sessionTokens: 256,
+      compactionCount: 1,
+    };
+    writeFileSync(join(sessionsDir, "session-local.json"), JSON.stringify(source, null, 2), "utf8");
+    writeFileSync(
+      join(sessionsDir, "existing.json"),
+      JSON.stringify(
+        {
+          ...source,
+          name: "existing",
+          sessionId: "sid-existing-checkpoint",
+          messages: [{ role: "assistant", content: "ORIGINAL_EXISTING_BODY" }],
+          updatedAt: "2026-05-30T00:00:00.000Z",
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const denied = spawnSync(process.execPath, [ENTRY, "--file-state-dir", root, "checkpoint", "existing"], {
+      encoding: "utf-8",
+    });
+
+    assert.equal(denied.status, 1);
+    assert.match(denied.stderr, /已存在|exists/i);
+    assert.match(denied.stderr, /--force/);
+    assert.doesNotMatch(denied.stderr, /SECRET_CLI_CHECKPOINT_GUARD_BODY/);
+    assert.doesNotMatch(readFileSync(join(sessionsDir, "existing.json"), "utf8"), /sid-local-checkpoint-guard/);
+
+    const forced = spawnSync(process.execPath, [ENTRY, "--file-state-dir", root, "checkpoint", "existing", "--force"], {
+      encoding: "utf-8",
+    });
+
+    assert.equal(forced.status, 0);
+    assert.match(forced.stdout, /existing/);
+    assert.doesNotMatch(forced.stdout, /SECRET_CLI_CHECKPOINT_GUARD_BODY/);
+    assert.match(readFileSync(join(sessionsDir, "existing.json"), "utf8"), /sid-local-checkpoint-guard/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cli startup smoke: tasks exits with code 0 and prints local task metadata", () => {
   const root = mkdtempSync(join(tmpdir(), "qling-cli-tasks-"));
   try {
