@@ -546,7 +546,7 @@ test("stream ui empty ctrl+d submits exit", async () => {
 });
 
 test("stream ui non-empty ctrl+d does not discard input or submit", async () => {
-  await withCapturedStdout(async () => {
+  await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
     for (const ch of "draft") ui.input.insertChar(ch);
 
@@ -555,6 +555,7 @@ test("stream ui non-empty ctrl+d does not discard input or submit", async () => 
     assert.equal(ui.input.value, "draft");
     assert.equal(ui.input.cursorPos, "draft".length);
     assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /草稿|非空输入|不会退出/);
   });
 });
 

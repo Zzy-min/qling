@@ -553,7 +553,14 @@ export class StreamUI {
   }
 
   private handleCtrlD(): void {
-    if (this.input.value) return;
+    if (this.input.value) {
+      this.backToPrompt();
+      process.stdout.write(S.y("非空输入不会退出，草稿已保留"));
+      process.stdout.write("\n");
+      this.writeInputValue();
+      this.syncCursor();
+      return;
+    }
     this.lastEmptyCtrlCAt = 0;
     if (this.inputCallback) {
       this.inputCallback("exit");
