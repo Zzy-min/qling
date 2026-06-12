@@ -219,6 +219,19 @@ test("slash help shortcuts topic accepts chinese alias", async () => {
   assert.match(joined, /Aliases\s*: \/快捷键/);
 });
 
+test("slash help goal topic advertises explicit status and set subcommands", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/help goal", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /Topic\s*: goal/);
+  assert.match(joined, /\/goal \[status\|set <condition>\|clear\|daemon \.\.\.\]/);
+  assert.match(joined, /\/goal status/);
+  assert.match(joined, /\/goal set 所有测试通过/);
+  assert.match(joined, /\/目标 设置 所有测试通过/);
+});
+
 test("slash shortcuts help flag shows focused help instead of full shortcut table", async () => {
   const { ctx, lines } = createContext();
   const handled = await handleSlashCommand("/shortcuts --help", ctx);
@@ -1465,6 +1478,50 @@ test("slash goal set delegates to goal controller and requests immediate prompt"
   assert.match(lines.join("\n"), /Goal|goal|目标/);
 });
 
+test("slash goal explicit set delegates to goal controller", async () => {
+  let conditionSeen = null;
+  let immediatePrompt = null;
+  const { ctx, lines } = createContext({
+    goalController: {
+      setGoal: async (condition) => {
+        conditionSeen = condition;
+        return { condition, status: "active" };
+      },
+      buildInitialPrompt: (condition) => `目标条件: ${condition}`,
+    },
+    setImmediatePrompt: (prompt) => {
+      immediatePrompt = prompt;
+    },
+  });
+  const handled = await handleSlashCommand("/goal set 所有 auth 测试通过", ctx);
+  assert.equal(handled, true);
+  assert.equal(conditionSeen, "所有 auth 测试通过");
+  assert.equal(immediatePrompt, "目标条件: 所有 auth 测试通过");
+  assert.match(lines.join("\n"), /Goal|goal|目标/);
+});
+
+test("slash goal status is read-only", async () => {
+  let statusCalls = 0;
+  let setCalls = 0;
+  const { ctx, lines } = createContext({
+    goalController: {
+      getGoalStatus: async () => {
+        statusCalls += 1;
+        return { status: "active", condition: "所有测试通过", runner: "session", pending: false };
+      },
+      setGoal: async () => {
+        setCalls += 1;
+        return { status: "active", condition: "status" };
+      },
+    },
+  });
+  const handled = await handleSlashCommand("/goal status", ctx);
+  assert.equal(handled, true);
+  assert.equal(statusCalls, 1);
+  assert.equal(setCalls, 0);
+  assert.match(lines.join("\n"), /所有测试通过/);
+});
+
 test("slash goal clear delegates to goal controller", async () => {
   let cleared = false;
   const { ctx, lines } = createContext({
@@ -1495,6 +1552,39 @@ test("slash goal chinese alias delegates to goal controller", async () => {
   const handled = await handleSlashCommand("/目标 所有 auth 测试通过", ctx);
   assert.equal(handled, true);
   assert.equal(conditionSeen, "所有 auth 测试通过");
+});
+
+test("slash goal chinese explicit subcommands work", async () => {
+  let conditionSeen = null;
+  let statusCalls = 0;
+  const setContext = createContext({
+    goalController: {
+      setGoal: async (condition) => {
+        conditionSeen = condition;
+        return { condition, status: "active" };
+      },
+      buildInitialPrompt: (condition) => `目标条件: ${condition}`,
+    },
+  });
+  const setHandled = await handleSlashCommand("/目标 设置 完成 ci", setContext.ctx);
+  assert.equal(setHandled, true);
+  assert.equal(conditionSeen, "完成 ci");
+
+  const statusContext = createContext({
+    goalController: {
+      getGoalStatus: async () => {
+        statusCalls += 1;
+        return { status: "active", condition: "完成 ci", runner: "session", pending: false };
+      },
+      setGoal: async () => {
+        throw new Error("status must not set a goal");
+      },
+    },
+  });
+  const statusHandled = await handleSlashCommand("/目标 状态", statusContext.ctx);
+  assert.equal(statusHandled, true);
+  assert.equal(statusCalls, 1);
+  assert.match(statusContext.lines.join("\n"), /完成 ci/);
 });
 
 test("slash loop daemon delegates to daemon session api", async () => {

@@ -1,6 +1,9 @@
 import { SlashCommand } from "./types.js";
 
 const CLEAR_ALIASES = new Set(["clear", "stop", "off", "reset", "none", "cancel"]);
+const STATUS_ALIASES = new Set(["status", "show", "list", "状态", "查看", "列表"]);
+const SET_ALIASES = new Set(["set", "设置"]);
+const DAEMON_ALIASES = new Set(["daemon", "durable", "bg"]);
 
 function formatGoalStatus(goal: any): string[] {
   if (!goal) {
@@ -44,6 +47,14 @@ export const goalCommand: SlashCommand = {
     }
 
     const firstArg = args[0].toLowerCase();
+    if (STATUS_ALIASES.has(firstArg)) {
+      const status = await controller.getGoalStatus();
+      for (const line of formatGoalStatus(status)) {
+        context.writeLine(line);
+      }
+      return;
+    }
+
     if (CLEAR_ALIASES.has(firstArg)) {
       const cleared = await controller.clearGoal("user_clear");
       context.writeLine("");
@@ -52,7 +63,7 @@ export const goalCommand: SlashCommand = {
       return;
     }
 
-    if (firstArg === "daemon" || firstArg === "durable" || firstArg === "bg") {
+    if (DAEMON_ALIASES.has(firstArg)) {
       const daemonApi = context.daemonSessionApi;
       if (!daemonApi) {
         context.writeError("❌ 当前会话未启用 daemon session API。请先启动 `qling daemon start`。");
@@ -119,9 +130,10 @@ export const goalCommand: SlashCommand = {
       return;
     }
 
-    const condition = args.join(" ").trim();
+    const conditionArgs = SET_ALIASES.has(firstArg) ? args.slice(1) : args;
+    const condition = conditionArgs.join(" ").trim();
     if (!condition) {
-      context.writeError("❌ 用法: /goal <condition>|clear");
+      context.writeError("❌ 用法: /goal [status|set <condition>|clear|daemon ...]");
       return;
     }
     const stats = typeof (context.agentLoop as any).getSessionStats === "function"
