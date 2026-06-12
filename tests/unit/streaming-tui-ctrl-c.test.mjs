@@ -69,8 +69,8 @@ async function withCapturedStdinDataHandler(fn) {
   }
 }
 
-test("stream ui ctrl+c clears non-empty input without submitting exit", async () => {
-  await withCapturedStdout(async () => {
+test("stream ui ctrl+c clears non-empty input with local restore hint", async () => {
+  await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
 
     ui.input.insertChar("h");
@@ -79,6 +79,8 @@ test("stream ui ctrl+c clears non-empty input without submitting exit", async ()
 
     assert.equal(ui.input.value, "");
     assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /Ctrl\+Z/);
+    assert.match(getOutput(), /恢复|草稿/);
   });
 });
 

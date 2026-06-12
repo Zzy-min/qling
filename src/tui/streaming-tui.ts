@@ -496,7 +496,8 @@ export class StreamUI {
     this.lastClearedDraft = this.input.value;
     this.input.clear();
     this.backToPrompt();
-    process.stdout.write(S.r("^C") + " ");
+    process.stdout.write(S.r("^C") + " " + DIM("草稿已清空，Ctrl+Z 恢复"));
+    process.stdout.write("\n");
     this.writeInputValue();
   }
 
