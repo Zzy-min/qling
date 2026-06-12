@@ -382,8 +382,7 @@ export class StreamingREPL {
       return;
     }
 
-    const normalized = input.toLowerCase();
-    if (normalized === "q" || normalized === "quit" || normalized === "exit") {
+    if (this.isLocalExitCommand(input)) {
       await this.close();
       return;
     }
@@ -404,6 +403,17 @@ export class StreamingREPL {
 
     await this.recordLocalInputHistory(input);
     await this.processPrompt(input);
+  }
+
+  private isLocalExitCommand(input: string): boolean {
+    const normalized = input.trim().toLowerCase();
+    return normalized === "q"
+      || normalized === "quit"
+      || normalized === "exit"
+      || normalized === "/q"
+      || normalized === "/quit"
+      || normalized === "/exit"
+      || normalized === "/退出";
   }
 
   private async restoreStartupSessionIfNeeded(): Promise<SavedSessionSummary | null> {

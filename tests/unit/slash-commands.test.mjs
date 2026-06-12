@@ -1188,6 +1188,9 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /Ctrl\+L/);
   assert.match(joined, /不丢弃正在编辑的内容/);
   assert.match(joined, /Ctrl\+D/);
+  assert.match(joined, /\/exit/);
+  assert.match(joined, /\/退出/);
+  assert.match(joined, /不调用模型、不写入输入历史/);
   assert.match(joined, /Esc/);
   assert.match(joined, /Home \/ End/);
   assert.match(joined, /Paste/);

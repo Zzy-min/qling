@@ -42,12 +42,16 @@ function createUiRecorder() {
   const validations = [];
   const outputs = [];
   const errors = [];
+  let stopped = false;
   let statusLine = null;
   return {
     prompts,
     validations,
     outputs,
     errors,
+    get stopped() {
+      return stopped;
+    },
     setStatusLine: (line) => {
       statusLine = line;
     },
@@ -62,6 +66,9 @@ function createUiRecorder() {
     },
     appendError: (text = "") => {
       errors.push(String(text));
+    },
+    stop: () => {
+      stopped = true;
     },
     setStatusLineEnabled: () => {},
   };
@@ -465,6 +472,64 @@ test("streaming repl routes slash command errors through ui instead of console",
     assert.deepEqual(ui.errors, ["slash error line"]);
   } finally {
     console.error = originalError;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl treats slash exit as local close without prompt processing or history", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-slash-exit-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    const seen = [];
+    repl.ui = ui;
+    repl.scheduler = {
+      stop: async () => {},
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async (input) => {
+      seen.push(input);
+    };
+
+    await repl.handleUserInput("/exit");
+
+    assert.equal(ui.stopped, true);
+    assert.deepEqual(seen, []);
+    assert.deepEqual(ui.errors, []);
+    assert.equal(await pathExists(join(stateDir, "input-history.json")), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl treats chinese slash exit alias as local close", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-slash-exit-cn-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+    repl.scheduler = {
+      stop: async () => {},
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async () => {
+      throw new Error("processPrompt should not run for slash exit");
+    };
+
+    await repl.handleUserInput("/退出");
+
+    assert.equal(ui.stopped, true);
+    assert.deepEqual(ui.errors, []);
+    assert.equal(await pathExists(join(stateDir, "input-history.json")), false);
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
 });
