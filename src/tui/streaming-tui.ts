@@ -571,7 +571,15 @@ export class StreamUI {
   }
 
   private handleHistorySearch(): void {
-    this.input.searchHistory();
+    const matched = this.input.searchHistory();
+    if (!matched) {
+      this.backToPrompt();
+      process.stdout.write(S.y("无匹配历史"));
+      process.stdout.write("\n");
+      this.writeInputValue();
+      this.syncCursor();
+      return;
+    }
     this.redrawInput();
   }
 

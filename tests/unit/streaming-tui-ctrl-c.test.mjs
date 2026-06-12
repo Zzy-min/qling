@@ -557,3 +557,20 @@ test("stream ui non-empty ctrl+d does not discard input or submit", async () => 
     assert.deepEqual(submitted, []);
   });
 });
+
+test("stream ui ctrl+r search miss prints local feedback and keeps draft", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    ui.setHistory(["npm run build", "npm test"]);
+    for (const ch of "deploy") ui.input.insertChar(ch);
+    ui.input.moveLeft();
+    ui.input.moveLeft();
+
+    ui.handleHistorySearch();
+
+    assert.equal(ui.input.value, "deploy");
+    assert.equal(ui.input.cursorPos, "depl".length);
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /无匹配历史|没有匹配/);
+  });
+});
