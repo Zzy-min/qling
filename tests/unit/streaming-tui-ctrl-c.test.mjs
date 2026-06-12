@@ -275,6 +275,52 @@ test("stream ui ctrl+o toggles future long tool output without submitting", asyn
   });
 });
 
+test("stream ui tab on empty input opens local agents view command", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+
+    ui.handleTab();
+
+    assert.equal(ui.input.value, "");
+    assert.deepEqual(submitted, ["/agents"]);
+  });
+});
+
+test("stream ui tab on non-empty input preserves draft with local feedback", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    for (const ch of "draft") ui.input.insertChar(ch);
+
+    ui.handleTab();
+
+    assert.equal(ui.input.value, "draft");
+    assert.equal(ui.input.cursorPos, "draft".length);
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /Tab/);
+    assert.match(getOutput(), /agents|代理|补全|草稿/);
+  });
+});
+
+test("stream ui dispatches tab from raw stdin without inserting tab", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\t");
+
+      assert.equal(ui.input.value, "");
+      assert.deepEqual(submitted, ["/agents"]);
+
+      ui.running = false;
+    });
+  });
+});
+
 test("stream ui ctrl+o expands and collapses future long tool output", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui } = createUi();

@@ -267,7 +267,7 @@ export class StreamUI {
       S.s(this.model) + "    " + S.g("online") + "    " +
       S.y("tools") + " " + S.y(String(this.tools));
     const line2 = S.d(pathStr);
-    const line3 = S.d("Enter 发送 · Ctrl+N 换行 · Alt+←/→ 按词移动 · Ctrl+W 删词 · Ctrl+Z 恢复 · Ctrl+D 退出");
+    const line3 = S.d("Enter 发送 · Tab agents · Ctrl+N 换行 · Alt+←/→ 按词移动 · Ctrl+Z 恢复 · Ctrl+D 退出");
     process.stdout.write(line1 + "\n" + line2 + "\n" + line3 + "\n");
   }
 
@@ -371,6 +371,9 @@ export class StreamUI {
         } else if (seq === "\r" || seq === "\n") {
           partial = "";
           this.handleEnter();
+        } else if (seq === "\t") {
+          partial = "";
+          this.handleTab();
         } else if (seq === "\x03") {
           partial = "";
           this.handleCtrlC();
@@ -467,6 +470,23 @@ export class StreamUI {
     if (this.inputCallback) {
       this.inputCallback(cmd);
     }
+  }
+
+  private handleTab(): void {
+    if (!this.input.value) {
+      this.lastEmptyCtrlCAt = 0;
+      process.stdout.write("\n");
+      if (this.inputCallback) {
+        this.inputCallback("/agents");
+      }
+      return;
+    }
+
+    this.backToPrompt();
+    process.stdout.write(S.y("Tab agents 仅在空输入时打开；当前草稿已保留，补全未启用"));
+    process.stdout.write("\n");
+    this.writeInputValue();
+    this.syncCursor();
   }
 
   private handleCtrlC(): void {
