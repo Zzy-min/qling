@@ -254,6 +254,7 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.deepEqual(submitted, []);
     assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
     assert.match(getOutput(), /轻灵 Agent CLI/);
+    assert.match(getOutput(), /Ctrl\+Z/);
     assert.match(getOutput(), /model=test session=session-1/);
     assert.match(getOutput(), /draft prompt/);
   });
