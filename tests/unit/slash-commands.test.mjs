@@ -1186,6 +1186,7 @@ test("slash shortcuts prints tui shortcut help", async () => {
   assert.match(joined, /Ctrl\+R/);
   assert.match(joined, /Ctrl\+C/);
   assert.match(joined, /再次 Ctrl\+C/);
+  assert.match(joined, /Ctrl\+Z/);
   assert.match(joined, /Ctrl\+A/);
   assert.match(joined, /Ctrl\+E/);
   assert.match(joined, /Alt\+←/);

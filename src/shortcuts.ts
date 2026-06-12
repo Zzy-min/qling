@@ -12,6 +12,7 @@ export const SHORTCUT_LINES = [
   "Ctrl+W / Alt+D : 删除光标前/后的一个词（兼容常见 Ctrl+Delete 序列）",
   "Ctrl+L   : 清空当前终端视图并重绘输入栏，不丢弃正在编辑的内容",
   "Ctrl+C   : 非空输入时清空；空输入时再次 Ctrl+C 确认退出",
+  "Ctrl+Z   : 恢复最近一次被 Ctrl+C 清空的本地草稿",
   "Ctrl+D   : 空输入时退出；非空输入会提示并保留草稿",
   "/exit, /quit, /q, /退出 : 本地退出 TUI，不调用模型、不写入输入历史",
   "Esc      : 取消未完成的终端控制序列；不提交、不清空输入",

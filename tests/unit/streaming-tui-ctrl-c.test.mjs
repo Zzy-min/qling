@@ -82,6 +82,51 @@ test("stream ui ctrl+c clears non-empty input without submitting exit", async ()
   });
 });
 
+test("stream ui ctrl+z restores draft cleared by ctrl+c", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    for (const ch of "draft prompt") ui.input.insertChar(ch);
+
+    ui.handleCtrlC();
+    assert.equal(ui.input.value, "");
+
+    ui.handleCtrlZ();
+
+    assert.equal(ui.input.value, "draft prompt");
+    assert.equal(ui.input.cursorPos, "draft prompt".length);
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /恢复|草稿/);
+  });
+});
+
+test("stream ui ctrl+z without cleared draft prints local feedback", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+
+    ui.handleCtrlZ();
+
+    assert.equal(ui.input.value, "");
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /没有可恢复|无可恢复|草稿/);
+  });
+});
+
+test("stream ui ctrl+z does not overwrite non-empty input", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    for (const ch of "old draft") ui.input.insertChar(ch);
+    ui.handleCtrlC();
+    for (const ch of "new draft") ui.input.insertChar(ch);
+
+    ui.handleCtrlZ();
+
+    assert.equal(ui.input.value, "new draft");
+    assert.equal(ui.input.cursorPos, "new draft".length);
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /当前输入|不会覆盖|草稿/);
+  });
+});
+
 test("stream ui first empty ctrl+c prints local exit hint without submitting", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
@@ -285,6 +330,29 @@ test("stream ui dispatches ctrl+o from raw stdin without submitting", async () =
       assert.equal(ui.input.value, "draft");
       assert.deepEqual(submitted, []);
       assert.match(getOutput(), /展开后续工具输出/);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui dispatches ctrl+z from raw stdin to restore cleared draft", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "draft") ui.input.insertChar(ch);
+      ui.handleCtrlC();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1a");
+
+      assert.equal(ui.input.value, "draft");
+      assert.equal(ui.input.cursorPos, "draft".length);
+      assert.deepEqual(submitted, []);
 
       ui.running = false;
     });

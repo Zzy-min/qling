@@ -189,6 +189,7 @@ export class StreamUI {
   private progressStartedAt = 0;
   private progressLabel = "agent";
   private lastEmptyCtrlCAt = 0;
+  private lastClearedDraft: string | null = null;
   private expandLongToolOutput = false;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
@@ -391,6 +392,9 @@ export class StreamUI {
         } else if (seq === "\x17") {
           partial = "";
           this.handleCtrlW();
+        } else if (seq === "\x1a") {
+          partial = "";
+          this.handleCtrlZ();
         } else if (seq === "\x0c") {
           partial = "";
           this.handleCtrlL();
@@ -489,10 +493,45 @@ export class StreamUI {
     }
 
     this.lastEmptyCtrlCAt = 0;
+    this.lastClearedDraft = this.input.value;
     this.input.clear();
     this.backToPrompt();
     process.stdout.write(S.r("^C") + " ");
     this.writeInputValue();
+  }
+
+  private handleCtrlZ(): void {
+    if (this.input.value) {
+      this.backToPrompt();
+      process.stdout.write(S.y("当前输入不会被覆盖，草稿未恢复"));
+      process.stdout.write("\n");
+      this.writeInputValue();
+      this.syncCursor();
+      return;
+    }
+
+    if (!this.lastClearedDraft) {
+      this.backToPrompt();
+      process.stdout.write(S.y("没有可恢复的草稿"));
+      process.stdout.write("\n");
+      this.writeInputValue();
+      this.syncCursor();
+      return;
+    }
+
+    for (const ch of this.lastClearedDraft) {
+      if (ch === "\n") {
+        this.input.insertNewline();
+      } else {
+        this.input.insertChar(ch);
+      }
+    }
+    this.lastClearedDraft = null;
+    this.backToPrompt();
+    process.stdout.write(S.g("已恢复草稿"));
+    process.stdout.write("\n");
+    this.writeInputValue();
+    this.syncCursor();
   }
 
   private handleBackspace(): void {
