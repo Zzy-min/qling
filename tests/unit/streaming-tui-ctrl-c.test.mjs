@@ -278,8 +278,23 @@ test("stream ui prompt renders inside input frame without duplicate bare prompt"
 
     const output = getOutput();
     assert.match(output, /│ › 输入任务，\/help 查看命令/);
+    assert.match(output, /└─+┘/);
     assert.doesNotMatch(output, /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
     assert.match(output, /\/exit 退出/);
+  });
+});
+
+test("stream ui redraw keeps complete input frame while typing", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    ui.printInputBar();
+    ui.handleChar("你");
+
+    const output = getOutput();
+    assert.match(output, /│ › 你/);
+    assert.match(output, /└─+┘/);
+    assert.doesNotMatch(output.split("│ › 你").at(-1), /^\s*$/);
   });
 });
 

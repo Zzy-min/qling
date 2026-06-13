@@ -214,6 +214,9 @@ export class StreamUI {
   private lastEmptyCtrlCAt = 0;
   private lastClearedDraft: string | null = null;
   private expandLongToolOutput = false;
+  private lastInputContentLineCount = 1;
+  private lastInputCursorLineIndex = 0;
+  private inputCursorAnchor: "current" | "bottom" = "current";
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
 
@@ -318,8 +321,9 @@ export class StreamUI {
   }
 
   private backToPrompt(): void {
+    this.moveToInputContentStart();
     process.stdout.write("\r");
-    process.stdout.write("\x1b[0K");
+    process.stdout.write("\x1b[J");
   }
 
   private redrawInput(): void {
@@ -329,10 +333,24 @@ export class StreamUI {
   }
 
   private syncCursor(): void {
-    const beforeCursor = this.input.value.slice(0, this.input.cursorPos);
-    const lastLine = beforeCursor.split("\n").at(-1) ?? "";
-    const col = 5 + sw(lastLine);
+    const cursor = this.inputCursorPosition();
+    if (this.inputCursorAnchor === "bottom") {
+      const rowsUp = Math.max(0, this.lastInputContentLineCount - cursor.lineIndex);
+      if (rowsUp > 0) {
+        process.stdout.write("\x1b[" + rowsUp + "A");
+      }
+    } else {
+      const rowDelta = cursor.lineIndex - this.lastInputCursorLineIndex;
+      if (rowDelta > 0) {
+        process.stdout.write("\x1b[" + rowDelta + "B");
+      } else if (rowDelta < 0) {
+        process.stdout.write("\x1b[" + Math.abs(rowDelta) + "A");
+      }
+    }
+    const col = 5 + sw(cursor.columnText);
     process.stdout.write("\x1b[" + col + "G");
+    this.lastInputCursorLineIndex = cursor.lineIndex;
+    this.inputCursorAnchor = "current";
   }
 
   private inputFrameWidth(): number {
@@ -351,11 +369,47 @@ export class StreamUI {
     return "└" + "─".repeat(this.inputFrameContentWidth() + 2) + "┘";
   }
 
+  private inputDisplayLines(usePlaceholder = false): string[] {
+    if (this.input.value) return this.input.value.split("\n");
+    return [usePlaceholder ? "输入任务，/help 查看命令" : ""];
+  }
+
+  private inputCursorPosition(): { lineIndex: number; columnText: string } {
+    const beforeCursor = this.input.value.slice(0, this.input.cursorPos);
+    const beforeLines = beforeCursor.split("\n");
+    const lineIndex = Math.max(0, beforeLines.length - 1);
+    return {
+      lineIndex,
+      columnText: beforeLines.at(-1) ?? "",
+    };
+  }
+
+  private moveToInputContentStart(): void {
+    const rowsUp = this.inputCursorAnchor === "bottom"
+      ? this.lastInputContentLineCount
+      : this.lastInputCursorLineIndex;
+    if (rowsUp > 0) {
+      process.stdout.write("\x1b[" + rowsUp + "A");
+    }
+    this.lastInputCursorLineIndex = 0;
+    this.inputCursorAnchor = "current";
+  }
+
+  private moveAfterInputFrame(): void {
+    if (this.inputCursorAnchor === "current") {
+      const rowsDown = Math.max(0, this.lastInputContentLineCount - this.lastInputCursorLineIndex);
+      if (rowsDown > 0) {
+        process.stdout.write("\x1b[" + rowsDown + "B");
+      }
+    }
+    process.stdout.write("\r");
+    this.lastInputCursorLineIndex = 0;
+    this.inputCursorAnchor = "current";
+  }
+
   private writeInputValue(usePlaceholder = false): void {
     const contentWidth = this.inputFrameContentWidth();
-    const lines = this.input.value
-      ? this.input.value.split("\n")
-      : [usePlaceholder ? "输入任务，/help 查看命令" : ""];
+    const lines = this.inputDisplayLines(usePlaceholder);
 
     for (let i = 0; i < lines.length; i++) {
       const prefix = i === 0 ? "› " : "  ";
@@ -363,6 +417,9 @@ export class StreamUI {
       if (i > 0) process.stdout.write("\n");
       process.stdout.write(S.p("│ " + padVisible(rendered, contentWidth) + " │"));
     }
+    process.stdout.write("\n" + S.p(this.inputFrameBottom()));
+    this.lastInputContentLineCount = lines.length;
+    this.inputCursorAnchor = "bottom";
   }
 
   showPrompt(): void {
@@ -526,10 +583,12 @@ export class StreamUI {
   }
 
   private handleEnter(): void {
-    const cmd = this.input.submit();
+    const cmd = this.input.value.trim();
     if (!cmd) return;
     this.lastEmptyCtrlCAt = 0;
-    process.stdout.write("\n" + S.p(this.inputFrameBottom()) + "\n");
+    this.moveAfterInputFrame();
+    process.stdout.write("\n");
+    this.input.submit();
     if (this.inputCallback) {
       this.inputCallback(cmd);
     }
@@ -572,6 +631,7 @@ export class StreamUI {
       process.stdout.write(S.r("^C") + " " + DIM("再次 Ctrl+C 退出，或输入 exit"));
       process.stdout.write("\n");
       this.writeInputValue();
+      this.syncCursor();
       return;
     }
 
@@ -582,6 +642,7 @@ export class StreamUI {
     process.stdout.write(S.r("^C") + " " + DIM("草稿已清空，Ctrl+Z 恢复"));
     process.stdout.write("\n");
     this.writeInputValue();
+    this.syncCursor();
   }
 
   private handleCtrlZ(): void {
