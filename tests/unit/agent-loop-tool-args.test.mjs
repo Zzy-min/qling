@@ -242,3 +242,89 @@ test("agent-loop: llm request timeout uses QLING_LLM_REQUEST_TIMEOUT_MS", async 
     restoreEnv(prev);
   }
 });
+
+test("agent-loop: session token stats prefer provider usage total tokens", async () => {
+  const prev = snapshotEnv();
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
+
+  const agent = new AgentLoop({
+    apiKey: "test-key",
+    maxIterations: 1,
+    runtime: {
+      workspaceDir: process.cwd(),
+      fileCacheDir: process.cwd(),
+      fileStateDir: process.cwd(),
+      maxSteps: 1,
+      parseRetries: 1,
+      maxTokenBudget: 120000,
+      toolRepeatLimit: 6,
+      timeoutMs: 60000,
+    },
+  });
+
+  try {
+    agent.checkAutoDream = async () => {};
+    agent.client.post = async () => ({
+      data: {
+        choices: [{ message: { content: "done" } }],
+        usage: {
+          prompt_tokens: 111,
+          completion_tokens: 210,
+          total_tokens: 321,
+        },
+      },
+    });
+
+    agent.addUserMessage("tiny");
+    const finalAnswer = await agent.run();
+
+    assert.equal(finalAnswer, "done");
+    assert.equal(agent.getSessionStats().tokens, 321);
+  } finally {
+    await agent.shutdown();
+    restoreEnv(prev);
+  }
+});
+
+test("agent-loop: session token stats fall back when provider usage is missing", async () => {
+  const prev = snapshotEnv();
+  process.env.QLING_MEMORY_WAL_ENABLED = "false";
+  process.env.QLING_METRICS_ENABLED = "false";
+  delete process.env.QLING_MCP_SERVERS;
+
+  const agent = new AgentLoop({
+    apiKey: "test-key",
+    maxIterations: 1,
+    runtime: {
+      workspaceDir: process.cwd(),
+      fileCacheDir: process.cwd(),
+      fileStateDir: process.cwd(),
+      maxSteps: 1,
+      parseRetries: 1,
+      maxTokenBudget: 120000,
+      toolRepeatLimit: 6,
+      timeoutMs: 60000,
+    },
+  });
+
+  try {
+    agent.checkAutoDream = async () => {};
+    agent.client.post = async () => ({
+      data: {
+        choices: [{ message: { content: "done" } }],
+      },
+    });
+
+    agent.addUserMessage("fallback usage");
+    const finalAnswer = await agent.run();
+
+    assert.equal(finalAnswer, "done");
+    assert.ok(agent.getSessionStats().tokens > 0);
+    assert.notEqual(agent.getSessionStats().tokens, 321);
+  } finally {
+    await agent.shutdown();
+    restoreEnv(prev);
+  }
+});

@@ -51,6 +51,16 @@ interface TurnTelemetry {
   toolFailures: number;
 }
 
+interface ChatUsage {
+  totalTokens?: number;
+}
+
+interface ChatResponse {
+  content: string;
+  tool_calls?: RawToolCall[];
+  usage?: ChatUsage;
+}
+
 export class AgentEventEmitter {
   private handlers = new Map<string, Set<Function>>();
 
@@ -526,14 +536,15 @@ export class AgentLoop extends AgentEventEmitter {
         await this.workflowRuntime.updateContext(this.messages);
       }
 
-      // 2. 检查上下文大小（仅计增量，不重复累加整个上下文）
+      // 2. 准备本地 token fallback；若 provider 返回 usage，优先采用 provider 值。
       const lastMsg = this.messages[this.messages.length - 1];
-      const roundTokens = (lastMsg?.content?.length ?? 0) * 4 + (systemPrompt.length * 0.5);
-      this.sessionTokens += roundTokens;
-      this.tokenBudget.addUsage(roundTokens);
+      const estimatedRoundTokens = (lastMsg?.content?.length ?? 0) * 4 + (systemPrompt.length * 0.5);
 
       // 3. API 调用
-      const { content, tool_calls } = await this.chat(systemPrompt);
+      const { content, tool_calls, usage } = await this.chat(systemPrompt);
+      const roundTokens = this.resolveRoundTokenUsage(usage, estimatedRoundTokens);
+      this.sessionTokens += roundTokens;
+      this.tokenBudget.addUsage(roundTokens);
       this.messages.push({ role: "assistant", content, tool_calls });
       this.emit("thinking", content || "正在思考...");
 
@@ -1086,10 +1097,7 @@ export class AgentLoop extends AgentEventEmitter {
     return parts.join("\n\n");
   }
 
-  private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<{
-    content: string;
-    tool_calls?: RawToolCall[];
-  }> {
+  private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<ChatResponse> {
     const systemMsg: Message = { role: "system", content: systemPrompt };
     const payload = {
       model: this.config.model,
@@ -1143,7 +1151,26 @@ export class AgentLoop extends AgentEventEmitter {
       }));
     }
 
-    return { content: msg.content ?? "", tool_calls: rawToolCalls };
+    return {
+      content: msg.content ?? "",
+      tool_calls: rawToolCalls,
+      usage: this.extractChatUsage(resp.data?.usage),
+    };
+  }
+
+  private extractChatUsage(rawUsage: unknown): ChatUsage | undefined {
+    if (!rawUsage || typeof rawUsage !== "object") return undefined;
+    const usage = rawUsage as Record<string, unknown>;
+    const total = Number(usage.total_tokens ?? usage.totalTokens);
+    if (!Number.isFinite(total) || total <= 0) return undefined;
+    return { totalTokens: Math.floor(total) };
+  }
+
+  private resolveRoundTokenUsage(usage: ChatUsage | undefined, fallbackTokens: number): number {
+    if (usage?.totalTokens && Number.isFinite(usage.totalTokens) && usage.totalTokens > 0) {
+      return usage.totalTokens;
+    }
+    return fallbackTokens;
   }
 
   private async verifyLastOperation(): Promise<void> {
