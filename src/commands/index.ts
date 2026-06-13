@@ -77,6 +77,13 @@ interface SlashSuggestion {
   score: number;
 }
 
+export interface SlashCommandCatalogItem {
+  name: string;
+  aliases: string[];
+  description: string;
+  usage: string;
+}
+
 function normalizeSlashName(value: string): string {
   return value.trim().replace(/^\/+/, "").toLowerCase();
 }
@@ -132,11 +139,23 @@ function scoreSlashCandidate(input: string, candidate: string): number | null {
   return 45 - distance * 8 - Math.abs(normalizedCandidate.length - normalizedInput.length) + endingBoost;
 }
 
+export function getSlashCommandCatalog(): SlashCommandCatalogItem[] {
+  return COMMANDS.map((command) => ({
+    name: command.name,
+    aliases: [...(command.aliases ?? [])],
+    description: command.description,
+    usage: command.usage,
+  }));
+}
+
+function getSlashCommandNames(item: SlashCommandCatalogItem): string[] {
+  return [item.name, ...item.aliases];
+}
+
 export function findSlashCommandSuggestions(input: string, limit = 3): SlashSuggestion[] {
   const suggestions: SlashSuggestion[] = [];
-  for (const command of COMMANDS) {
-    const names = [command.name, ...(command.aliases ?? [])];
-    for (const name of names) {
+  for (const item of getSlashCommandCatalog()) {
+    for (const name of getSlashCommandNames(item)) {
       const score = scoreSlashCandidate(input, name);
       if (score === null || score < 20) continue;
       suggestions.push({
@@ -155,6 +174,42 @@ export function findSlashCommandSuggestions(input: string, limit = 3): SlashSugg
     )
     .filter((suggestion, index, sorted) => sorted.findIndex((item) => item.command === suggestion.command) === index)
     .slice(0, limit);
+}
+
+export function findSlashCompletion(prefix: string, limit = 5): SlashCommandCatalogItem[] {
+  const rawPrefix = prefix.trim();
+  if (!rawPrefix.startsWith("/") || /\s/.test(rawPrefix)) return [];
+  const normalizedPrefix = normalizeSlashName(rawPrefix);
+  const catalog = getSlashCommandCatalog();
+  const matched = catalog
+    .map((item, index) => {
+      const names = getSlashCommandNames(item);
+      const bestScore = names.reduce((best, name) => {
+        const normalizedName = normalizeSlashName(name);
+        if (!normalizedName) return best;
+        if (!normalizedPrefix) return Math.max(best, 1);
+        if (normalizedName === normalizedPrefix) return Math.max(best, 100);
+        if (normalizedName.startsWith(normalizedPrefix)) {
+          return Math.max(best, 80 - Math.abs(normalizedName.length - normalizedPrefix.length));
+        }
+        return best;
+      }, 0);
+      return { item, index, score: bestScore };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.item);
+
+  return matched.slice(0, Math.max(0, limit));
+}
+
+export function formatSlashCompletionHint(prefix: string, width = 80): string[] {
+  const matches = findSlashCompletion(prefix, 5);
+  if (matches.length === 0) return [];
+  const commandList = matches.map((item) => item.name).join("  ");
+  const line = `补全    : ${commandList}    Tab 补全`;
+  const safeWidth = Math.max(30, Math.floor(Number(width) || 80));
+  return [line.length > safeWidth ? line.slice(0, safeWidth - 1) + "…" : line];
 }
 
 export function formatUnknownSlashCommandMessage(cmdName: string): string {

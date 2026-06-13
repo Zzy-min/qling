@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { default as stringWidth } from "string-width";
+import { findSlashCompletion, formatSlashCompletionHint } from "../commands/index.js";
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
@@ -216,6 +217,7 @@ export class StreamUI {
   private expandLongToolOutput = false;
   private lastInputContentLineCount = 1;
   private lastInputCursorLineIndex = 0;
+  private lastInputHintLineCount = 0;
   private inputCursorAnchor: "current" | "bottom" = "current";
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
@@ -335,7 +337,7 @@ export class StreamUI {
   private syncCursor(): void {
     const cursor = this.inputCursorPosition();
     if (this.inputCursorAnchor === "bottom") {
-      const rowsUp = Math.max(0, this.lastInputContentLineCount - cursor.lineIndex);
+      const rowsUp = Math.max(0, this.lastInputContentLineCount + this.lastInputHintLineCount - cursor.lineIndex);
       if (rowsUp > 0) {
         process.stdout.write("\x1b[" + rowsUp + "A");
       }
@@ -386,7 +388,7 @@ export class StreamUI {
 
   private moveToInputContentStart(): void {
     const rowsUp = this.inputCursorAnchor === "bottom"
-      ? this.lastInputContentLineCount
+      ? this.lastInputContentLineCount + this.lastInputHintLineCount
       : this.lastInputCursorLineIndex;
     if (rowsUp > 0) {
       process.stdout.write("\x1b[" + rowsUp + "A");
@@ -397,7 +399,7 @@ export class StreamUI {
 
   private moveAfterInputFrame(): void {
     if (this.inputCursorAnchor === "current") {
-      const rowsDown = Math.max(0, this.lastInputContentLineCount - this.lastInputCursorLineIndex);
+      const rowsDown = Math.max(0, this.lastInputContentLineCount + this.lastInputHintLineCount - this.lastInputCursorLineIndex);
       if (rowsDown > 0) {
         process.stdout.write("\x1b[" + rowsDown + "B");
       }
@@ -418,8 +420,34 @@ export class StreamUI {
       process.stdout.write(S.p("│ " + padVisible(rendered, contentWidth) + " │"));
     }
     process.stdout.write("\n" + S.p(this.inputFrameBottom()));
+    const hints = this.formatCurrentSlashCompletionHints();
+    for (const hint of hints) {
+      process.stdout.write("\n" + DIM(hint));
+    }
     this.lastInputContentLineCount = lines.length;
+    this.lastInputHintLineCount = hints.length;
     this.inputCursorAnchor = "bottom";
+  }
+
+  private formatCurrentSlashCompletionHints(): string[] {
+    if (!this.isSlashCompletionPrefix(this.input.value)) return [];
+    return formatSlashCompletionHint(this.input.value, process.stdout.columns || 80);
+  }
+
+  private isSlashCompletionPrefix(value: string): boolean {
+    const text = value.trim();
+    return text.startsWith("/") && !/\s/.test(text);
+  }
+
+  private acceptSlashCompletion(): boolean {
+    if (!this.isSlashCompletionPrefix(this.input.value)) return false;
+    const [completion] = findSlashCompletion(this.input.value, 1);
+    if (!completion) return false;
+    this.input.value = completion.name + " ";
+    this.input.cursorPos = this.input.value.length;
+    this.lastEmptyCtrlCAt = 0;
+    this.redrawInput();
+    return true;
   }
 
   showPrompt(): void {
@@ -601,6 +629,10 @@ export class StreamUI {
       if (this.inputCallback) {
         this.inputCallback("/agents");
       }
+      return;
+    }
+
+    if (this.acceptSlashCompletion()) {
       return;
     }
 

@@ -29,6 +29,18 @@ test("focused slash help shows usage aliases examples and local boundary", () =>
   assert.doesNotMatch(text, /qling exports 20/);
 });
 
+test("focused slash help shows skill command usage and local boundary", () => {
+  const lines = formatFocusedHelp("skill", { surface: "slash" });
+  const text = lines.join("\n");
+
+  assert.match(text, /Topic\s*: skill/);
+  assert.match(text, /Usage\s*: \/skill/);
+  assert.match(text, /\/skill search <query>/);
+  assert.match(text, /\/skill docker/);
+  assert.match(text, /本地 skill|本地技能|本地/);
+  assert.match(text, /不调用模型/);
+});
+
 test("focused cli help shows top-level examples", () => {
   const lines = formatFocusedHelp("exports", { surface: "cli", binName: "qling" });
   const text = lines.join("\n");

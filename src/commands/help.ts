@@ -6,7 +6,7 @@ export const HELP_LINES = [
   "【轻灵 Slash Commands】",
   "-----------------------------------------",
   "/help, /?               - 显示此帮助信息",
-  "/skill [name]           - 查询或挂载技能",
+  "/skill [list|search <query>|name] - 列出、搜索或读取本地技能",
   "/sessions               - 查看最近保存的会话快照",
   "/resume [session|latest] - 恢复最近一次或指定会话",
   "/checkpoint [name] [--force], /检查点 - 保存当前会话为本地恢复检查点",

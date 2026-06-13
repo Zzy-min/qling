@@ -345,6 +345,38 @@ test("stream ui tab on empty input opens local agents view command", async () =>
   });
 });
 
+test("stream ui shows slash completion hints while typing slash prefix", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+
+    ui.printInputBar();
+    ui.handleChar("/");
+    ui.handleChar("s");
+    ui.handleChar("k");
+
+    assert.equal(ui.input.value, "/sk");
+    assert.deepEqual(submitted, []);
+    const output = getOutput();
+    assert.match(output, /\/skill/);
+    assert.match(output, /Tab 补全|Tab/);
+    assert.match(output, /└─+┘/);
+  });
+});
+
+test("stream ui tab completes slash prefix to best command", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+    for (const ch of "/sk") ui.input.insertChar(ch);
+
+    ui.handleTab();
+
+    assert.equal(ui.input.value, "/skill ");
+    assert.equal(ui.input.cursorPos, "/skill ".length);
+    assert.deepEqual(submitted, []);
+    assert.match(getOutput(), /\/skill/);
+  });
+});
+
 test("stream ui tab on non-empty input preserves draft with local feedback", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();

@@ -80,6 +80,17 @@ const TOPICS: HelpTopic[] = [
     boundary: "只读取本地静态快捷键说明；不读取会话正文、不修改输入缓冲、不调用模型、不联网。",
   },
   {
+    id: "skill",
+    title: "本地技能",
+    summary: "列出、搜索或读取本地 skills 目录中的 Markdown 技能说明。",
+    aliases: ["skill", "/skill", "技能", "/技能"],
+    slashUsage: "/skill [list|search <query>|name]",
+    cliUsage: "仅 slash：在当前交互会话中使用",
+    slashExamples: ["/skill", "/skill list", "/skill search <query>", "/skill docker", "/技能 docker"],
+    cliExamples: [],
+    boundary: "只读取本地 skill Markdown 文件；不自动注入系统 prompt、不调用模型、不联网、不上传。",
+  },
+  {
     id: "doctor",
     title: "本地诊断",
     summary: "汇总配置、存储、MCP、hooks、daemon 与本地数据留存健康度。",

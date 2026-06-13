@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { handleSlashCommand } from "../../dist/commands/index.js";
+import { COMMANDS, getSlashCommandCatalog, handleSlashCommand } from "../../dist/commands/index.js";
+import { clearSkillCache } from "../../dist/skills/registry.js";
 import { MissionManager } from "../../dist/mission/manager.js";
 
 async function withEnv(patch, fn) {
@@ -34,6 +35,20 @@ async function withTempDir(fn) {
     await fn(dir);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function withSkillWorkspace(fn) {
+  const dir = await mkdtemp(join(tmpdir(), "qling-slash-skill-"));
+  const previousCwd = process.cwd();
+  try {
+    process.chdir(dir);
+    await mkdir(join(dir, "skills"), { recursive: true });
+    await fn(dir);
+  } finally {
+    process.chdir(previousCwd);
+    await rm(dir, { recursive: true, force: true });
+    clearSkillCache();
   }
 }
 
@@ -116,6 +131,88 @@ test("slash help includes loop/tasks/compact", async () => {
   assert.match(joined, /\/memory practices/);
   assert.match(joined, /\/memory graph/);
   assert.match(joined, /\/记忆/);
+});
+
+test("slash command catalog includes every registered command", () => {
+  const catalogNames = new Set(getSlashCommandCatalog().map((item) => item.name));
+  for (const command of COMMANDS) {
+    assert.ok(catalogNames.has(command.name), `${command.name} missing from slash catalog`);
+  }
+});
+
+test("slash skill lists local skills", async () => {
+  await withSkillWorkspace(async (root) => {
+    await writeFile(
+      join(root, "skills", "docker.md"),
+      "---\nname: docker\ndescription: Docker cmds\ntags: [devops]\n---\n\nDocker body",
+      "utf8"
+    );
+    const { ctx, lines, errors } = createContext();
+
+    const handled = await handleSlashCommand("/skill", ctx);
+
+    assert.equal(handled, true);
+    assert.equal(errors.length, 0);
+    const joined = lines.join("\n");
+    assert.match(joined, /Available skills|可用技能/);
+    assert.match(joined, /docker/);
+    assert.match(joined, /Docker cmds/);
+  });
+});
+
+test("slash skill list aliases local skill listing", async () => {
+  await withSkillWorkspace(async (root) => {
+    await writeFile(join(root, "skills", "git.md"), "---\nname: git\ndescription: Git tips\n---\n\nGit body", "utf8");
+    const { ctx, lines } = createContext();
+
+    const handled = await handleSlashCommand("/skill list", ctx);
+
+    assert.equal(handled, true);
+    assert.match(lines.join("\n"), /git/);
+    assert.match(lines.join("\n"), /Git tips/);
+  });
+});
+
+test("slash skill searches local skills", async () => {
+  await withSkillWorkspace(async (root) => {
+    await writeFile(join(root, "skills", "docker.md"), "---\nname: docker\ndescription: Containers\n---\n\nDocker body", "utf8");
+    await writeFile(join(root, "skills", "git.md"), "---\nname: git\ndescription: Version control\n---\n\nGit body", "utf8");
+    const { ctx, lines } = createContext();
+
+    const handled = await handleSlashCommand("/skill search container", ctx);
+
+    assert.equal(handled, true);
+    const joined = lines.join("\n");
+    assert.match(joined, /Skills matching|匹配/);
+    assert.match(joined, /docker/);
+    assert.doesNotMatch(joined, /git: Version control/);
+  });
+});
+
+test("slash skill loads local skill content by name", async () => {
+  await withSkillWorkspace(async (root) => {
+    await writeFile(join(root, "skills", "docker.md"), "---\nname: docker\ndescription: Docker cmds\n---\n\nUse docker compose ps", "utf8");
+    const { ctx, lines, errors } = createContext();
+
+    const handled = await handleSlashCommand("/skill docker", ctx);
+
+    assert.equal(handled, true);
+    assert.equal(errors.length, 0);
+    assert.match(lines.join("\n"), /Skill: docker/);
+    assert.match(lines.join("\n"), /Use docker compose ps/);
+  });
+});
+
+test("slash skill missing local skill routes to slash error", async () => {
+  await withSkillWorkspace(async () => {
+    const { ctx, lines, errors } = createContext();
+
+    const handled = await handleSlashCommand("/skill missing", ctx);
+
+    assert.equal(handled, true);
+    assert.equal(lines.length, 0);
+    assert.match(errors.join("\n"), /SKILL_NOT_FOUND|skill not found/);
+  });
 });
 
 test("slash memory sources shows local context source map", async () => {
