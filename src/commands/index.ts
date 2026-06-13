@@ -159,8 +159,14 @@ export function findSlashCommandSuggestions(input: string, limit = 3): SlashSugg
 
 export function formatUnknownSlashCommandMessage(cmdName: string): string {
   const suggestions = findSlashCommandSuggestions(cmdName);
+  const normalizedInput = cmdName.replace(/^\/+/, "");
   if (!suggestions.length) {
-    return `❌ 未知指令: ${cmdName}。输入 /help 查看可用指令。`;
+    return [
+      `❌ 未知指令: ${cmdName}。`,
+      "查看全部 : /help",
+      `普通输入 : ${normalizedInput}`,
+      "说明     : 这是本地纠错提示，不调用模型、不执行建议命令。",
+    ].join("\n");
   }
 
   const commands = suggestions.map((suggestion) => suggestion.command).join(", ");
@@ -168,7 +174,10 @@ export function formatUnknownSlashCommandMessage(cmdName: string): string {
   return [
     `❌ 未知指令: ${cmdName}。`,
     `你是不是想用: ${commands}`,
-    `查看用法: /help ${primary.topic}`,
+    `可执行   : ${primary.command}`,
+    `查看用法 : /help ${primary.topic}`,
+    `普通输入 : ${normalizedInput}`,
+    "说明     : 这是本地纠错提示，不调用模型、不自动执行建议命令。",
   ].join("\n");
 }
 
