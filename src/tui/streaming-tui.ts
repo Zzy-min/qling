@@ -19,6 +19,7 @@ import * as readline from "readline";
 import { default as stringWidth } from "string-width";
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
+import { formatTuiHeader } from "./chrome.js";
 
 // ── ANSI 颜色工具 ───────────────────────────────────────
 
@@ -262,13 +263,15 @@ export class StreamUI {
   // ── Header（只调用一次） ───────────────────────────
 
   private printHeader(): void {
-    const pathStr = process.cwd().replace(/\\/g, "/").replace(/^C:/, "C:");
-    const line1 = S.p(">_ ") + S.p("轻灵 Agent CLI") + "    " +
-      S.s(this.model) + "    " + S.g("online") + "    " +
-      S.y("tools") + " " + S.y(String(this.tools));
-    const line2 = S.d(pathStr);
-    const line3 = S.d("Enter 发送 · Tab agents · Ctrl+N 换行 · Alt+←/→ 按词移动 · Ctrl+Z 恢复 · Ctrl+D 退出");
-    process.stdout.write(line1 + "\n" + line2 + "\n" + line3 + "\n");
+    const lines = formatTuiHeader({
+      model: this.model,
+      tools: this.tools,
+      cwd: process.cwd(),
+    });
+    process.stdout.write(S.p(">_ ") + S.p(lines[0]) + "\n");
+    process.stdout.write(S.d(lines[1]) + "\n");
+    process.stdout.write(S.d(lines[2]) + "\n");
+    process.stdout.write(S.d(lines[3]) + "\n");
   }
 
   // ── 底部输入栏 ────────────────────────────────────

@@ -2,6 +2,7 @@ export const SHORTCUT_LINES = [
   "",
   "⌨️ 【TUI 快捷键】",
   "-----------------------------------------",
+  "界面入口 : /help slash 查看本地命令；/privacy 查看边界；/context 查看上下文；/statusline 查看状态线；Tab agents 打开本地 agents 视图",
   "Enter    : 发送当前输入",
   "Tab      : 空输入时打开本地 /agents mission 视图；非空输入会保留草稿并提示补全未启用",
   "Ctrl+N   : 插入换行，继续编辑多行 prompt",
