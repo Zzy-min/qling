@@ -56,6 +56,9 @@ test("context report includes local session statistics and paths", async () => {
   assert.equal(report.tokenSource, "provider");
   assert.equal(report.compactions, 2);
   assert.equal(report.tokenUsagePercent, 20);
+  assert.equal(report.contextLevel, "ok");
+  assert.match(report.recommendation, /正常/);
+  assert.match(report.tokenSourceDescription, /provider reported/i);
   assert.match(report.sessionsDir, /sessions$/);
 });
 
@@ -69,13 +72,59 @@ test("context report handles missing saved sessions", async () => {
 });
 
 test("context report formatter is readable and local-first", async () => {
-  const report = await buildContextReport(createContext());
+  const report = await buildContextReport(createContext(), { maxTokens: 120000 });
   const text = formatContextReport(report).join("\n");
 
   assert.match(text, /上下文/);
   assert.match(text, /session-test/);
   assert.match(text, /本地/);
   assert.match(text, /Token 来源\s*: provider/);
+  assert.match(text, /上下文状态\s*: ok/);
+  assert.match(text, /建议\s*:/);
+  assert.match(text, /Token 说明\s*: provider reported/i);
+});
+
+test("context report classifies watch and critical token usage", async () => {
+  const watch = await buildContextReport(createContext({
+    agentLoop: {
+      getSessionStats: () => ({
+        sessionId: "session-watch",
+        turnCount: 8,
+        tokens: 84000,
+        tokenSource: "estimate",
+        compactions: 1,
+      }),
+    },
+  }), { maxTokens: 120000 });
+  const critical = await buildContextReport(createContext({
+    agentLoop: {
+      getSessionStats: () => ({
+        sessionId: "session-critical",
+        turnCount: 12,
+        tokens: 110000,
+        tokenSource: "unknown",
+        compactions: 3,
+      }),
+    },
+  }), { maxTokens: 120000 });
+
+  assert.equal(watch.contextLevel, "watch");
+  assert.match(watch.recommendation, /压缩|checkpoint/i);
+  assert.match(watch.tokenSourceDescription, /local estimate/i);
+  assert.equal(critical.contextLevel, "critical");
+  assert.match(critical.recommendation, /立即|compact|checkpoint/i);
+  assert.match(critical.tokenSourceDescription, /unknown/i);
+});
+
+test("context report marks usage unknown when max token budget is missing", async () => {
+  const report = await buildContextReport(createContext({
+    agentLoop: {
+      getTokenBudget: () => ({ maxTokens: null }),
+    },
+  }));
+
+  assert.equal(report.contextLevel, "unknown");
+  assert.match(report.recommendation, /配置|预算|unknown/i);
 });
 
 test("formatTokenUsage degrades for missing or invalid budgets", () => {

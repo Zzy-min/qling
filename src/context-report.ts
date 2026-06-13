@@ -9,8 +9,11 @@ export interface ContextReport {
   messageCount: number;
   tokens: number;
   tokenSource: "provider" | "estimate" | "unknown";
+  tokenSourceDescription: string;
   maxTokens: number | null;
   tokenUsagePercent: number | null;
+  contextLevel: "ok" | "watch" | "critical" | "unknown";
+  recommendation: string;
   compactions: number;
   workspaceDir: string;
   stateDir: string;
@@ -59,6 +62,37 @@ export function formatTokenUsage(tokens: number, maxTokens: number | null | unde
   return `${used.toLocaleString()} / ${maxTokens.toLocaleString()} (${pct}%)`;
 }
 
+function classifyContextLevel(percent: number | null): ContextReport["contextLevel"] {
+  if (percent === null) return "unknown";
+  if (percent >= 90) return "critical";
+  if (percent >= 70) return "watch";
+  return "ok";
+}
+
+function describeContextRecommendation(level: ContextReport["contextLevel"]): string {
+  switch (level) {
+    case "critical":
+      return "立即保存 checkpoint 并执行 /compact，避免后续回复被截断或上下文丢失。";
+    case "watch":
+      return "建议在继续长任务前保存 checkpoint；如输出变长，提前 /compact。";
+    case "ok":
+      return "当前上下文占用正常，可继续推进。";
+    default:
+      return "未配置可用 token 预算，建议设置 max token budget 以获得准确上下文水位。";
+  }
+}
+
+function describeTokenSource(source: ContextReport["tokenSource"]): string {
+  switch (source) {
+    case "provider":
+      return "provider reported usage; suitable for accurate accounting when the provider returns usage.";
+    case "estimate":
+      return "local estimate; useful for context planning but not exact billing.";
+    default:
+      return "unknown; provider usage and local estimate are unavailable.";
+  }
+}
+
 export async function buildContextReport(
   context: SlashCommandContext,
   options: ContextReportOptions = {}
@@ -82,15 +116,21 @@ export async function buildContextReport(
   const cacheDir = resolveCacheDir(env, stateDir);
   const maxTokens = resolveMaxTokens(options, agentLoop);
   const tokens = Number(stats.tokens ?? 0);
+  const tokenUsagePercent = maxTokens ? Math.round((tokens / maxTokens) * 100) : null;
+  const tokenSource = normalizeTokenSource(stats.tokenSource);
+  const contextLevel = classifyContextLevel(tokenUsagePercent);
 
   return {
     sessionId: stats.sessionId || agentLoop.getSessionId?.() || "-",
     turnCount: Number(stats.turnCount ?? 0),
     messageCount: Array.isArray(messages) ? messages.length : Number(stats.messageCount ?? 0),
     tokens,
-    tokenSource: normalizeTokenSource(stats.tokenSource),
+    tokenSource,
+    tokenSourceDescription: describeTokenSource(tokenSource),
     maxTokens,
-    tokenUsagePercent: maxTokens ? Math.round((tokens / maxTokens) * 100) : null,
+    tokenUsagePercent,
+    contextLevel,
+    recommendation: describeContextRecommendation(contextLevel),
     compactions: Number(stats.compactions ?? stats.compactionCount ?? 0),
     workspaceDir: context.workspaceDir || agentLoop.getWorkspaceDir?.() || process.cwd(),
     stateDir,
@@ -107,15 +147,21 @@ export async function buildLocalContextReport(options: LocalContextReportOptions
   const maxTokens = typeof options.maxTokens === "number" && options.maxTokens > 0
     ? options.maxTokens
     : null;
+  const tokenUsagePercent = maxTokens ? 0 : null;
+  const tokenSource = "unknown";
+  const contextLevel = classifyContextLevel(tokenUsagePercent);
 
   return {
     sessionId: "-",
     turnCount: 0,
     messageCount: 0,
     tokens: 0,
-    tokenSource: "unknown",
+    tokenSource,
+    tokenSourceDescription: describeTokenSource(tokenSource),
     maxTokens,
-    tokenUsagePercent: maxTokens ? 0 : null,
+    tokenUsagePercent,
+    contextLevel,
+    recommendation: describeContextRecommendation(contextLevel),
     compactions: 0,
     workspaceDir: options.workspaceDir,
     stateDir: options.stateDir,
@@ -136,6 +182,9 @@ export function formatContextReport(report: ContextReport): string[] {
     `消息数     : ${report.messageCount}`,
     `Token      : ${formatTokenUsage(report.tokens, report.maxTokens)}`,
     `Token 来源 : ${report.tokenSource}`,
+    `Token 说明 : ${report.tokenSourceDescription}`,
+    `上下文状态 : ${report.contextLevel}`,
+    `建议       : ${report.recommendation}`,
     `压缩次数   : ${report.compactions}`,
     `Workspace  : ${report.workspaceDir}`,
     `State dir  : ${report.stateDir}`,

@@ -93,12 +93,12 @@ const TOPICS: HelpTopic[] = [
   {
     id: "memory",
     title: "本地记忆",
-    summary: "浏览、搜索本地记忆、蒸馏实践与知识图谱摘要。",
+    summary: "浏览、搜索本地记忆、上下文记忆来源、蒸馏实践与知识图谱摘要。",
     aliases: ["memory", "/memory", "记忆", "/记忆"],
-    slashUsage: "/memory [count|search <query>|practices|graph|show <id>]",
-    cliUsage: "{bin} memory [status|search|practices|graph|show]",
-    slashExamples: ["/memory", "/memory search 权限 5", "/记忆 图谱 5"],
-    cliExamples: ["{bin} memory status", "{bin} memory search 权限 5", "{bin} 记忆 图谱 5"],
+    slashUsage: "/memory [count|search <query>|sources|practices|graph|show <id>]",
+    cliUsage: "{bin} memory [status|search|sources|practices|graph|show]",
+    slashExamples: ["/memory", "/memory sources", "/memory search 权限 5", "/记忆 图谱 5"],
+    cliExamples: ["{bin} memory status", "{bin} memory sources", "{bin} memory search 权限 5", "{bin} 记忆 图谱 5"],
     boundary: "读取本地记忆索引和知识库摘要；默认不读取会话正文、不调用模型、不联网。",
   },
   {

@@ -161,6 +161,17 @@ test("slash checkpoint help topic shows local-only boundary", async () => {
   assert.match(joined, /不调用模型/);
 });
 
+test("slash memory help topic advertises sources subcommand", async () => {
+  const { ctx, lines } = createContext();
+  const handled = await handleSlashCommand("/help memory", ctx);
+
+  assert.equal(handled, true);
+  const joined = lines.join("\n");
+  assert.match(joined, /Topic\s*: memory/);
+  assert.match(joined, /sources/);
+  assert.match(joined, /上下文记忆来源|记忆来源/);
+});
+
 test("slash help topic shows focused local command help", async () => {
   const { ctx, lines } = createContext();
   const handled = await handleSlashCommand("/help exports", ctx);
