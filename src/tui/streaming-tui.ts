@@ -16,10 +16,21 @@
 // ============================================================
 
 import * as readline from "readline";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { default as stringWidth } from "string-width";
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
-import { formatTuiHeader } from "./chrome.js";
+import {
+  formatBottomHints,
+  formatInputFrame,
+  formatResultBox,
+  formatRoleHeader,
+  formatToolTimelineRow,
+  formatTopBar,
+  truncateVisible,
+} from "./shell.js";
 
 // ── ANSI 颜色工具 ───────────────────────────────────────
 
@@ -53,6 +64,16 @@ const S = {
 
 const DIM = (s: string): string => `\x1b[2m${s}\x1b[0m`;
 const BOLD = (s: string): string => `\x1b[1m${s}\x1b[0m`;
+
+function resolvePackageVersion(): string {
+  try {
+    const packagePath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+    const parsed = JSON.parse(readFileSync(packagePath, "utf8"));
+    return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 // ── 显示宽度工具 ────────────────────────────────────────
 
@@ -179,6 +200,7 @@ export type AgentEvent =
 export class StreamUI {
   private model: string;
   private tools: number;
+  private chromeStatus: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean } = {};
   private input = new InputBuffer();
   private running: boolean = false;
   private inputCallback: ((cmd: string) => Promise<void>) | null = null;
@@ -238,6 +260,10 @@ export class StreamUI {
     this.statusLineEnabled = enabled;
   }
 
+  setChromeStatus(status: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean }): void {
+    this.chromeStatus = { ...this.chromeStatus, ...status };
+  }
+
   setHistory(entries: string[]): void {
     this.input.setHistory(entries);
   }
@@ -263,26 +289,31 @@ export class StreamUI {
   // ── Header（只调用一次） ───────────────────────────
 
   private printHeader(): void {
-    const lines = formatTuiHeader({
+    const lines = formatTopBar({
+      productName: "轻灵",
+      englishName: "Qling",
+      version: resolvePackageVersion(),
       model: this.model,
-      tools: this.tools,
-      cwd: process.cwd(),
+      workspace: this.chromeStatus.workspace ?? process.cwd(),
+      tokens: this.chromeStatus.tokens ?? 0,
+      branch: this.chromeStatus.branch ?? "-",
+      ready: this.chromeStatus.ready ?? true,
+      width: process.stdout.columns || 120,
     });
-    process.stdout.write(S.p(">_ ") + S.p(lines[0]) + "\n");
+    process.stdout.write(S.p(lines[0]) + "\n");
     process.stdout.write(S.d(lines[1]) + "\n");
-    process.stdout.write(S.d(lines[2]) + "\n");
-    process.stdout.write(S.d(lines[3]) + "\n");
   }
 
   // ── 底部输入栏 ────────────────────────────────────
 
   private printInputBar(): void {
     const w = process.stdout.columns || 80;
-    const sep = "─".repeat(Math.max(1, w));
-    process.stdout.write(DIM(sep) + "\n");
     if (this.statusLineEnabled && this.statusLine) {
       process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
     }
+    const frame = formatInputFrame({ placeholder: "输入任务，/help 查看命令", width: w });
+    process.stdout.write(S.p(frame.join("\n")) + "\n");
+    process.stdout.write(DIM(truncateVisible(formatBottomHints(), Math.max(20, w))) + "\n");
     this.writeInputValue();
   }
 
@@ -311,10 +342,14 @@ export class StreamUI {
 
   showPrompt(): void {
     if (!this.running) return;
-    process.stdout.write("\n" + DIM("─".repeat(Math.max(1, process.stdout.columns || 80))) + "\n");
+    const w = process.stdout.columns || 80;
+    process.stdout.write("\n");
     if (this.statusLineEnabled && this.statusLine) {
-      process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, process.stdout.columns || 80))) + "\n");
+      process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
     }
+    const frame = formatInputFrame({ placeholder: "输入任务，/help 查看命令", width: w });
+    process.stdout.write(S.p(frame.join("\n")) + "\n");
+    process.stdout.write(DIM(truncateVisible(formatBottomHints(), Math.max(20, w))) + "\n");
     this.writeInputValue();
   }
 
@@ -705,11 +740,11 @@ export class StreamUI {
 
   // ── 工具块渲染 ────────────────────────────────────
 
-  private printToolHeader(tool: string, command: string, status: "running" | "success" | "error"): void {
-    const icon = status === "running" ? S.y("●") : status === "success" ? S.g("●") : S.r("●");
-    const statusLabel = status === "running" ? DIM("running") : status === "success" ? S.g("pass") : S.r("fail");
-    const cmdDisplay = trunc(command, 80);
-    process.stdout.write("\n" + icon + " " + S.s(tool) + "(" + S.d(cmdDisplay) + ")" + "\n");
+  private printToolHeader(tool: string, command: string, status: "running" | "success" | "error", durationMs = 0): void {
+    const w = process.stdout.columns || 100;
+    const row = formatToolTimelineRow({ tool, command, status, durationMs, width: w });
+    const color = status === "error" ? S.r : status === "success" ? S.g : S.m;
+    process.stdout.write("\n" + color(row));
   }
 
   private printToolOutput(output: string, status: "success" | "error"): void {
@@ -744,17 +779,16 @@ export class StreamUI {
 
   appendToolStart(tool: string, command: string): void {
     this.currentToolRunning = true;
+    process.stdout.write("\n" + S.m(formatRoleHeader("executing")));
     this.printToolHeader(tool, command, "running");
   }
 
   appendToolSuccess(tool: string, command: string, output: string, durationMs: number): void {
     if (this.currentToolRunning) {
-      process.stdout.write("\x1b[1A\r\x1b[0K");
       this.currentToolRunning = false;
     }
-    this.printToolHeader(tool, command, "success");
-    const dur = durationMs >= 1000 ? (durationMs / 1000).toFixed(1) + "s" : durationMs + "ms";
-    process.stdout.write("  " + S.g("└ " + dur) + "\n");
+    this.printToolHeader(tool, command, "success", durationMs);
+    process.stdout.write("\n");
     if (output.trim()) {
       this.printToolOutput(output, "success");
     }
@@ -762,12 +796,10 @@ export class StreamUI {
 
   appendToolError(tool: string, command: string, error: string, durationMs: number): void {
     if (this.currentToolRunning) {
-      process.stdout.write("\x1b[1A\r\x1b[0K");
       this.currentToolRunning = false;
     }
-    this.printToolHeader(tool, command, "error");
-    const dur = durationMs >= 1000 ? (durationMs / 1000).toFixed(1) + "s" : durationMs + "ms";
-    process.stdout.write("  " + S.r("└ Error: ") + S.r(error.split("\n")[0]) + " " + DIM("(" + dur + ")") + "\n");
+    this.printToolHeader(tool, command, "error", durationMs);
+    process.stdout.write("\n  " + S.r("Error: ") + S.r(error.split("\n")[0]) + "\n");
     const rest = error.split("\n");
     if (rest.length > 1) {
       this.printToolOutput(rest.slice(1).join("\n"), "error");
@@ -777,9 +809,10 @@ export class StreamUI {
   appendThinking(text: string): void {
     const lines = text.split("\n").filter((l) => l.trim());
     if (lines.length === 0) return;
-    process.stdout.write("\n" + S.s("◆ ") + S.s(lines[0]));
+    process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
+    process.stdout.write(lines[0]);
     for (let i = 1; i < lines.length; i++) {
-      process.stdout.write("\n  " + DIM(lines[i]));
+      process.stdout.write("\n" + lines[i]);
     }
   }
 
@@ -797,6 +830,14 @@ export class StreamUI {
     const lines = text.split("\n");
     for (const line of lines) {
       process.stdout.write(line.trim() ? "\n" + S.b("› ") + line : "\n");
+    }
+  }
+
+  appendUserInput(text: string): void {
+    const lines = text.split("\n");
+    process.stdout.write("\n" + S.s(formatRoleHeader("user")) + "\n");
+    for (const line of lines) {
+      process.stdout.write(line + "\n");
     }
   }
 
@@ -818,12 +859,24 @@ export class StreamUI {
         return;
       }
     }
-    process.stdout.write("\n" + S.p("● ") + S.p(BOLD("回答")) + "\n");
+    process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
+    if (this.shouldBoxFinalLines(lines)) {
+      for (const line of formatResultBox(lines, process.stdout.columns || 100)) {
+        process.stdout.write(S.d(line) + "\n");
+      }
+      return;
+    }
     for (const line of lines) {
       if (line.trim()) {
-        process.stdout.write("  " + line + "\n");
+        process.stdout.write(line + "\n");
       }
     }
+  }
+
+  private shouldBoxFinalLines(lines: string[]): boolean {
+    const nonEmpty = lines.filter((line) => line.trim());
+    if (nonEmpty.length < 2) return false;
+    return nonEmpty.some((line) => /[├└│─]/.test(line) || /^\s*[./\w-]+\/\s*$/.test(line));
   }
 
   private parseTableLines(lines: string[]): string[][] {
@@ -849,6 +902,6 @@ export class StreamUI {
 
   appendDone(durationMs: number): void {
     const dur = fmtDur(durationMs);
-    process.stdout.write("\n" + S.g("✓ 完成") + " " + DIM(dur));
+    process.stdout.write("\n" + S.g("☑ 分析完成") + " " + DIM(dur));
   }
 }

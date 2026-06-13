@@ -18,7 +18,7 @@ import { SessionGoalManager } from "../session/session-goal-manager.js";
 import { SessionGoalController } from "../session/goal-controller.js";
 import type { SavedSessionSummary } from "../session/session-registry.js";
 import { DaemonSessionApi } from "../session/daemon-session-api.js";
-import { buildStatusLine } from "../statusline.js";
+import { buildStatusLine, collectStatusLineSnapshot } from "../statusline.js";
 import { appendInputHistory, loadInputHistory } from "./input-history.js";
 import { SerialInputQueue } from "./input-queue.js";
 
@@ -218,7 +218,15 @@ export class StreamingREPL {
   private async refreshStatusLine(): Promise<void> {
     if (!this.statusLineEnabled) return;
     try {
-      this.ui.setStatusLine(await buildStatusLine(this.createSlashContext()));
+      const context = this.createSlashContext();
+      const snapshot = await collectStatusLineSnapshot(context);
+      this.ui.setStatusLine(await buildStatusLine(context));
+      (this.ui as any).setChromeStatus?.({
+        tokens: snapshot.tokens,
+        branch: snapshot.branch,
+        workspace: this.agent.getWorkspaceDir(),
+        ready: !this.inputQueue.isProcessing,
+      });
     } catch {
       this.ui.setStatusLine(null);
     }
@@ -402,6 +410,7 @@ export class StreamingREPL {
     }
 
     await this.recordLocalInputHistory(input);
+    (this.ui as any).appendUserInput?.(input);
     await this.processPrompt(input);
   }
 

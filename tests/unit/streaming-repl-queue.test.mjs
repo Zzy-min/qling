@@ -39,6 +39,7 @@ function createAgent(stateDir) {
 
 function createUiRecorder() {
   const prompts = [];
+  const userInputs = [];
   const validations = [];
   const outputs = [];
   const errors = [];
@@ -46,6 +47,7 @@ function createUiRecorder() {
   let statusLine = null;
   return {
     prompts,
+    userInputs,
     validations,
     outputs,
     errors,
@@ -60,6 +62,9 @@ function createUiRecorder() {
     },
     appendValidation: (_status, text) => {
       validations.push(String(text));
+    },
+    appendUserInput: (text) => {
+      userInputs.push(String(text));
     },
     appendOutput: (text = "") => {
       outputs.push(String(text));
@@ -555,7 +560,34 @@ test("streaming repl persists real prompts to input history", async () => {
     await repl.handleUserInput("real user prompt");
 
     assert.deepEqual(seen, ["real user prompt"]);
+    assert.deepEqual(ui.userInputs, ["real user prompt"]);
     assert.deepEqual(JSON.parse(await readFile(join(stateDir, "input-history.json"), "utf8")), ["real user prompt"]);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl does not render slash commands as user prompt blocks", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-user-block-slash-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+    repl.scheduler = {
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async () => {
+      throw new Error("slash command should not run as a prompt");
+    };
+
+    await repl.handleUserInput("/sessions");
+
+    assert.deepEqual(ui.userInputs, []);
+    assert.equal(ui.outputs.some((line) => /已保存会话|\(无\)/.test(line)), true);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

@@ -255,13 +255,40 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.equal(ui.input.cursorPos, "draft prom".length);
     assert.deepEqual(submitted, []);
     assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
-    assert.match(getOutput(), /轻灵 · Agent CLI/);
-    assert.match(getOutput(), /mode=local-first/);
-    assert.match(getOutput(), /\/help slash/);
-    assert.match(getOutput(), /\/privacy boundary/);
-    assert.match(getOutput(), /Ctrl\+Z/);
+    assert.match(getOutput(), /轻灵 Qling v/);
+    assert.match(getOutput(), /Workspace:/);
+    assert.match(getOutput(), /Model: test-model/);
+    assert.match(getOutput(), /Tokens:/);
+    assert.match(getOutput(), /Git:/);
+    assert.match(getOutput(), /输入任务，\/help 查看命令/);
+    assert.match(getOutput(), /Enter 发送/);
+    assert.match(getOutput(), /Ctrl\+C 中断/);
+    assert.match(getOutput(), /\/model 切换模型/);
     assert.match(getOutput(), /model=test session=session-1/);
     assert.match(getOutput(), /draft prompt/);
+  });
+});
+
+test("stream ui renders user, assistant, executing timeline, and completion blocks", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    ui.appendUserInput("帮我分析这个项目结构");
+    ui.appendThinking("好的，我先扫描项目目录。");
+    ui.appendToolStart("read", "cat package.json");
+    ui.appendToolSuccess("read", "cat package.json", "{\"name\":\"qling\"}", 89);
+    ui.appendFinal("项目采用模块化结构。");
+    ui.appendDone(120);
+
+    const output = getOutput();
+    assert.match(output, /You/);
+    assert.match(output, /帮我分析这个项目结构/);
+    assert.match(output, /轻灵/);
+    assert.match(output, /正在执行/);
+    assert.match(output, /读取文件/);
+    assert.match(output, /package\.json/);
+    assert.match(output, /89ms/);
+    assert.match(output, /分析完成/);
   });
 });
 
