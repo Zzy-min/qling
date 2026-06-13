@@ -260,12 +260,26 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.match(getOutput(), /Model: test-model/);
     assert.match(getOutput(), /Tokens:/);
     assert.match(getOutput(), /Git:/);
-    assert.match(getOutput(), /输入任务，\/help 查看命令/);
+    assert.match(getOutput(), /│ › draft prompt/);
     assert.match(getOutput(), /Enter 发送/);
     assert.match(getOutput(), /Ctrl\+C 中断/);
     assert.match(getOutput(), /\/model 切换模型/);
     assert.match(getOutput(), /model=test session=session-1/);
     assert.match(getOutput(), /draft prompt/);
+  });
+});
+
+test("stream ui prompt renders inside input frame without duplicate bare prompt", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+    ui.setStatusLine("model=test session=session-1");
+
+    ui.printInputBar();
+
+    const output = getOutput();
+    assert.match(output, /│ › 输入任务，\/help 查看命令/);
+    assert.doesNotMatch(output, /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
+    assert.match(output, /\/exit 退出/);
   });
 });
 

@@ -24,11 +24,11 @@ import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
   formatBottomHints,
-  formatInputFrame,
   formatResultBox,
   formatRoleHeader,
   formatToolTimelineRow,
   formatTopBar,
+  padVisible,
   truncateVisible,
 } from "./shell.js";
 
@@ -311,10 +311,10 @@ export class StreamUI {
     if (this.statusLineEnabled && this.statusLine) {
       process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
     }
-    const frame = formatInputFrame({ placeholder: "输入任务，/help 查看命令", width: w });
-    process.stdout.write(S.p(frame.join("\n")) + "\n");
-    process.stdout.write(DIM(truncateVisible(formatBottomHints(), Math.max(20, w))) + "\n");
-    this.writeInputValue();
+    process.stdout.write(DIM(formatBottomHints()) + "\n");
+    process.stdout.write(S.p(this.inputFrameTop()) + "\n");
+    this.writeInputValue(true);
+    this.syncCursor();
   }
 
   private backToPrompt(): void {
@@ -331,13 +331,38 @@ export class StreamUI {
   private syncCursor(): void {
     const beforeCursor = this.input.value.slice(0, this.input.cursorPos);
     const lastLine = beforeCursor.split("\n").at(-1) ?? "";
-    const col = 2 + sw(lastLine);
+    const col = 5 + sw(lastLine);
     process.stdout.write("\x1b[" + col + "G");
   }
 
-  private writeInputValue(): void {
-    const rendered = this.input.value.replace(/\n/g, "\n  ");
-    process.stdout.write(S.p("› ") + rendered);
+  private inputFrameWidth(): number {
+    return Math.max(40, process.stdout.columns || 80);
+  }
+
+  private inputFrameContentWidth(): number {
+    return Math.max(20, this.inputFrameWidth() - 4);
+  }
+
+  private inputFrameTop(): string {
+    return "┌" + "─".repeat(this.inputFrameContentWidth() + 2) + "┐";
+  }
+
+  private inputFrameBottom(): string {
+    return "└" + "─".repeat(this.inputFrameContentWidth() + 2) + "┘";
+  }
+
+  private writeInputValue(usePlaceholder = false): void {
+    const contentWidth = this.inputFrameContentWidth();
+    const lines = this.input.value
+      ? this.input.value.split("\n")
+      : [usePlaceholder ? "输入任务，/help 查看命令" : ""];
+
+    for (let i = 0; i < lines.length; i++) {
+      const prefix = i === 0 ? "› " : "  ";
+      const rendered = truncateVisible(prefix + (lines[i] ?? ""), contentWidth);
+      if (i > 0) process.stdout.write("\n");
+      process.stdout.write(S.p("│ " + padVisible(rendered, contentWidth) + " │"));
+    }
   }
 
   showPrompt(): void {
@@ -347,10 +372,10 @@ export class StreamUI {
     if (this.statusLineEnabled && this.statusLine) {
       process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
     }
-    const frame = formatInputFrame({ placeholder: "输入任务，/help 查看命令", width: w });
-    process.stdout.write(S.p(frame.join("\n")) + "\n");
-    process.stdout.write(DIM(truncateVisible(formatBottomHints(), Math.max(20, w))) + "\n");
-    this.writeInputValue();
+    process.stdout.write(DIM(formatBottomHints()) + "\n");
+    process.stdout.write(S.p(this.inputFrameTop()) + "\n");
+    this.writeInputValue(true);
+    this.syncCursor();
   }
 
   // ── 键盘输入处理 ─────────────────────────────────
@@ -504,7 +529,7 @@ export class StreamUI {
     const cmd = this.input.submit();
     if (!cmd) return;
     this.lastEmptyCtrlCAt = 0;
-    process.stdout.write("\n");
+    process.stdout.write("\n" + S.p(this.inputFrameBottom()) + "\n");
     if (this.inputCallback) {
       this.inputCallback(cmd);
     }

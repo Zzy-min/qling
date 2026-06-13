@@ -17,6 +17,8 @@
 
 - `printHeader()` 使用 `formatTopBar()`，保留纯终端输出。
 - `printInputBar()` / `showPrompt()` 使用 `formatInputFrame()` 和 `formatBottomHints()`。
+- `writeInputValue()` 渲染边框内的实时输入行，避免输入框 placeholder 与裸 prompt 同时出现。
+- `syncCursor()` 按边框内 `│ › ` 前缀重新计算光标列。
 - 新增 `appendUserInput(text)`，由 REPL 对普通 prompt 调用。
 - `appendThinking()`、`appendToolStart()`、`appendToolSuccess()`、`appendToolError()`、`appendFinal()`、`appendDone()` 切换为目标图角色/时间线风格。
 - 保留现有快捷键行为、输入缓冲、多行、历史、Ctrl+O 长输出折叠。
