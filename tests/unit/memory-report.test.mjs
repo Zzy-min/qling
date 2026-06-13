@@ -7,11 +7,13 @@ import Database from "better-sqlite3";
 
 import {
   buildLocalMemoryReport,
+  buildLocalMemorySourcesReport,
   findLocalMemoryEntry,
   formatLocalMemoryEntry,
   formatLocalMemoryGraphReport,
   formatLocalMemoryPracticesReport,
   formatLocalMemoryReport,
+  formatLocalMemorySourcesReport,
   formatLocalMemorySearchReport,
   listLocalMemoryGraph,
   listLocalMemoryPractices,
@@ -112,6 +114,35 @@ test("memory report includes cognitive index table counts when available", async
     assert.equal(report.cognitiveIndex.kgNodes, 2);
     assert.equal(report.cognitiveIndex.kgEdges, 1);
     assert.equal(report.cognitiveIndex.distilledPractices, 1);
+  });
+});
+
+test("memory sources report maps local context stores without reading session bodies", async () => {
+  await withTempDir(async (root) => {
+    await writeMemory(root, [entry("mem_one")]);
+    await fs.mkdir(path.join(root, "sessions"), { recursive: true });
+    await fs.writeFile(path.join(root, "sessions", "checkpoint.json"), "SECRET_MEMORY_SOURCE_SESSION_BODY", "utf8");
+    await fs.mkdir(path.join(root, "daemon"), { recursive: true });
+
+    const report = await buildLocalMemorySourcesReport(root);
+    const output = formatLocalMemorySourcesReport(report).join("\n");
+
+    assert.equal(report.sources.length, 4);
+    assert.deepEqual(report.sources.map((item) => item.id), [
+      "persisted_memory",
+      "cognitive_index",
+      "session_checkpoints",
+      "goal_task_state",
+    ]);
+    assert.equal(report.sources[0].exists, true);
+    assert.match(output, /本地记忆来源/);
+    assert.match(output, /persisted_memory/);
+    assert.match(output, /context recall/i);
+    assert.match(output, /session_checkpoints/);
+    assert.match(output, /resume metadata/i);
+    assert.match(output, /只读/);
+    assert.match(output, /不读取 session 正文/);
+    assert.doesNotMatch(output, /SECRET_MEMORY_SOURCE_SESSION_BODY/);
   });
 });
 

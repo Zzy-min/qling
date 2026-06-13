@@ -112,9 +112,41 @@ test("slash help includes loop/tasks/compact", async () => {
   assert.match(joined, /\/钩子/);
   assert.match(joined, /\/memory/);
   assert.match(joined, /\/memory search/);
+  assert.match(joined, /\/memory sources/);
   assert.match(joined, /\/memory practices/);
   assert.match(joined, /\/memory graph/);
   assert.match(joined, /\/记忆/);
+});
+
+test("slash memory sources shows local context source map", async () => {
+  await withTempDir(async (root) => {
+    await mkdir(join(root, ".qling", "memory"), { recursive: true });
+    await writeFile(join(root, ".qling", "memory", "memory.json"), "[]", "utf8");
+    await mkdir(join(root, ".qling", "sessions"), { recursive: true });
+    await writeFile(join(root, ".qling", "sessions", "session.json"), "SECRET_SLASH_MEMORY_SOURCE_BODY", "utf8");
+    const { ctx, lines } = createContext({ homeDir: root });
+
+    const handled = await handleSlashCommand("/memory sources", ctx);
+
+    assert.equal(handled, true);
+    const joined = lines.join("\n");
+    assert.match(joined, /本地记忆来源/);
+    assert.match(joined, /persisted_memory/);
+    assert.match(joined, /session_checkpoints/);
+    assert.match(joined, /不读取 session 正文/);
+    assert.doesNotMatch(joined, /SECRET_SLASH_MEMORY_SOURCE_BODY/);
+  });
+});
+
+test("slash memory chinese sources alias shows local context source map", async () => {
+  await withTempDir(async (root) => {
+    const { ctx, lines } = createContext({ homeDir: root });
+
+    const handled = await handleSlashCommand("/记忆 来源", ctx);
+
+    assert.equal(handled, true);
+    assert.match(lines.join("\n"), /本地记忆来源/);
+  });
 });
 
 test("slash checkpoint help topic shows local-only boundary", async () => {

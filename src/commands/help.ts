@@ -33,6 +33,7 @@ export const HELP_LINES = [
   "/exports [count], /导出列表 - 查看本地 Markdown 导出列表",
   "/memory [count], /记忆   - 查看本地持久化记忆索引",
   "/memory search <query>   - 搜索本地持久化记忆并显示匹配路径",
+  "/memory sources          - 查看本地上下文记忆来源与边界",
   "/memory practices [count] - 查看本地蒸馏实践摘要",
   "/memory graph [count]   - 查看本地知识图谱节点摘要",
   "/memory show <id>       - 查看指定本地记忆详情",

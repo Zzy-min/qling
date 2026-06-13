@@ -2,12 +2,14 @@ import { homedir } from "os";
 import { join } from "path";
 import {
   buildLocalMemoryReport,
+  buildLocalMemorySourcesReport,
   findLocalMemoryEntry,
   formatLocalMemoryEntry,
   formatLocalMemoryGraphReport,
   formatLocalMemoryPracticesReport,
   formatLocalMemoryReport,
   formatLocalMemorySearchReport,
+  formatLocalMemorySourcesReport,
   listLocalMemoryGraph,
   listLocalMemoryPractices,
   parseMemoryReportCount,
@@ -41,6 +43,10 @@ function normalizeSubcommand(value: string | undefined): string {
     "知识图谱": "graph",
     "search": "search",
     "搜索": "search",
+    "source": "sources",
+    "sources": "sources",
+    "来源": "sources",
+    "来源图": "sources",
     "show": "show",
     "查看": "show",
     "详情": "show",
@@ -89,6 +95,14 @@ export const memoryCommand: SlashCommand = {
         count: parseMemoryReportCount(rest[0]),
       });
       for (const line of formatLocalMemoryPracticesReport(report)) {
+        context.writeLine(line);
+      }
+      return;
+    }
+
+    if (sub === "sources") {
+      const report = await buildLocalMemorySourcesReport(stateDir);
+      for (const line of formatLocalMemorySourcesReport(report)) {
         context.writeLine(line);
       }
       return;

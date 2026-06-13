@@ -61,6 +61,20 @@ export interface LocalMemoryReport {
   warnings: string[];
 }
 
+export interface LocalMemorySourceEntry {
+  id: string;
+  label: string;
+  path: string;
+  exists: boolean;
+  role: string;
+  boundary: string;
+}
+
+export interface LocalMemorySourcesReport {
+  stateDir: string;
+  sources: LocalMemorySourceEntry[];
+}
+
 export interface LocalMemoryReportOptions {
   count?: string | number;
 }
@@ -342,6 +356,47 @@ export async function buildLocalMemoryReport(
     cognitiveIndex,
     warnings,
   };
+}
+
+export async function buildLocalMemorySourcesReport(stateDir: string): Promise<LocalMemorySourcesReport> {
+  const memoryDir = join(stateDir, "memory");
+  const sourceSpecs = [
+    {
+      id: "persisted_memory",
+      label: "Persisted memory",
+      path: join(memoryDir, "memory.json"),
+      role: "context recall",
+      boundary: "条目内容可被显式列表、搜索和详情审计；本报告只检查文件存在性。",
+    },
+    {
+      id: "cognitive_index",
+      label: "Cognitive index",
+      path: join(memoryDir, "cognitive_knowledge.db"),
+      role: "context recall metadata",
+      boundary: "只用于向量、知识图谱和蒸馏实践索引；本报告不打开数据库。",
+    },
+    {
+      id: "session_checkpoints",
+      label: "Session checkpoints",
+      path: join(stateDir, "sessions"),
+      role: "resume metadata",
+      boundary: "用于会话恢复和 checkpoint；本报告不读取 session 正文。",
+    },
+    {
+      id: "goal_task_state",
+      label: "Goal and task state",
+      path: stateDir,
+      role: "task progress metadata",
+      boundary: "goal/task 进度保存在 session-goals、session-tasks 等本地文件；本报告不读取任务正文。",
+    },
+  ];
+
+  const sources = await Promise.all(sourceSpecs.map(async (source): Promise<LocalMemorySourceEntry> => ({
+    ...source,
+    exists: await exists(source.path),
+  })));
+
+  return { stateDir, sources };
 }
 
 export async function searchLocalMemoryEntries(
@@ -666,6 +721,30 @@ export function formatLocalMemoryReport(report: LocalMemoryReport): string[] {
   });
   lines.push("-----------------------------------------");
   lines.push("说明     : 列表只读取本地持久化记忆与索引元数据；用 /memory show <id> 审计单条内容。");
+  lines.push("");
+  return lines;
+}
+
+export function formatLocalMemorySourcesReport(report: LocalMemorySourcesReport): string[] {
+  const lines = [
+    "",
+    "🧭 本地记忆来源",
+    "-----------------------------------------",
+    `State dir : ${report.stateDir}`,
+    "",
+  ];
+
+  report.sources.forEach((source, index) => {
+    lines.push(`${index + 1}. ${source.id}`);
+    lines.push(`   名称     : ${source.label}`);
+    lines.push(`   路径     : ${source.path}`);
+    lines.push(`   状态     : ${source.exists ? "exists" : "missing"}`);
+    lines.push(`   角色     : ${source.role}`);
+    lines.push(`   边界     : ${source.boundary}`);
+  });
+
+  lines.push("-----------------------------------------");
+  lines.push("说明     : 只读检查本地来源路径是否存在；不读取 session 正文、不调用模型、不联网。");
   lines.push("");
   return lines;
 }

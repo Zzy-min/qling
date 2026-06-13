@@ -499,6 +499,7 @@ ${binName} - 通用 CLI Agent
   ${binName} memory status [count]    # 查看本地持久化记忆索引
   ${binName} memory list [count]      # memory status 的列表别名
   ${binName} memory search <query> [count] # 搜索本地持久化记忆
+  ${binName} memory sources           # 查看本地上下文记忆来源与边界
   ${binName} memory practices [count] # 查看本地蒸馏实践摘要
   ${binName} memory graph [count]     # 查看本地知识图谱节点摘要
   ${binName} memory show <id>         # 查看指定本地记忆详情

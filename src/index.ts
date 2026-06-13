@@ -38,7 +38,7 @@ import { formatSessionListReport, listLocalSessions, parseSessionListCount } fro
 import { createLocalSessionCheckpoint, formatLocalSessionCheckpointResult, parseLocalSessionCheckpointArgs } from "./session-checkpoint-report.js";
 import { cancelLocalSessionTask, formatCanceledSessionTask, formatSessionTaskReport, listLocalSessionTasks, parseSessionTaskCount } from "./session-task-report.js";
 import { clearLocalSessionGoal, formatSessionGoalMutation, formatSessionGoalReport, listLocalSessionGoals, setLocalSessionGoal } from "./session-goal-report.js";
-import { buildLocalMemoryReport, findLocalMemoryEntry, formatLocalMemoryEntry, formatLocalMemoryGraphReport, formatLocalMemoryPracticesReport, formatLocalMemoryReport, formatLocalMemorySearchReport, listLocalMemoryGraph, listLocalMemoryPractices, parseMemoryReportCount, parseMemorySearchArgs, searchLocalMemoryEntries } from "./memory-report.js";
+import { buildLocalMemoryReport, buildLocalMemorySourcesReport, findLocalMemoryEntry, formatLocalMemoryEntry, formatLocalMemoryGraphReport, formatLocalMemoryPracticesReport, formatLocalMemoryReport, formatLocalMemorySearchReport, formatLocalMemorySourcesReport, listLocalMemoryGraph, listLocalMemoryPractices, parseMemoryReportCount, parseMemorySearchArgs, searchLocalMemoryEntries } from "./memory-report.js";
 import { buildLocalPrivacyReport, formatPrivacyReport } from "./privacy-report.js";
 import { buildLocalContextReport, formatContextReport } from "./context-report.js";
 import { SHORTCUT_LINES } from "./shortcuts.js";
@@ -256,6 +256,10 @@ function normalizeMemorySubcommand(sub: string | undefined): string {
     "知识图谱": "graph",
     "搜索": "search",
     "search": "search",
+    "source": "sources",
+    "sources": "sources",
+    "来源": "sources",
+    "来源图": "sources",
     "查看": "show",
     "详情": "show",
     "show": "show",
@@ -581,6 +585,11 @@ async function main() {
         console.log(formatLocalMemoryPracticesReport(report).join("\n"));
         return;
       }
+      if (sub === "sources") {
+        const report = await buildLocalMemorySourcesReport(stateDir);
+        console.log(formatLocalMemorySourcesReport(report).join("\n"));
+        return;
+      }
       if (sub === "graph") {
         const report = await listLocalMemoryGraph(stateDir, {
           count: parseMemoryReportCount(memoryArgs[0]),
@@ -589,7 +598,7 @@ async function main() {
         return;
       }
       if (sub !== "reindex") {
-        console.error("用法: qling memory status [count] | list [count] | search <query> [count] | practices [count] | graph [count] | show <id> | reindex [--full]");
+        console.error("用法: qling memory status [count] | list [count] | search <query> [count] | sources | practices [count] | graph [count] | show <id> | reindex [--full]");
         process.exit(1);
       }
     } catch (err) {
