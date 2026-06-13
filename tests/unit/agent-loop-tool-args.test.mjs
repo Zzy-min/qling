@@ -282,6 +282,7 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
 
     assert.equal(finalAnswer, "done");
     assert.equal(agent.getSessionStats().tokens, 321);
+    assert.equal(agent.getSessionStats().tokenSource, "provider");
   } finally {
     await agent.shutdown();
     restoreEnv(prev);
@@ -323,6 +324,7 @@ test("agent-loop: session token stats fall back when provider usage is missing",
     assert.equal(finalAnswer, "done");
     assert.ok(agent.getSessionStats().tokens > 0);
     assert.notEqual(agent.getSessionStats().tokens, 321);
+    assert.equal(agent.getSessionStats().tokenSource, "estimate");
   } finally {
     await agent.shutdown();
     restoreEnv(prev);

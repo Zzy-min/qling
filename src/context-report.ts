@@ -8,6 +8,7 @@ export interface ContextReport {
   turnCount: number;
   messageCount: number;
   tokens: number;
+  tokenSource: "provider" | "estimate" | "unknown";
   maxTokens: number | null;
   tokenUsagePercent: number | null;
   compactions: number;
@@ -70,6 +71,7 @@ export async function buildContextReport(
         sessionId: agentLoop.getSessionId?.() ?? "",
         turnCount: agentLoop.turnCount ?? 0,
         tokens: agentLoop.sessionTokens ?? 0,
+        tokenSource: "unknown",
         compactions: agentLoop.compactionCount ?? 0,
       };
   const messages = typeof agentLoop.getMessagesSnapshot === "function"
@@ -86,6 +88,7 @@ export async function buildContextReport(
     turnCount: Number(stats.turnCount ?? 0),
     messageCount: Array.isArray(messages) ? messages.length : Number(stats.messageCount ?? 0),
     tokens,
+    tokenSource: normalizeTokenSource(stats.tokenSource),
     maxTokens,
     tokenUsagePercent: maxTokens ? Math.round((tokens / maxTokens) * 100) : null,
     compactions: Number(stats.compactions ?? stats.compactionCount ?? 0),
@@ -110,6 +113,7 @@ export async function buildLocalContextReport(options: LocalContextReportOptions
     turnCount: 0,
     messageCount: 0,
     tokens: 0,
+    tokenSource: "unknown",
     maxTokens,
     tokenUsagePercent: maxTokens ? 0 : null,
     compactions: 0,
@@ -131,6 +135,7 @@ export function formatContextReport(report: ContextReport): string[] {
     `轮次       : ${report.turnCount}`,
     `消息数     : ${report.messageCount}`,
     `Token      : ${formatTokenUsage(report.tokens, report.maxTokens)}`,
+    `Token 来源 : ${report.tokenSource}`,
     `压缩次数   : ${report.compactions}`,
     `Workspace  : ${report.workspaceDir}`,
     `State dir  : ${report.stateDir}`,
@@ -142,4 +147,8 @@ export function formatContextReport(report: ContextReport): string[] {
     "说明: /context 只展示本地统计与路径，不输出消息正文，不上传上下文。",
     "",
   ];
+}
+
+function normalizeTokenSource(value: unknown): ContextReport["tokenSource"] {
+  return value === "provider" || value === "estimate" ? value : "unknown";
 }

@@ -14,6 +14,7 @@ function createContext(overrides = {}) {
         sessionId: "session-test",
         turnCount: 3,
         tokens: 24000,
+        tokenSource: "provider",
         compactions: 2,
       }),
       getMessagesSnapshot: () => [
@@ -52,6 +53,7 @@ test("context report includes local session statistics and paths", async () => {
   assert.equal(report.turnCount, 3);
   assert.equal(report.messageCount, 2);
   assert.equal(report.tokens, 24000);
+  assert.equal(report.tokenSource, "provider");
   assert.equal(report.compactions, 2);
   assert.equal(report.tokenUsagePercent, 20);
   assert.match(report.sessionsDir, /sessions$/);
@@ -73,6 +75,7 @@ test("context report formatter is readable and local-first", async () => {
   assert.match(text, /上下文/);
   assert.match(text, /session-test/);
   assert.match(text, /本地/);
+  assert.match(text, /Token 来源\s*: provider/);
 });
 
 test("formatTokenUsage degrades for missing or invalid budgets", () => {

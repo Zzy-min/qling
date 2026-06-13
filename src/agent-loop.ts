@@ -55,6 +55,8 @@ interface ChatUsage {
   totalTokens?: number;
 }
 
+type TokenUsageSource = "provider" | "estimate" | "unknown";
+
 interface ChatResponse {
   content: string;
   tool_calls?: RawToolCall[];
@@ -124,11 +126,12 @@ export class AgentLoop extends AgentEventEmitter {
   getRuntimeRootDir(): string { return this.runtimeRootDir; }
   getWorkspaceDir(): string { return this.config.runtime?.workspaceDir ?? process.cwd(); }
   getMessagesSnapshot(): Message[] { return this.messages.map((message) => ({ ...message })); }
-  getSessionStats(): { sessionId: string; turnCount: number; tokens: number; compactions: number } {
+  getSessionStats(): { sessionId: string; turnCount: number; tokens: number; tokenSource: TokenUsageSource; compactions: number } {
     return {
       sessionId: this.sessionId,
       turnCount: this.turnCount,
       tokens: this.sessionTokens,
+      tokenSource: this.tokenUsageSource,
       compactions: this.compactionCount,
     };
   }
@@ -158,6 +161,7 @@ export class AgentLoop extends AgentEventEmitter {
 
   // Token 追踪（仅计增量，避免每轮重复计算整个上下文）
   private sessionTokens = 0;
+  private tokenUsageSource: TokenUsageSource = "unknown";
   private initPromise: Promise<void>;
 
   // 轻量观测指标
@@ -542,7 +546,9 @@ export class AgentLoop extends AgentEventEmitter {
 
       // 3. API 调用
       const { content, tool_calls, usage } = await this.chat(systemPrompt);
-      const roundTokens = this.resolveRoundTokenUsage(usage, estimatedRoundTokens);
+      const tokenUsage = this.resolveRoundTokenUsage(usage, estimatedRoundTokens);
+      const roundTokens = tokenUsage.tokens;
+      this.tokenUsageSource = tokenUsage.source;
       this.sessionTokens += roundTokens;
       this.tokenBudget.addUsage(roundTokens);
       this.messages.push({ role: "assistant", content, tool_calls });
@@ -859,6 +865,7 @@ export class AgentLoop extends AgentEventEmitter {
     this.messages = [];
     this.turnCount = 0;
     this.sessionTokens = 0;
+    this.tokenUsageSource = "unknown";
     this.tokenBudget.reset();
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
@@ -995,6 +1002,7 @@ export class AgentLoop extends AgentEventEmitter {
     this.messages = snapshot.messages.map((message) => ({ ...message }));
     this.turnCount = snapshot.turnCount;
     this.sessionTokens = snapshot.sessionTokens;
+    this.tokenUsageSource = "unknown";
     this.compactionCount = snapshot.compactionCount;
     this.sessionId = snapshot.sessionId;
     this.sessionCreatedAt = snapshot.createdAt;
@@ -1166,11 +1174,11 @@ export class AgentLoop extends AgentEventEmitter {
     return { totalTokens: Math.floor(total) };
   }
 
-  private resolveRoundTokenUsage(usage: ChatUsage | undefined, fallbackTokens: number): number {
+  private resolveRoundTokenUsage(usage: ChatUsage | undefined, fallbackTokens: number): { tokens: number; source: TokenUsageSource } {
     if (usage?.totalTokens && Number.isFinite(usage.totalTokens) && usage.totalTokens > 0) {
-      return usage.totalTokens;
+      return { tokens: usage.totalTokens, source: "provider" };
     }
-    return fallbackTokens;
+    return { tokens: fallbackTokens, source: "estimate" };
   }
 
   private async verifyLastOperation(): Promise<void> {

@@ -21,6 +21,7 @@ test("statusline formatter includes local interaction state", () => {
     goalStatus: "active",
     activeTasks: 2,
     tokens: 12345,
+    tokenSource: "provider",
     maxTokens: 120000,
     costPer1kTokens: 0.002,
   });
@@ -32,6 +33,7 @@ test("statusline formatter includes local interaction state", () => {
   assert.match(line, /goal=active/);
   assert.match(line, /tasks=2/);
   assert.match(line, /tokens=12,345/);
+  assert.match(line, /toksrc=provider/);
   assert.match(line, /ctx=12,345\/120,000\(10%\)/);
   assert.match(line, /cost≈\$0\.0247/);
 });
@@ -54,6 +56,7 @@ test("statusline formatter degrades when optional fields are absent", () => {
   assert.match(line, /goal=none/);
   assert.match(line, /tasks=0/);
   assert.match(line, /tokens=0/);
+  assert.match(line, /toksrc=unknown/);
   assert.match(line, /ctx=0\/-/);
   assert.match(line, /cost=-/);
   assert.doesNotMatch(line, /queue=/);
@@ -146,6 +149,7 @@ test("statusline snapshot collects input queue metadata from slash context", asy
     isProcessing: true,
   });
   assert.equal(snapshot.maxTokens, 120000);
+  assert.equal(snapshot.tokenSource, "unknown");
 });
 
 test("statusline snapshot reads local cost estimate from env", async () => {
