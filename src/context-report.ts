@@ -1,6 +1,7 @@
 import { join } from "path";
 import { homedir } from "os";
 import type { SlashCommandContext } from "./commands/runtime.js";
+import { formatLocalPanel } from "./output-style.js";
 import { SessionRegistry } from "./session/session-registry.js";
 
 export interface ContextReport {
@@ -173,29 +174,43 @@ export async function buildLocalContextReport(options: LocalContextReportOptions
 }
 
 export function formatContextReport(report: ContextReport): string[] {
-  return [
-    "",
-    "🧭 【本地上下文】",
-    "-----------------------------------------",
-    `Session ID : ${report.sessionId}`,
-    `轮次       : ${report.turnCount}`,
-    `消息数     : ${report.messageCount}`,
-    `Token      : ${formatTokenUsage(report.tokens, report.maxTokens)}`,
-    `Token 来源 : ${report.tokenSource}`,
-    `Token 说明 : ${report.tokenSourceDescription}`,
-    `上下文状态 : ${report.contextLevel}`,
-    `建议       : ${report.recommendation}`,
-    `压缩次数   : ${report.compactions}`,
-    `Workspace  : ${report.workspaceDir}`,
-    `State dir  : ${report.stateDir}`,
-    `Cache dir  : ${report.cacheDir}`,
-    `Sessions   : ${report.sessionsDir}`,
-    `已存快照   : ${report.savedSessionCount}`,
-    `最近保存   : ${report.latestSavedSessionAt ?? "-"}`,
-    "-----------------------------------------",
-    "说明: /context 只展示本地统计与路径，不输出消息正文，不上传上下文。",
-    "",
-  ];
+  return formatLocalPanel({
+    icon: "🧭",
+    title: "本地上下文",
+    sections: [
+      {
+        heading: "会话",
+        rows: [
+          ["Session ID", report.sessionId],
+          ["轮次", report.turnCount],
+          ["消息数", report.messageCount],
+          ["压缩次数", report.compactions],
+        ],
+      },
+      {
+        heading: "Token 与状态",
+        rows: [
+          ["Token", formatTokenUsage(report.tokens, report.maxTokens)],
+          ["Token 来源", report.tokenSource],
+          ["Token 说明", report.tokenSourceDescription],
+          ["上下文状态", report.contextLevel],
+          ["建议", report.recommendation],
+        ],
+      },
+      {
+        heading: "本地路径",
+        rows: [
+          ["Workspace", report.workspaceDir],
+          ["State dir", report.stateDir],
+          ["Cache dir", report.cacheDir],
+          ["Sessions", report.sessionsDir],
+          ["已存快照", report.savedSessionCount],
+          ["最近保存", report.latestSavedSessionAt ?? "-"],
+        ],
+      },
+    ],
+    boundary: "/context 只展示本地统计与路径，不输出消息正文，不上传上下文。",
+  });
 }
 
 function normalizeTokenSource(value: unknown): ContextReport["tokenSource"] {

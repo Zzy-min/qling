@@ -75,13 +75,17 @@ test("context report formatter is readable and local-first", async () => {
   const report = await buildContextReport(createContext(), { maxTokens: 120000 });
   const text = formatContextReport(report).join("\n");
 
-  assert.match(text, /上下文/);
+  assert.match(text, /轻灵 · 本地上下文/);
+  assert.match(text, /会话/);
+  assert.match(text, /Token 与状态/);
+  assert.match(text, /本地路径/);
   assert.match(text, /session-test/);
   assert.match(text, /本地/);
   assert.match(text, /Token 来源\s*: provider/);
   assert.match(text, /上下文状态\s*: ok/);
   assert.match(text, /建议\s*:/);
   assert.match(text, /Token 说明\s*: provider reported/i);
+  assert.match(text, /边界\s*: \/context 只展示本地统计与路径/);
 });
 
 test("context report classifies watch and critical token usage", async () => {
@@ -181,7 +185,7 @@ test("local context report summarizes saved sessions without exposing message bo
     assert.equal(report.sessionId, "-");
     assert.equal(report.savedSessionCount, 2);
     assert.equal(report.latestSavedSessionAt, "2026-05-31T00:02:00.000Z");
-    assert.match(text, /本地上下文/);
+    assert.match(text, /轻灵 · 本地上下文/);
     assert.match(text, /已存快照\s*: 2/);
     assert.doesNotMatch(text, /SECRET_CONTEXT_/);
   } finally {
