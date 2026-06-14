@@ -2,6 +2,7 @@ import { SlashCommand } from "./types.js";
 
 export const configCommand: SlashCommand = {
   name: "/config",
+  aliases: ["/settings"],
   description: "查看当前生效配置",
   usage: "/config",
   execute: async (_args, context) => {

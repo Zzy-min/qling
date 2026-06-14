@@ -52,6 +52,8 @@ function resolveSkillPath(name: string): string | null {
     // name/index.md
     const p2 = join(dir, name, "index.md");
     if (existsSync(p2)) return p2;
+    const p3 = join(dir, name, "SKILL.md");
+    if (existsSync(p3)) return p3;
   }
   return null;
 }

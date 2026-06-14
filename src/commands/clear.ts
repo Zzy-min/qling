@@ -2,7 +2,7 @@ import { SlashCommand } from "./types.js";
 
 export const clearCommand: SlashCommand = {
   name: "/clear",
-  aliases: ["/reset"],
+  aliases: ["/reset", "/new"],
   description: "清空当前对话上下文记忆",
   usage: "/clear",
   execute: async (_args, context) => {

@@ -46,6 +46,8 @@ export interface SlashCommandContext {
     getLine: () => Promise<string>;
   };
   setImmediatePrompt?: (prompt: string) => void;
+  onModelChanged?: (model: string) => void | Promise<void>;
+  writeClipboard?: (text: string) => Promise<void>;
   writeLine: (line?: string) => void;
   writeError: (line?: string) => void;
 }
@@ -64,6 +66,8 @@ export function withDefaultWriters(
     daemonSessionApi: context.daemonSessionApi,
     statusLine: context.statusLine,
     setImmediatePrompt: context.setImmediatePrompt,
+    onModelChanged: context.onModelChanged,
+    writeClipboard: context.writeClipboard,
     writeLine: context.writeLine ?? ((line = "") => console.log(line)),
     writeError: context.writeError ?? ((line = "") => console.error(line)),
     agentLoop: context.agentLoop,

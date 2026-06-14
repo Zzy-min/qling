@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,6 +61,7 @@ function createContext(overrides = {}) {
       reset: () => {},
       getSessionId: () => "session-test",
       getSessionStats: () => ({ sessionId: "session-test", turnCount: 3, tokens: 1234, compactions: 0 }),
+      getMessagesSnapshot: () => [],
       getWorkflowRuntime: () => ({ getCheckpoint: () => null }),
       ...overrides.agentLoop,
     },
@@ -84,6 +85,7 @@ function createContext(overrides = {}) {
     homeDir: overrides.homeDir,
     daemonSessionApi: overrides.daemonSessionApi,
     statusLine: overrides.statusLine,
+    writeClipboard: overrides.writeClipboard,
     setImmediatePrompt: overrides.setImmediatePrompt ?? (() => {}),
     writeLine: (line = "") => {
       lines.push(String(line));
@@ -94,6 +96,144 @@ function createContext(overrides = {}) {
   };
   return { ctx, lines, errors };
 }
+
+test("slash catalog exposes Claude-compatible command shell metadata", () => {
+  const catalog = getSlashCommandCatalog();
+  const byName = new Map(catalog.map((item) => [item.name, item]));
+  for (const name of ["/usage", "/model", "/plan", "/diff", "/copy", "/init", "/rewind", "/login", "/desktop"]) {
+    assert.ok(byName.has(name), `${name} should be discoverable`);
+  }
+  assert.equal(byName.get("/model").category, "session");
+  assert.match(byName.get("/model").argumentHint, /\[model\]/);
+  assert.equal(byName.get("/login").availability, "unsupported");
+});
+
+test("slash unavailable Claude cloud command returns local boundary only", async () => {
+  const { ctx, lines, errors } = createContext();
+  const handled = await handleSlashCommand("/desktop", ctx);
+  assert.equal(handled, true);
+  const text = [...lines, ...errors].join("\n");
+  assert.match(text, /轻灵本地不可用/);
+  assert.match(text, /不调用模型/);
+  assert.match(text, /Claude/);
+});
+
+test("slash model shows and switches current session model without writing config", async () => {
+  let model = "deepseek-chat";
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getModel: () => model,
+      setModel: (next) => {
+        model = next;
+      },
+    },
+  });
+
+  assert.equal(await handleSlashCommand("/model", ctx), true);
+  assert.match(lines.join("\n"), /deepseek-chat/);
+
+  lines.length = 0;
+  assert.equal(await handleSlashCommand("/model qwen-plus", ctx), true);
+  assert.equal(model, "qwen-plus");
+  assert.match(lines.join("\n"), /qwen-plus/);
+  assert.match(lines.join("\n"), /当前会话/);
+});
+
+test("slash plan queues a normal planning prompt through immediate prompt path", async () => {
+  let prompt = "";
+  const { ctx, lines } = createContext({
+    setImmediatePrompt: (value) => {
+      prompt = value;
+    },
+  });
+
+  assert.equal(await handleSlashCommand("/plan 修复认证失败", ctx), true);
+  assert.match(prompt, /修复认证失败/);
+  assert.match(prompt, /先给出计划/);
+  assert.match(lines.join("\n"), /普通会话计划/);
+});
+
+test("slash usage reports token source and context budget", async () => {
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getSessionStats: () => ({
+        sessionId: "session-usage",
+        turnCount: 4,
+        tokens: 24000,
+        tokenSource: "provider",
+        compactions: 1,
+      }),
+    },
+  });
+
+  assert.equal(await handleSlashCommand("/usage", ctx), true);
+  const text = lines.join("\n");
+  assert.match(text, /24,000/);
+  assert.match(text, /provider/);
+  assert.match(text, /上下文|Context/);
+});
+
+test("slash copy copies nth latest assistant reply through local clipboard hook", async () => {
+  let copied = "";
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getMessagesSnapshot: () => [
+        { role: "assistant", content: "first reply" },
+        { role: "user", content: "question" },
+        { role: "assistant", content: "second reply" },
+      ],
+    },
+    writeClipboard: async (value) => {
+      copied = value;
+    },
+  });
+
+  assert.equal(await handleSlashCommand("/copy 2", ctx), true);
+  assert.equal(copied, "first reply");
+  assert.match(lines.join("\n"), /已复制|copied/i);
+});
+
+test("slash diff reports non-git workspace without throwing", async () => {
+  await withTempDir(async (dir) => {
+    const { ctx, lines } = createContext({ workspaceDir: dir });
+    assert.equal(await handleSlashCommand("/diff", ctx), true);
+    assert.match(lines.join("\n"), /非 Git|not a git/i);
+  });
+});
+
+test("slash init creates local guide and refuses overwrite by default", async () => {
+  await withTempDir(async (dir) => {
+    const { ctx, lines, errors } = createContext({ workspaceDir: dir });
+    assert.equal(await handleSlashCommand("/init", ctx), true);
+    const guide = await readFile(join(dir, "AGENTS.md"), "utf-8");
+    assert.match(guide, /轻灵/);
+    assert.match(lines.join("\n"), /AGENTS\.md/);
+
+    assert.equal(await handleSlashCommand("/init", ctx), true);
+    assert.match(errors.join("\n"), /已存在|--force/);
+  });
+});
+
+test("slash direct local skill invocation loads skill and built-ins keep priority", async () => {
+  await withSkillWorkspace(async (dir) => {
+    await mkdir(join(dir, "skills", "docker"), { recursive: true });
+    await writeFile(
+      join(dir, "skills", "docker", "SKILL.md"),
+      "# Docker\n\nDocker local instructions.\n",
+      "utf-8"
+    );
+    await mkdir(join(dir, "skills", "clear"), { recursive: true });
+    await writeFile(join(dir, "skills", "clear", "SKILL.md"), "# Clear Skill\n", "utf-8");
+
+    const { ctx, lines } = createContext();
+    assert.equal(await handleSlashCommand("/docker", ctx), true);
+    assert.match(lines.join("\n"), /Docker local instructions/);
+
+    lines.length = 0;
+    assert.equal(await handleSlashCommand("/clear", ctx), true);
+    assert.doesNotMatch(lines.join("\n"), /Clear Skill/);
+  });
+});
 
 test("slash help includes loop/tasks/compact", async () => {
   const { ctx, lines } = createContext();

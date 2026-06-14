@@ -32,14 +32,35 @@ import { agentsCommand } from "./agents.js";
 import { missionCommand } from "./mission.js";
 import { SlashCommandContext, withDefaultWriters } from "./runtime.js";
 import { formatFocusedHelp } from "../help-topics.js";
+import {
+  copyCommand,
+  diffCommand,
+  initCommand,
+  modelCommand,
+  planCommand,
+  rewindCommand,
+  unavailableClaudeCommands,
+  usageCommand,
+} from "./claude-style.js";
+import { getSkillDirs, runSkill } from "../tools/skill.js";
+import { listSkills } from "../skills/registry.js";
+import { existsSync, readdirSync, type Dirent } from "fs";
+import { basename } from "path";
 
 export const COMMANDS: SlashCommand[] = [
   helpCommand,
+  initCommand,
   sessionsCommand,
   resumeCommand,
+  rewindCommand,
   checkpointCommand,
   clearCommand,
   statusCommand,
+  usageCommand,
+  modelCommand,
+  planCommand,
+  diffCommand,
+  copyCommand,
   skillCommand,
   dashboardCommand,
   configCommand,
@@ -65,6 +86,7 @@ export const COMMANDS: SlashCommand[] = [
   hooksCommand,
   doctorCommand,
   contextCommand,
+  ...unavailableClaudeCommands,
 ];
 
 function isCommandContext(value: unknown): value is Partial<SlashCommandContext> & { agentLoop: Record<string, unknown> } {
@@ -82,6 +104,11 @@ export interface SlashCommandCatalogItem {
   aliases: string[];
   description: string;
   usage: string;
+  category: string;
+  argumentHint: string;
+  availability: "local" | "unsupported";
+  examples: string[];
+  claudeCompatibleName?: string;
 }
 
 function normalizeSlashName(value: string): string {
@@ -140,16 +167,60 @@ function scoreSlashCandidate(input: string, candidate: string): number | null {
 }
 
 export function getSlashCommandCatalog(): SlashCommandCatalogItem[] {
-  return COMMANDS.map((command) => ({
+  const commands = COMMANDS.map((command) => ({
     name: command.name,
     aliases: [...(command.aliases ?? [])],
     description: command.description,
     usage: command.usage,
+    category: command.category ?? "local",
+    argumentHint: command.argumentHint ?? "",
+    availability: command.availability ?? "local",
+    examples: [...(command.examples ?? [])],
+    claudeCompatibleName: command.claudeCompatibleName,
   }));
+  return [...commands, ...getLocalSkillCatalogItems(commands)];
 }
 
 function getSlashCommandNames(item: SlashCommandCatalogItem): string[] {
   return [item.name, ...item.aliases];
+}
+
+function getLocalSkillCatalogItems(existing: SlashCommandCatalogItem[]): SlashCommandCatalogItem[] {
+  const builtinNames = new Set(existing.flatMap(getSlashCommandNames).map(normalizeSlashName));
+  const items: SlashCommandCatalogItem[] = [];
+  for (const dir of getSkillDirs()) {
+    if (!existsSync(dir)) continue;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const skillName = entry.isDirectory()
+        ? entry.name
+        : entry.isFile() && entry.name.toLowerCase().endsWith(".md")
+          ? basename(entry.name, ".md")
+          : "";
+      const normalized = normalizeSlashName(skillName);
+      if (!normalized || normalized === "skill" || normalized === "index") continue;
+      if (builtinNames.has(normalized)) continue;
+      const slashName = `/${skillName}`;
+      if (items.some((item) => item.name === slashName)) continue;
+      items.push({
+        name: slashName,
+        aliases: [],
+        description: "本地 skill 直接调用",
+        usage: slashName,
+        category: "skill",
+        argumentHint: "",
+        availability: "local",
+        examples: [slashName, `/skill ${skillName}`],
+      });
+    }
+  }
+  return items;
 }
 
 export function findSlashCommandSuggestions(input: string, limit = 3): SlashSuggestion[] {
@@ -212,6 +283,39 @@ export function formatSlashCompletionHint(prefix: string, width = 80): string[] 
   return [line.length > safeWidth ? line.slice(0, safeWidth - 1) + "…" : line];
 }
 
+export function formatSlashCommandPanel(prefix: string, selectedIndex = 0, width = 80, limit = 8): string[] {
+  const matches = findSlashCompletion(prefix, limit);
+  const safeWidth = Math.max(30, Math.floor(Number(width) || 80));
+  if (matches.length > 0) {
+    const lines = matches.map((item, index) => {
+      const marker = index === selectedIndex ? ">" : " ";
+      const args = item.argumentHint ? ` ${item.argumentHint}` : "";
+      return truncatePanelLine(`${marker} ${item.name}${args}  [${item.category}]  ${item.description}`, safeWidth);
+    });
+    lines.push(truncatePanelLine("提示    : ↑/↓ 选择 · Tab 补全 · Enter 执行当前输入", safeWidth));
+    return lines;
+  }
+
+  const hint = findExactSlashCommandForArgumentHint(prefix);
+  if (!hint) return [];
+  const arg = hint.argumentHint || hint.usage.replace(hint.name, "").trim();
+  return [
+    truncatePanelLine(`参数    : ${hint.name}${arg ? ` ${arg}` : ""}    ${hint.description}`, safeWidth),
+    truncatePanelLine("提示    : 继续输入参数 · Enter 执行当前输入", safeWidth),
+  ];
+}
+
+function truncatePanelLine(line: string, width: number): string {
+  return line.length > width ? line.slice(0, width - 1) + "…" : line;
+}
+
+function findExactSlashCommandForArgumentHint(input: string): SlashCommandCatalogItem | null {
+  if (!input.startsWith("/") || !/\s$/.test(input)) return null;
+  const cmd = input.trim().split(/\s+/)[0] ?? "";
+  if (!cmd) return null;
+  return getSlashCommandCatalog().find((item) => getSlashCommandNames(item).some((name) => name === cmd)) ?? null;
+}
+
 export function formatUnknownSlashCommandMessage(cmdName: string): string {
   const suggestions = findSlashCommandSuggestions(cmdName);
   const normalizedInput = cmdName.replace(/^\/+/, "");
@@ -260,11 +364,30 @@ export async function handleSlashCommand(
     return true;
   }
 
+  if (await tryRunDirectSkill(cmdName, context)) {
+    return true;
+  }
+
   if (hasHelpFlag) {
     writeFocusedSlashHelp(normalizeSlashName(cmdName), context);
     return true;
   }
 
   context.writeError(formatUnknownSlashCommandMessage(cmdName));
+  return true;
+}
+
+async function tryRunDirectSkill(cmdName: string, context: SlashCommandContext): Promise<boolean> {
+  const name = normalizeSlashName(cmdName);
+  if (!/^[a-z0-9_@/-]+$/i.test(name)) return false;
+  const skills = await listSkills(getSkillDirs());
+  if (!skills.some((skill) => normalizeSlashName(skill.name) === name)) return false;
+
+  const result = await runSkill({ name });
+  if (result.is_error) {
+    context.writeError(result.output);
+  } else {
+    context.writeLine(result.output);
+  }
   return true;
 }

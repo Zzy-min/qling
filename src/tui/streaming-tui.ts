@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { default as stringWidth } from "string-width";
-import { findSlashCompletion, formatSlashCompletionHint } from "../commands/index.js";
+import { findSlashCompletion, formatSlashCommandPanel } from "../commands/index.js";
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
@@ -218,6 +218,7 @@ export class StreamUI {
   private lastInputContentLineCount = 1;
   private lastInputCursorLineIndex = 0;
   private lastInputHintLineCount = 0;
+  private slashCompletionSelectedIndex = 0;
   private inputCursorAnchor: "current" | "bottom" = "current";
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
@@ -267,6 +268,11 @@ export class StreamUI {
 
   setChromeStatus(status: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean }): void {
     this.chromeStatus = { ...this.chromeStatus, ...status };
+  }
+
+  setModel(model: string): void {
+    const next = String(model ?? "").trim();
+    if (next) this.model = next;
   }
 
   setHistory(entries: string[]): void {
@@ -430,8 +436,12 @@ export class StreamUI {
   }
 
   private formatCurrentSlashCompletionHints(): string[] {
-    if (!this.isSlashCompletionPrefix(this.input.value)) return [];
-    return formatSlashCompletionHint(this.input.value, process.stdout.columns || 80);
+    if (!this.isSlashCompletionActive(this.input.value)) return [];
+    const matches = findSlashCompletion(this.input.value, 8);
+    if (matches.length > 0 && this.slashCompletionSelectedIndex >= matches.length) {
+      this.slashCompletionSelectedIndex = 0;
+    }
+    return formatSlashCommandPanel(this.input.value, this.slashCompletionSelectedIndex, process.stdout.columns || 80, 8);
   }
 
   private isSlashCompletionPrefix(value: string): boolean {
@@ -439,13 +449,29 @@ export class StreamUI {
     return text.startsWith("/") && !/\s/.test(text);
   }
 
+  private isSlashCompletionActive(value: string): boolean {
+    return value.startsWith("/") && (!/\s/.test(value.trim()) || /\s$/.test(value));
+  }
+
   private acceptSlashCompletion(): boolean {
     if (!this.isSlashCompletionPrefix(this.input.value)) return false;
-    const [completion] = findSlashCompletion(this.input.value, 1);
+    const matches = findSlashCompletion(this.input.value, 8);
+    const completion = matches[this.slashCompletionSelectedIndex] ?? matches[0];
     if (!completion) return false;
     this.input.value = completion.name + " ";
     this.input.cursorPos = this.input.value.length;
+    this.slashCompletionSelectedIndex = 0;
     this.lastEmptyCtrlCAt = 0;
+    this.redrawInput();
+    return true;
+  }
+
+  private moveSlashCompletionSelection(delta: number): boolean {
+    if (!this.isSlashCompletionPrefix(this.input.value)) return false;
+    const matches = findSlashCompletion(this.input.value, 8);
+    if (matches.length <= 1) return false;
+    this.slashCompletionSelectedIndex =
+      (this.slashCompletionSelectedIndex + delta + matches.length) % matches.length;
     this.redrawInput();
     return true;
   }
@@ -713,6 +739,7 @@ export class StreamUI {
 
   private handleBackspace(): void {
     this.input.backspace();
+    this.slashCompletionSelectedIndex = 0;
     this.redrawInput();
   }
 
@@ -784,11 +811,13 @@ export class StreamUI {
   }
 
   private handleHistoryUp(): void {
+    if (this.moveSlashCompletionSelection(-1)) return;
     this.input.historyUp();
     this.redrawInput();
   }
 
   private handleHistoryDown(): void {
+    if (this.moveSlashCompletionSelection(1)) return;
     this.input.historyDown();
     this.redrawInput();
   }
@@ -848,6 +877,7 @@ export class StreamUI {
 
   private handleChar(ch: string): void {
     this.input.insertChar(ch);
+    this.slashCompletionSelectedIndex = 0;
     this.redrawInput();
   }
 

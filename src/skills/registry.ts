@@ -60,6 +60,9 @@ async function walkSkillDir(dir: string, results: SkillMeta[]): Promise<void> {
       const indexPath = join(fullPath, "index.md");
       const meta = await parseSkillFile(indexPath);
       if (meta) results.push(meta);
+      const skillPath = join(fullPath, "SKILL.md");
+      const skillMeta = await parseSkillFile(skillPath);
+      if (skillMeta) results.push(skillMeta);
       continue;
     }
 
@@ -93,7 +96,10 @@ export async function parseSkillFile(filePath: string): Promise<SkillMeta | null
 }
 
 export function parseFrontmatter(raw: string, filePath: string): SkillMeta {
-  const fallbackName = basename(filePath, ".md");
+  const fileBaseName = basename(filePath, ".md");
+  const fallbackName = fileBaseName.toLowerCase() === "skill" || fileBaseName.toLowerCase() === "index"
+    ? basename(join(filePath, ".."))
+    : fileBaseName;
   const fallback: SkillMeta = {
     name: fallbackName,
     description: "",

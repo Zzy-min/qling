@@ -44,7 +44,7 @@ function parseEnvPermissionRules(env: NodeJS.ProcessEnv): PermissionRuleInput[] 
 
 export const permissionsCommand: SlashCommand = {
   name: "/permissions",
-  aliases: ["/权限"],
+  aliases: ["/权限", "/allowed-tools"],
   description: "查看或切换工具权限默认策略",
   usage: "/permissions [status|allow|deny|ask|explain <tool>]",
   execute: async (args, context) => {

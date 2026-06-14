@@ -205,6 +205,10 @@ export class StreamingREPL {
       setImmediatePrompt: (prompt: string) => {
         this.immediatePrompt = prompt;
       },
+      onModelChanged: async (model: string) => {
+        (this.ui as any).setModel?.(model);
+        await this.refreshStatusLine();
+      },
       writeLine: (line = "") => this.ui.appendOutput(line),
       writeError: (line = "") => this.ui.appendError(line),
     };

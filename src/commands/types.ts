@@ -5,5 +5,10 @@ export interface SlashCommand {
   aliases?: string[];
   description: string;
   usage: string;
+  category?: "core" | "session" | "context" | "tools" | "memory" | "agents" | "git" | "skill" | "cloud" | "local";
+  argumentHint?: string;
+  availability?: "local" | "unsupported";
+  examples?: string[];
+  claudeCompatibleName?: string;
   execute: (args: string[], context: SlashCommandContext) => Promise<void>;
 }

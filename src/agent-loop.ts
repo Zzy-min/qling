@@ -857,6 +857,13 @@ export class AgentLoop extends AgentEventEmitter {
     return this.config.model;
   }
 
+  setModel(model: string): void {
+    const next = String(model ?? "").trim();
+    if (!next) return;
+    this.config.model = next;
+    this.compactor = new ContextCompactor(6000, next);
+  }
+
   getToolCount(): number {
     return this.config.tools.length;
   }

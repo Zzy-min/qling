@@ -359,6 +359,7 @@ test("stream ui shows slash completion hints while typing slash prefix", async (
     const output = getOutput();
     assert.match(output, /\/skill/);
     assert.match(output, /Tab 补全|Tab/);
+    assert.match(output, /skill|command|session|local/);
     assert.match(output, /└─+┘/);
   });
 });
@@ -374,6 +375,31 @@ test("stream ui tab completes slash prefix to best command", async () => {
     assert.equal(ui.input.cursorPos, "/skill ".length);
     assert.deepEqual(submitted, []);
     assert.match(getOutput(), /\/skill/);
+  });
+});
+
+test("stream ui slash panel supports down selection and tab acceptance", async () => {
+  await withCapturedStdout(async () => {
+    const { ui, submitted } = createUi();
+
+    ui.handleChar("/");
+    ui.handleHistoryDown();
+    ui.handleTab();
+
+    assert.notEqual(ui.input.value, "/help ");
+    assert.match(ui.input.value, /^\/[\w-]+ $/);
+    assert.deepEqual(submitted, []);
+  });
+});
+
+test("stream ui shows argument hint for slash command with trailing space", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    for (const ch of "/model ") ui.handleChar(ch);
+
+    assert.match(getOutput(), /参数|Args|model/i);
+    assert.match(getOutput(), /\[model\]/);
   });
 });
 
