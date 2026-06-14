@@ -1,181 +1,250 @@
-# 🌬️ 轻灵 (qling)
+# 轻灵 Qling
 
-轻量级 AI Agent CLI — 基于流式 TUI 的本地智能助手框架。
+本地优先的 AI Agent CLI。轻灵把 Claude Code 风格的终端交互、slash command、会话恢复、任务编排、权限边界、上下文可视化和本地记忆放进一个可自托管的 Node.js/TypeScript CLI。
 
-## ✨ v0.5 新特性 — 生产级演进
+核心目标很明确：顺滑交互、稳定执行、数据留在本机。
 
-v0.5 版本在保持极致轻量级的同时，补齐了生产级 Agent 所需的记忆、编排、观测与自动化浏览器能力。
+## Highlights
 
-- **🌐 自动化浏览器抓取 (Browser Fetch)** — 集成 Playwright，支持抓取现代 JS 渲染的网页、SPA 应用，并自动提取核心内容摘要。
-- **🎯 Mission 任务系统** — 引入长任务管理机制，支持任务的创建、持久化状态流转与历史溯源，解决复杂任务跨会话执行问题。
-- **🧠 语义记忆增强 (Semantic Memory)** — 基于 SQLite 的本地向量索引，支持“向量 TopK + 关键词重排”的混合检索，大幅提升知识召回率。
-- **⚙️ 状态机编排与 Checkpoint** — 引入代码优先的 Workflow DSL，所有状态迁移和工具执行实时落盘，支持崩溃后的断点续传。
-- **👁️ 多模态视觉支持** — 内置 `vision_analyze` 工具，可直接分析本地截图或 UI 设计图，支持本地 (Ollama) 与云端模型。
-- **📊 Observability Dashboard** — 内置本地 Web 控制台，白盒化展示 Agent 思考链路、状态机图、Tool 耗时与 Token 消耗。
-- **📦 动态技能注册与发现** — 支持从本地目录或远程 URL 动态加载插件与技能，实现失效隔离与热更新。
-- **🚀 交互式 Onboarding** — 新增 `qling setup` 引导，支持国内主流 Provider (DeepSeek, Zhipu, etc.) 的一键配置。
+- **Claude Code 风格 TUI**：顶部状态栏、角色块、工具执行时间线、结果框和完整输入框。
+- **Slash-first 交互**：输入 `/` 打开命令面板，支持过滤、参数提示、`↑/↓` 选择、`Tab` 补全、`Enter` 执行当前输入。
+- **完整本地命令面**：`/model`、`/plan`、`/usage`、`/diff`、`/copy`、`/init`、`/rewind`、`/checkpoint`、`/sessions`、`/resume`、`/permissions`、`/context` 等。
+- **本地 Skill 直达**：支持 `/skill list`、`/skill search <query>`、`/skill <name>`，也支持直接 `/<skill-name>` 调用本地 `skills/` 或 `.qling/skills/` 中的 Markdown skill。
+- **Local-first 安全边界**：会话、记忆、导出、任务、诊断默认写入本地 state；Claude 账号/云端/桌面/移动端专属命令只显示边界说明，不伪装成功。
+- **会话与上下文恢复**：`/checkpoint`、`/resume`、`--continue`、`--resume <session>` 支持中断后继续。
+- **任务与目标推进**：`/goal`、`/loop`、`/tasks`、`/agents`、`/mission` 支持本地长任务和后台任务管理。
+- **内置治理**：权限策略、内容过滤、速率限制、密钥脱敏、MCP 配置摘要和本地诊断。
 
-## ✨ 核心特性
+## Quick Start
 
-- **流式 TUI** — Claude Code 风格的终端界面，实时展示思考、工具调用、验证结果
-- **11 个内置工具** — bash、read, write, search, planner, skill, todo, url_fetch, browser_fetch, subtask, vision_analyze
-- **Pipeline 系统** — 可组合的 Hook（前置/后置）和 Section（系统提示词模块）
-- **上下文压缩** — Token 预算耗尽时自动压缩历史，保持对话连续性
-- **持久记忆** — 长期记忆存储，跨会话积累知识
-- **会话管理** — 保存/恢复对话历史，随时中断和继续
-- **验证修复** — 内置验证管线，工具输出错误时自动重试
-
-## 🚀 快速开始
-
-### 前置条件
+### Requirements
 
 - Node.js >= 18
 - npm >= 9
-- [可选] Playwright 依赖（用于 `browser_fetch`）
+- Optional: Playwright Chromium, used by `browser_fetch`
 
-### 安装
+### Install
 
 ```bash
 git clone https://github.com/Zzy-min/qling.git
 cd qling
 npm install
-npx playwright install chromium # 如果需要浏览器功能
 npm run build
 ```
 
-### 配置
-
-您可以手动配置 `.env` 文件，或者使用新增的交互式配置向导：
+Optional browser support:
 
 ```bash
-# 推荐：使用配置向导（支持国内主流 Provider 预设）
+npx playwright install chromium
+```
+
+Optional global command:
+
+```bash
+npm link
+qling
+```
+
+## Configure
+
+Use the interactive setup:
+
+```bash
 qling setup
 ```
 
-或者手动复制模板：
+Or create `.env` manually:
 
 ```bash
 cp .env.example .env
 ```
 
-需要配置：
-- `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY` — LLM API 密钥
-- `OPENAI_BASE_URL`（可选）— 自定义 API 端点
-
-### 运行
+Common variables:
 
 ```bash
-# 全局命令优先（推荐）
-npm link
-qling
+DEEPSEEK_API_KEY=sk-...
+QLING_LLM_PROVIDER=deepseek
+QLING_LLM_ENDPOINT=https://api.deepseek.com
+QLING_LLM_MODEL=deepseek-chat
+```
 
-# 新契约（推荐）
-qling chat
-qling repl
-qling run "你的任务描述"
+OpenAI-compatible providers are supported through `QLING_LLM_ENDPOINT`, `QLING_LLM_MODEL`, and the matching API key environment variable.
 
-# npm 脚本等价入口
-npm start
+## Run
+
+```bash
+qling                         # default: streaming TUI
+qling chat                    # explicit TUI
+qling repl                    # simple REPL
+qling run "analyze this repo" # one-shot execution
+qling --continue              # restore latest interactive session
+qling --resume <session>      # restore a specific session
+```
+
+npm script equivalents:
+
+```bash
 npm run tui
 npm run repl
-npm run exec -- "你的任务描述"
+npm run exec -- "analyze this repo"
 ```
 
-## ⚙️ 特性开关 (Feature Flags)
+## Slash Commands
 
-所有新特性默认关闭，可通过 `.env` 或配置文件开启：
+Inside the TUI, type `/` to open the command panel. Type a prefix such as `/mo`, use `↑/↓` to move selection, `Tab` to complete, and `Enter` to execute the text currently in the input box.
+
+High-value local commands:
+
+| Command | Purpose |
+|---|---|
+| `/help [topic]` | Show all slash commands or focused help. |
+| `/model [model]` | Show or switch the current session model. Does not write config. |
+| `/plan [description]` | Queue a normal planning prompt in the current conversation. |
+| `/usage`, `/cost`, `/stats` | Show token source, token count, context budget, and compactions. |
+| `/diff` | Read-only Git status and diff summary. |
+| `/copy [N]` | Copy the Nth latest assistant reply to the clipboard. |
+| `/init [--force]` | Create a local `AGENTS.md` project guide. Refuses overwrite by default. |
+| `/skill`, `/skill list` | List local skills. |
+| `/skill search <query>` | Search local skills by name, description, or tag. |
+| `/skill <name>` or `/<skill-name>` | Read a local skill Markdown file. Built-in commands take priority. |
+| `/checkpoint [name] [--force]` | Save a local recovery point. |
+| `/sessions` | List saved sessions. |
+| `/resume [session|latest]` | Restore a saved session. |
+| `/rewind`, `/undo` | Show recoverable sessions and next recovery command. |
+| `/clear`, `/reset`, `/new` | Reset the current conversation. |
+| `/compact` | Manually compact context. |
+| `/context` | Show local context and token usage. |
+| `/privacy` | Show local data retention paths and boundaries. |
+| `/permissions [status|allow|deny|ask]` | Show or switch local tool permission default. |
+| `/permissions explain <tool>` | Explain a local permission decision. |
+| `/statusline [on|off]` | Show or toggle the prompt status line. |
+| `/goal [status|set <condition>|clear]` | Manage session goals. |
+| `/loop [interval] [prompt]` | Create a repeated local prompt task. |
+| `/tasks [cancel <id>|clear]` | Show or manage local loop tasks. |
+| `/agents` | Show local background mission groups. |
+| `/mission ...` | Manage local missions. |
+| `/memory ...` | Inspect local memory, sources, practices, graph, or detail. |
+| `/dream [count]` | Distill current conversation signals into local memory. |
+| `/distill [count]` | Show local distilled practices. |
+| `/export` | Export the current session as local Markdown. |
+| `/exports [count]` | List local Markdown exports. |
+| `/doctor` | Run local diagnostics. |
+| `/config` | Show effective config with secrets redacted. |
+| `/mcp` | Show local MCP server config summary. |
+| `/hooks` | Show hooks and guard config summary. |
+| `/shortcuts` | Show TUI key bindings. |
+
+Claude account, desktop, mobile, cloud routine, GitHub App, and other platform-specific command names are discoverable for compatibility. They return a local boundary message and do not call a model, open a network connection, or pretend to complete a cloud action.
+
+## TUI Shortcuts
+
+| Key | Behavior |
+|---|---|
+| `Enter` | Send current input. |
+| `Ctrl+C` | Clear non-empty draft; press twice on empty input to exit. |
+| `Ctrl+Z` | Restore draft cleared by `Ctrl+C`. |
+| `Ctrl+D` | Exit only when input is empty. |
+| `Ctrl+L` | Clear and redraw the screen. |
+| `Ctrl+O` | Toggle future long tool output expansion. |
+| `Ctrl+R` | Search local input history. |
+| `Ctrl+N` | Insert newline. |
+| `Tab` | Empty input opens `/agents`; slash prefix completes selected command. |
+| `↑/↓` | In slash panel, move selection; otherwise navigate input history. |
+
+## Built-in Tools
+
+| Tool | Purpose |
+|---|---|
+| `bash` | Execute shell commands through the guarded tool pipeline. |
+| `read` | Read local files with size and binary guards. |
+| `write` | Write local files. |
+| `search` | Search local files and content. |
+| `planner` | Create structured task plans. |
+| `skill` | Load local Markdown skills. |
+| `todo` | Manage a local task list. |
+| `url_fetch` | Fetch allowed remote URLs with guard policy. |
+| `browser_fetch` | Fetch browser-rendered pages through Playwright. |
+| `subtask` | Run isolated subtask agents. |
+| `vision_analyze` | Analyze local images with configured vision provider. |
+
+## Local Data
+
+Default runtime state is stored under the local qling state directory. Typical data includes:
+
+- saved sessions
+- checkpoints
+- exports
+- memory indexes
+- session goals
+- loop tasks
+- mission metadata
+- guard and diagnostics artifacts
+
+Use these commands to inspect local boundaries:
 
 ```bash
-# 开启所有核心特性
-QLING_FEATURES_SEMANTIC_MEMORY=true
-QLING_FEATURES_WORKFLOW_RUNTIME=true
-QLING_FEATURES_VISION_TOOL=true
-QLING_FEATURES_DASHBOARD=true
-QLING_FEATURES_DYNAMIC_DISCOVERY=true
-QLING_FEATURES_TOOL_SPEC_BOOST=true
-QLING_FEATURES_MISSION_SYSTEM=true
-
-# 观测台配置
-QLING_DASHBOARD_PORT=9999
-
-# 视觉模型配置
-QLING_VISION_PROVIDER=openai  # 或 deepseek, local
-QLING_VISION_MODEL=gpt-4o
+qling privacy
+qling storage
+qling doctor
 ```
 
-## 🛠️ 工具一览
+Inside the TUI:
 
-| 工具 | 说明 | 示例 |
-|------|------|------|
-| `bash` | 执行 Shell 命令 | `ls -la` |
-| `read` | 读取文件内容 | `read src/index.ts` |
-| `write` | 写入文件 | `write path output.txt` |
-| `search` | 搜索文件内容/文件名 | `pattern="TODO" file_glob="*.ts"` |
-| `planner` | 生成任务执行计划 | `goal="重构认证模块"` |
-| `skill` | 加载和使用技能 | `skill "debug-patterns"` |
-| `todo` | 任务列表管理 | `add "修复登录 bug"` |
-| `url_fetch` | 轻量级结构化网络请求 | `url_fetch url="https://example.com"` |
-| `browser_fetch` | 自动化浏览器网页抓取 (v0.5) | `browser_fetch url="https://nextjs.org"` |
-| `subtask` | 隔离子任务执行 | `task="分析日志错误"` |
-| `vision_analyze` | 多模态视觉解析 (v0.3+) | `image_path="ui.png" prompt="分析布局"` |
-
-## 📐 架构
-
+```text
+/privacy
+/storage
+/doctor
+/context
 ```
+
+## Project Layout
+
+```text
 src/
-├── agent/                # Agent 核心逻辑
-├── channels/             # 交互通道 (Console, TG, Slack)
-├── cli/                  # CLI 命令解析与 UI
-├── guard/                # 治理与安全 (速率限制, 内容过滤, 权限)
-├── mcp/                  # MCP 协议客户端与桥接
-├── memory/               # 记忆系统 (WAL, 语义向量, Checkpoint)
-├── metrics/              # 遥测与指标收集
-├── mission/              # Mission 任务管理 (v0.5)
-├── onboarding/           # 交互式配置引导 (v0.5)
-├── pipeline/             # Pipeline 系统 (Sections, Hooks, Verification)
-├── tools/                # 内置工具集
-├── tui/                  # 流式 TUI 渲染引擎
-├── agent-loop.ts         # Agent 主循环
-├── daemon.ts             # 后台守护进程 (v0.5)
-├── dashboard-server.ts   # 观测台服务端
-└── discovery-registry.ts # 动态技能发现
+  agent-loop.ts          Agent loop and model/tool orchestration
+  cli/                   CLI startup contract and setup flow
+  commands/              Slash command implementations
+  guard/                 Permissions, content filtering, audit, rate limits
+  mcp/                   MCP client and bridge
+  memory/                WAL, memory projection, semantic memory
+  metrics/               Local telemetry and observability
+  mission/               Background mission state machine
+  pipeline/              Prompt sections, hooks, verification
+  session/               Session registry, goals, tasks, scheduler
+  skills/                Local skill registry
+  tools/                 Built-in tool implementations
+  tui/                   Streaming terminal UI
+tests/
+  unit/                  Unit coverage
+  smoke/                 End-to-end smoke coverage
+docs/superpowers/        Specs, plans, reviews
 ```
 
-### Agent 循环
-
-```
-用户输入 → buildSystemPrompt → chat(LLM) → 解析 tool_calls
-  → dispatchAll(工具) → 验证 → 修复(如需) → 追加上下文
-  → 再次 chat ... → 最终回答 → appendFinal
-```
-
-### Mission 任务系统 (v0.5)
-
-Mission 系统允许 Agent 处理跨会话的长任务。每个 Mission 都有独立的 ID、持久化的状态定义和执行度量：
-
-1. **持久化**: 任务状态实时同步到本地 JSON 库。
-2. **队列管理**: 支持任务的优先级调度与状态流转（Queued -> Running -> Succeeded/Failed）。
-3. **可观测性**: 记录每个任务的总耗时、Token 消耗与工具调用次数。
-
-## ✅ 稳定性保障
-
-- 已将核心高风险回归纳入自动化用例：
-  - `search`：高命中小 `limit` 截断、`context` 输出差异、glob 过滤、Windows 路径兼容
-  - `context-compactor`：tool_call/tool 链完整性保护
-  - `agent-loop`：`user -> assistant(tool_calls) -> tool -> assistant` 最小链路 smoke
-- 建议本地门禁命令：
+## Development
 
 ```bash
 npm run build
 npm test
 npm run test:smoke
+npm run ci:check
 ```
 
-## 📄 License
+Useful release gate:
 
-MIT
+```bash
+npm run ci:check
+git diff --check
+npm audit --registry=https://registry.npmjs.org --audit-level=high
+```
 
+## Design Principles
 
-## 📄 License
+- **Local-first**: persist useful state locally and make storage paths visible.
+- **Slash-first**: every local control surface should be discoverable from `/`.
+- **Recoverable**: long work should support checkpoint, resume, recap, and context inspection.
+- **Honest boundaries**: unsupported cloud-only commands must say so explicitly.
+- **Low dependency TUI**: improve the terminal experience without requiring a full-screen app or heavy renderer.
+
+## License
 
 MIT
