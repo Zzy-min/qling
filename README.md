@@ -1,49 +1,37 @@
 # 轻灵 Qling
 
-轻灵是一个本地优先的 AI Agent CLI。它不是 Claude Code 的复制品，而是面向中文开发者和本机工作流的终端控制台：把会话、上下文、工具执行、skill、任务、权限、诊断和恢复能力收拢到一个可审计、可中断、可继续的命令行界面里。
+[![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#环境要求)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.5.0-orange.svg)](CHANGELOG.md)
 
-一句话：轻灵让 Agent 像一个本地工作台，而不是一个黑盒聊天窗口。
+轻灵（qling）是一个本地优先的 AI Agent CLI。它把会话、上下文、工具执行、skill、任务、权限、诊断、后台使命、观测台和恢复能力收拢到一个可审计、可中断、可继续的命令行界面里——不是 Claude Code 的复制品，而是一个面向中文开发者和本机工作流的终端控制台。
+
+> 一句话：轻灵让 Agent 像一个本地工作台，而不是一个黑盒聊天窗口。
 
 ## 为什么是轻灵
 
-| 特点 | 轻灵的做法 |
+| 维度 | 轻灵的做法 |
 |---|---|
-| 本地优先 | 会话、checkpoint、导出、记忆、任务和诊断默认落在本机；`/privacy` 可直接查看边界。 |
-| 中文可用 | TUI、帮助、快捷键、状态提示和大部分交互文案面向中文终端使用场景。 |
+| 本地优先 | 会话、checkpoint、导出、记忆、任务、诊断默认落在本机；`qling privacy` 直接查看边界。 |
+| 中文可用 | TUI、帮助、状态提示、命令别名（`帮助` / `使命` / `代理`）面向中文终端。 |
 | Slash 控制面 | `/` 打开命令面板，过滤、参数提示、方向键选择、`Tab` 补全都在当前输入框内完成。 |
-| 可恢复长任务 | `/checkpoint`、`/resume`、`/rewind`、`--continue` 让中断后的上下文可以继续接上。 |
-| 本地 skill | `skills/` 与 `.qling/skills/` 中的 Markdown skill 可被 `/skill` 或 `/<skill-name>` 直接读取。 |
-| 权限可解释 | `/permissions`、`/hooks`、guard、内容过滤、速率限制和密钥脱敏都以本地规则呈现。 |
+| 可恢复长任务 | `/checkpoint`、`/resume`、`/rewind`、`--continue`、`qling workflow resume` 让中断后的上下文可以接上。 |
+| 本地 skill | `skills/` 与 `.qling/skills/` 中的 Markdown skill 可被 `/skill` 或 `/<skill-name>` 直接读取；内置命令优先级高于 skill。 |
+| 后台使命 | `qling daemon` + `qling mission` 提供长任务状态机、暂停 / 恢复 / 重试 / attach。 |
+| 观测台 | `qling dashboard start` 打开本地白盒化观测控制台，串起 thinking / tool / token 链路。 |
+| 通道与扩展 | `src/channels/` 内置 console / Telegram / Slack 通道；`qling discovery sync` 动态同步插件与技能。 |
+| 权限可解释 | `/permissions`、`/permissions explain <tool>`、guard、内容过滤、速率限制和密钥脱敏都以本地规则呈现。 |
 | 上下文透明 | `/context`、`/usage` 显示 token 来源、估算、上下文预算和压缩状态。 |
-| 诊断内建 | `/doctor`、`/config`、`/mcp`、`/diff` 用于快速判断当前项目和运行时状态。 |
-
-轻灵兼容 Claude Code 式 slash-first 使用习惯，但不依赖 Claude 账号、桌面端、移动端或云端工作流。平台专属命令会被识别并给出本地边界说明，不会伪装成功。
-
-## 核心体验
-
-### 终端不是日志流，而是控制台
-
-轻灵的 TUI 由顶栏、角色块、工具执行时间线、结果框、状态线和完整输入框组成。它保留纯终端兼容性，不使用全屏 alt-screen，也不强制引入重型 TUI 依赖。
-
-### `/` 是主入口
-
-输入 `/` 后，轻灵会显示命令候选、分类、参数提示和简短说明。输入 `/mo` 可过滤到 `/model`，输入 `/skill ` 会显示 skill 参数提示。`Enter` 永远只提交当前输入，不会因为候选被选中而误执行。
-
-### skill 是本地知识，不是远程插件黑盒
-
-本地 skill 本质上是 Markdown 文件。你可以列出、搜索、读取，也可以通过 `/<skill-name>` 直接打开。内置命令优先级高于 skill，避免本地文件覆盖 `/clear`、`/model` 等控制命令。
-
-### 恢复能力是一等能力
-
-轻灵把会话恢复、checkpoint、导出、目标、任务和上下文压缩放在显式命令里，而不是隐藏在自动行为中。你可以随时看见当前状态，也可以决定下一步如何恢复。
+| 诊断内建 | `/doctor`、`/config`、`/mcp`、`/hooks`、`/diff` 用于快速判断当前项目和运行时状态。 |
+| 诚实边界 | 平台专属命令会被识别并给出本地边界说明，不会伪装成功。 |
 
 ## 快速开始
 
 ### 环境要求
 
-- Node.js >= 18
-- npm >= 9
-- 可选：Playwright Chromium，用于 `browser_fetch`
+- Node.js ≥ 18
+- npm ≥ 9
+- 可选：Playwright Chromium，用于 `browser_fetch` 工具（v0.5 已集成）
 
 ### 安装
 
@@ -54,66 +42,123 @@ npm install
 npm run build
 ```
 
-可选浏览器能力：
+启动浏览器抓取：
 
 ```bash
 npx playwright install chromium
 ```
 
-可选全局命令：
+安装为全局命令（可选）：
 
 ```bash
 npm link
 qling
 ```
 
-## 配置
+### 最小配置
 
-使用交互式配置：
-
-```bash
-qling setup
-```
-
-或手动创建 `.env`：
+把 API key 写到 `.env`（项目根或 `~/.qling/.env`）：
 
 ```bash
-cp .env.example .env
-```
-
-常用变量：
-
-```bash
-DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_API_KEY=sk-your-deepseek-api-key-here
 QLING_LLM_PROVIDER=deepseek
 QLING_LLM_ENDPOINT=https://api.deepseek.com
 QLING_LLM_MODEL=deepseek-chat
 ```
 
-轻灵支持 OpenAI-compatible provider。通过 `QLING_LLM_ENDPOINT`、`QLING_LLM_MODEL` 和对应 API key 环境变量即可接入兼容模型服务。
-
-## 运行方式
+或者直接走交互式向导：
 
 ```bash
-qling                         # 默认进入 streaming TUI
-qling chat                    # 显式进入 TUI
-qling repl                    # 简单 REPL
-qling run "分析这个仓库"      # 单次执行
-qling --continue              # 恢复最近交互会话
-qling --resume <session>      # 恢复指定会话
+qling setup
 ```
 
-npm script：
+轻灵支持任意 OpenAI 兼容 provider；通过 `QLING_LLM_ENDPOINT` / `QLING_LLM_MODEL` + 对应 API key 环境变量接入。
+
+### 跑通 4 个命令
 
 ```bash
-npm run tui
-npm run repl
-npm run exec -- "分析这个仓库"
+qling                   # 默认进入流式 TUI（chat）
+qling chat              # 显式进入流式 TUI
+qling run "分析这个仓库" # 单次执行，推荐形式
+qling setup             # 交互式配置 LLM 提供商
 ```
 
-## 命令面板
+## 运行模式
 
-在 TUI 中输入 `/` 打开命令面板。输入前缀过滤候选，使用 `↑/↓` 移动选择，`Tab` 接受当前候选并保留尾随空格，`Enter` 执行输入框里的文本。
+| 模式 | 用途 |
+|---|---|
+| `qling` | 默认进入流式 TUI，等价于 `qling chat`。 |
+| `qling chat` | 显式进入流式 TUI。 |
+| `qling repl` | 简易 REPL，无 TUI 装饰。 |
+| `qling run "任务"` | 单次执行后退出，适合脚本调用。 |
+| `qling --continue` | 恢复最近一次交互会话。 |
+| `qling --resume <session>` | 恢复指定交互会话。 |
+| `qling daemon start` | 启动后台守护进程（qlingd）。 |
+| `qling workflow resume <id>` | 从状态机 Checkpoint 恢复执行。 |
+| `qling dashboard start` | 启动本地观测台。 |
+
+向后兼容：`qling --tui`、`qling --repl`、`qling --once "task"`、直接以裸任务作为位置参数仍可用，但会有 warning。
+
+## CLI 顶层命令
+
+`qling help` 总是最新基线。常见命令：
+
+```bash
+# 状态 / 诊断 / 隐私
+qling status            # 本地状态摘要
+qling doctor            # 稳定性与数据留存诊断
+qling privacy           # 数据留存路径与隐私边界
+qling storage           # 只读盘点 state / sessions / exports / cache
+qling context           # 本地上下文与快照状态
+qling recap [session|latest] [count]   # 已保存会话的回顾
+
+# 会话与恢复
+qling sessions [count]          # 本地保存的会话快照
+qling checkpoint [name]         # 复制最近会话为本地恢复检查点
+qling exports [count]           # 本地 Markdown 会话导出
+qling workflow resume <id>      # 从状态机 checkpoint 恢复
+
+# 后台使命（v0.5）
+qling mission start "任务"      # 开启一个后台使命
+qling mission list              # 列出所有使命
+qling mission show <id>         # 查看详情
+qling mission logs <id>         # 查看日志
+qling mission attach <id>       # 跟随使命输出直到结束
+qling mission pause|resume|cancel|retry <id>
+
+# 后台守护进程
+qling daemon start|status|stop
+
+# 观测 / 同步 / 记忆
+qling dashboard start           # 本地白盒化观测台
+qling discovery sync            # 动态同步插件与技能
+qling memory status|list|search|sources|practices|graph|show|reindex
+
+# 本地任务 / 目标 / 配置
+qling tasks list [count] | cancel <id>
+qling goal status|set|clear
+qling permissions [explain <tool>]
+qling config                    # 密钥脱敏后的有效配置
+qling mcp                       # MCP server 摘要
+qling hooks                     # hooks / guard 摘要
+qling shortcuts                 # TUI 快捷键
+qling statusline                # 输入区状态线
+```
+
+中文别名（部分示例）：
+
+```bash
+qling 帮助        # help
+qling 诊断        # doctor
+qling 状态        # status
+qling 代理        # agents
+qling 使命 列表   # mission list
+qling 日志 <id>   # logs <id>
+```
+
+## TUI 内 slash 命令
+
+进入 TUI（`qling` 或 `qling chat`）后，按 `/` 打开命令面板。输入前缀过滤候选，`↑/↓` 移动选择，`Tab` 接受候选并保留尾随空格，`Enter` 执行当前输入。
 
 ### 会话与恢复
 
@@ -121,7 +166,7 @@ npm run exec -- "分析这个仓库"
 |---|---|
 | `/checkpoint [name] [--force]` | 保存本地恢复点。 |
 | `/sessions` | 列出已保存会话。 |
-| `/resume [session\|latest]` | 恢复指定会话或最近会话。 |
+| `/resume [session\|latest]` | 恢复指定或最近会话。 |
 | `/rewind`, `/undo` | 显示可恢复点和下一步恢复命令；不自动回滚代码。 |
 | `/clear`, `/reset`, `/new` | 清空当前对话上下文。 |
 | `/compact` | 手动压缩上下文。 |
@@ -133,8 +178,8 @@ npm run exec -- "分析这个仓库"
 | Command | Purpose |
 |---|---|
 | `/model [model]` | 显示或切换当前 session 模型；不写入配置文件。 |
-| `/usage`, `/cost`, `/stats` | 显示 token 来源、用量、上下文预算和压缩状态。 |
-| `/context` | 查看本地上下文和 token 使用情况。 |
+| `/usage`, `/cost`, `/stats` | token 来源、用量、上下文预算和压缩状态。 |
+| `/context` | 本地上下文和 token 使用情况。 |
 | `/statusline [on\|off]` | 显示或切换输入区状态线。 |
 
 ### 工作推进
@@ -145,8 +190,8 @@ npm run exec -- "分析这个仓库"
 | `/goal [status\|set <condition>\|clear]` | 管理当前 session 目标。 |
 | `/loop [interval] [prompt]` | 创建本地重复提示任务。 |
 | `/tasks [cancel <id>\|clear]` | 查看或管理本地 loop 任务。 |
-| `/agents` | 查看本地后台 mission 分组。 |
-| `/mission ...` | 管理本地 mission。 |
+| `/agents` | 查看本地后台使命分组。 |
+| `/mission ...` | 管理本地使命。 |
 
 ### 本地知识与 skill
 
@@ -194,32 +239,55 @@ npm run exec -- "分析这个仓库"
 
 ## 内置工具
 
-| Tool | Purpose |
-|---|---|
-| `bash` | 通过 guard 管线执行 shell 命令。 |
-| `read` | 读取本地文件，带大小和二进制保护。 |
-| `write` | 写入本地文件。 |
-| `search` | 搜索本地文件和内容。 |
-| `planner` | 生成结构化任务计划。 |
-| `skill` | 加载本地 Markdown skills。 |
-| `todo` | 管理本地任务列表。 |
-| `url_fetch` | 在 guard 策略下抓取允许的远程 URL。 |
-| `browser_fetch` | 通过 Playwright 获取浏览器渲染页面。 |
-| `subtask` | 运行隔离子任务 agent。 |
-| `vision_analyze` | 使用配置的视觉 provider 分析本地图片。 |
+| Tool | 来源 | 用途 |
+|---|---|---|
+| `bash` | `src/tools/bash.ts` | 通过 guard 管线执行 shell 命令。 |
+| `read` | `src/tools/read.ts` | 读取本地文件，带大小和二进制保护。 |
+| `write` | `src/tools/write.ts` | 写入本地文件。 |
+| `search` | `src/tools/search.ts` | 搜索本地文件和内容。 |
+| `planner` | `src/tools/planner.ts` | 生成结构化任务计划。 |
+| `skill` | `src/tools/skill.ts` | 加载本地 Markdown skills。 |
+| `todo` | `src/tools/todo.ts` | 管理本地任务列表。 |
+| `url-fetch` | `src/tools/url-fetch.ts` | guard 策略下抓取允许的远程 URL。 |
+| `browser-fetch` | `src/tools/browser-fetch.ts` | 通过 Playwright 抓取浏览器渲染页面（v0.5）。 |
+| `subtask` | `src/tools/subtask.ts` | 运行隔离子任务 agent。 |
+| `vision-analyze` | `src/tools/vision-analyze.ts` | 使用配置的视觉 provider 分析本地图片。 |
+
+## 使命（Mission）后台任务
+
+使命是轻灵在 v0.5 引入的后台任务模型。`qling daemon` 启动 qlingd 后：
+
+- `qling mission start "..."` 把任务交给守护进程，关闭终端也能继续。
+- 守护进程挂了或者没起时，CLI 自动回退到本地文件状态机上继续。
+- `qling mission attach <id>` 以只读模式跟随使命输出。
+- `/agents` / `qling agents` / `qling 代理` 按状态分组查看。
+
+完整命令：
+
+```bash
+qling mission start "任务"      # 提交到 qlingd
+qling mission list              # 列出
+qling mission show <id>         # 详情
+qling mission logs <id>         # 日志
+qling mission attach <id>       # 跟随输出
+qling mission pause|resume|cancel|retry <id>
+qling mission stop|terminate <id>   # cancel 的别名
+qling mission respawn <id>          # retry 的别名
+```
 
 ## 本地数据边界
 
-轻灵默认把运行态数据写入本地 qling state 目录，常见内容包括：
+轻灵默认把运行态数据写入 `~/.qling/`（可被 `--file-state-dir` 覆盖），常见内容：
 
 - saved sessions
 - checkpoints
 - exports
-- memory indexes
+- memory indexes（SQLite + 向量）
 - session goals
 - loop tasks
 - mission metadata
-- guard and diagnostics artifacts
+- guard / 审计 artifacts
+- 通道状态（Telegram / Slack）
 
 查看边界：
 
@@ -242,32 +310,36 @@ TUI 内：
 
 ```text
 src/
-  agent-loop.ts          Agent loop and model/tool orchestration
-  cli/                   CLI startup contract and setup flow
-  commands/              Slash command implementations
-  guard/                 Permissions, content filtering, audit, rate limits
-  mcp/                   MCP client and bridge
-  memory/                WAL, memory projection, semantic memory
-  metrics/               Local telemetry and observability
-  mission/               Background mission state machine
-  pipeline/              Prompt sections, hooks, verification
-  session/               Session registry, goals, tasks, scheduler
-  skills/                Local skill registry
-  tools/                 Built-in tool implementations
-  tui/                   Streaming terminal UI
+  agent-loop.ts          Agent 主循环与模型 / 工具编排
+  agent/                 隔离子任务 agent
+  channels/              控制台 / Telegram / Slack 通道
+  cli/                   CLI 启动契约 + setup + daemon 控制
+  commands/              slash 命令实现
+  daemon.ts              qlingd 后台守护进程入口
+  dashboard-server.ts    本地观测 HTTP 服务
+  discovery-*.ts         动态插件 / 技能注册
+  guard/                 权限、内容过滤、审计
+  mcp/                   MCP stdio + HTTP 客户端
+  memory/                WAL / 投影 / 语义记忆
+  mission/               使命状态机
+  pipeline/              prompt section / hooks / 验证
+  session/               会话注册 / goal / task / scheduler
+  skills/                本地 skill 注册
+  tools/                 内置工具实现
+  tui/                   流式终端 UI
 tests/
-  unit/                  Unit coverage
-  smoke/                 End-to-end smoke coverage
-docs/superpowers/        Specs, plans, reviews
+  unit/                  单元测试
+  smoke/                 端到端冒烟测试
+docs/superpowers/        specs / plans / reviews
 ```
 
-## 开发验证
+## 开发与验证
 
 ```bash
-npm run build
-npm test
-npm run test:smoke
-npm run ci:check
+npm run build         # tsc
+npm test              # 单元测试
+npm run test:smoke    # 端到端冒烟
+npm run ci:check      # build + unit + smoke
 ```
 
 发布前建议：
@@ -286,6 +358,12 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 - **Honest boundaries**：不支持的云端能力必须明确说明，不伪装成功。
 - **Terminal-native**：增强终端体验，但保持纯文本兼容和低依赖。
 
+## 版本与变更
+
+- 当前版本：`0.5.0`
+- 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
+- 设计 / 实施文档：见 `docs/superpowers/specs/`、`docs/superpowers/plans/`
+
 ## License
 
-MIT
+[MIT](LICENSE)
