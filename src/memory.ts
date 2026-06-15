@@ -12,6 +12,8 @@ import { ProjectionWorker } from "./memory/projection-worker.js";
 import { MemoryCompactor } from "./memory/compactor.js";
 import { CognitiveIndex } from "./memory/cognitive-index.js";
 import { EmbeddingClient } from "./memory/embedding.js";
+import * as crypto from "crypto";
+import type { MemoryOperation } from "./memory/consolidation.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -209,6 +211,10 @@ export class PersistedMemory {
   /** 建立知识关联 */
   link(source: any, relation: string, target: any): void {
     this.cognitiveIndex?.link(source, relation, target);
+  }
+
+  linkSessionToEntities(sessionId: string, summary: string, files: string[], tasks: string[]): void {
+    this.cognitiveIndex?.linkSessionToEntities(sessionId, summary, files, tasks);
   }
 
   /** 记录最佳实践 */
@@ -409,19 +415,33 @@ export class ConversationMemory {
 // --- Unified MemoryStore（统一入口，组合三层）---
 
 export class MemoryStore {
-  private persisted: PersistedMemory;
+  private persisted: PersistedMemory; // Workspace persisted memory (for compatibility)
+  private globalPersisted: PersistedMemory;
   private scratchpad: ScratchpadMemory;
   private conversation: ConversationMemory;
   private config: typeof DEFAULT_CONFIG;
+  private workspaceMemoryDir: string;
+  private globalMemoryDir: string;
 
-  constructor(memoryDir: string, config: Partial<typeof DEFAULT_CONFIG> = {}) {
-    this.persisted = new PersistedMemory(memoryDir);
+  constructor(memoryDir: string, config: Partial<typeof DEFAULT_CONFIG> & { workspaceDir?: string } = {}) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+
+    const workspaceDir = config.workspaceDir || process.cwd();
+    const wsHash = crypto.createHash("sha256").update(path.resolve(workspaceDir)).digest("hex").slice(0, 16);
+
+    // If memoryDir ends with "memory", assume it is the runtime root memory directory.
+    const parentDir = memoryDir.endsWith("memory") ? memoryDir : path.join(path.dirname(memoryDir), "memory");
+    this.globalMemoryDir = path.join(parentDir, "global");
+    this.workspaceMemoryDir = path.join(parentDir, "workspace", wsHash);
+
+    this.persisted = new PersistedMemory(this.workspaceMemoryDir);
+    this.globalPersisted = new PersistedMemory(this.globalMemoryDir);
     this.scratchpad = new ScratchpadMemory();
     this.conversation = new ConversationMemory();
-    this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
   async init(): Promise<void> {
+    await this.globalPersisted.init();
     await this.persisted.init();
   }
 
@@ -449,6 +469,7 @@ export class MemoryStore {
   }
 
   async shutdown(): Promise<void> {
+    await this.globalPersisted.shutdown();
     await this.persisted.shutdown();
   }
 
@@ -461,17 +482,82 @@ export class MemoryStore {
   }
 
   // --- Persisted（对外 API）---
-  add(content: string, source: string, importance: number = 0.5): void {
-    this.persisted.add(content, source, importance);
+  add(content: string, source: string, importance: number = 0.5, scope: "global" | "workspace" = "workspace"): void {
+    if (scope === "global") {
+      this.globalPersisted.add(content, source, importance);
+    } else {
+      this.persisted.add(content, source, importance);
+    }
+  }
+
+  remove(id: string, scope: "global" | "workspace" = "workspace"): boolean {
+    if (scope === "global") {
+      return this.globalPersisted.remove(id);
+    } else {
+      return this.persisted.remove(id);
+    }
+  }
+
+  update(id: string, updates: Partial<Pick<PersistedEntry, "content" | "importance">>, scope: "global" | "workspace" = "workspace"): boolean {
+    if (scope === "global") {
+      return this.globalPersisted.update(id, updates);
+    } else {
+      return this.persisted.update(id, updates);
+    }
+  }
+
+  applyOperations(ops: MemoryOperation[], scope: "global" | "workspace" = "workspace"): void {
+    for (const op of ops) {
+      switch (op.action) {
+        case "ADD":
+          this.add(op.fact, "dream-consolidation", 0.6, scope);
+          break;
+        case "UPDATE":
+          if (op.targetId) {
+            this.update(op.targetId, { content: op.fact }, scope);
+          }
+          break;
+        case "DELETE":
+          if (op.targetId) {
+            this.remove(op.targetId, scope);
+          }
+          break;
+      }
+    }
   }
 
   async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
-    return this.persisted.getRelevant(query, limit);
+    const wsHits = await this.persisted.getRelevant(query, limit);
+    const globalHits = await this.globalPersisted.getRelevant(query, limit);
+
+    const merged = new Map<string, { entry: PersistedEntry; score: number }>();
+
+    // Project/workspace memories get a weight multiplier of 1.0
+    wsHits.forEach((entry, idx) => {
+      const score = (limit - idx) * 1.0;
+      merged.set("ws:" + entry.id, { entry, score });
+    });
+
+    // Global memories get a weight multiplier of 0.7
+    globalHits.forEach((entry, idx) => {
+      const score = (limit - idx) * 0.7;
+      const key = "global:" + entry.id;
+      merged.set(key, { entry, score });
+    });
+
+    return Array.from(merged.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((s) => s.entry);
   }
 
   // --- Cognitive Layer (M1) ---
   link(source: any, relation: string, target: any): void {
     this.persisted.link(source, relation, target);
+  }
+
+  linkSessionToEntities(sessionId: string, summary: string, files: string[], tasks: string[]): void {
+    this.persisted.linkSessionToEntities(sessionId, summary, files, tasks);
   }
 
   addPractice(pattern: string, commands: string[], files: string[]): void {
@@ -516,12 +602,15 @@ export class MemoryStore {
     if (scratchpadStr) parts.push(scratchpadStr);
     const persistedStr = this.persisted.formatForPrompt(limit);
     if (persistedStr) parts.push(persistedStr);
+    const globalStr = this.globalPersisted.formatForPrompt(limit);
+    if (globalStr) parts.push("[全局记忆]\n" + globalStr);
     if (parts.length === 0) return null;
     return parts.join("\n\n");
   }
 
   // --- 统一接口：保存到磁盘 ---
   async saveToDisk(): Promise<void> {
+    await this.globalPersisted.saveToDisk();
     await this.persisted.saveToDisk();
   }
 
@@ -543,6 +632,14 @@ export class MemoryStore {
 
   compactPersisted(maxEntries: number): void {
     this.persisted.compact(maxEntries);
+  }
+
+  getWorkspaceMemoryDir(): string {
+    return this.workspaceMemoryDir;
+  }
+
+  getGlobalMemoryDir(): string {
+    return this.globalMemoryDir;
   }
 }
 

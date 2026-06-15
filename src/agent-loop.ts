@@ -246,7 +246,9 @@ export class AgentLoop extends AgentEventEmitter {
     this.hookManager = new HookManager(this.config.tools, this.guardConfig);
     this.pipeline = new ToolPipeline(this.config.tools, this.hookManager);
     this.pipeline.setSessionId(this.sessionId);
-    this.memoryStore = new MemoryStore(this.memoryDir);
+    this.memoryStore = new MemoryStore(this.memoryDir, {
+      workspaceDir: this.config.runtime?.workspaceDir || undefined,
+    });
     this.tokenBudget = new TokenBudgetManager(
       this.config.tokenBudget?.totalBudget ?? 120_000,
       this.config.tokenBudget?.nudgeThreshold ?? 0.2
@@ -362,7 +364,7 @@ export class AgentLoop extends AgentEventEmitter {
 
     if (walEnabled) {
       try {
-        const walDir = path.join(this.memoryDir, "wal");
+        const walDir = path.join(this.memoryStore.getWorkspaceMemoryDir(), "wal");
         this.wal = new WriteAheadLog(walDir);
         await this.wal.init();
         this.memoryStore.setWAL(this.wal, { intervalMs: projectionInterval });
@@ -373,7 +375,7 @@ export class AgentLoop extends AgentEventEmitter {
           const { CognitiveIndex } = await import("./memory/cognitive-index.js");
           const { EmbeddingClient } = await import("./memory/embedding.js");
 
-          const cognitiveIndex = new CognitiveIndex(this.memoryDir);
+          const cognitiveIndex = new CognitiveIndex(this.memoryStore.getWorkspaceMemoryDir());
           const embeddingClient = new EmbeddingClient({
             apiKey: process.env.QLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
             endpoint: process.env.QLING_MEMORY_SEMANTIC_ENDPOINT || this.config.endpoint || (this.config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com"),
@@ -978,9 +980,80 @@ export class AgentLoop extends AgentEventEmitter {
     if (this.dashboardServer) {
       this.dashboardServer.stop();
     }
+    try {
+      if (this.messages.length > 0) {
+        await this.linkSessionGraph();
+      }
+    } catch (err) {
+      console.error("[Memory] linkSessionGraph error:", err);
+    }
     await this.memoryStore.shutdown();
     if (this.wal) {
       await this.wal.close();
+    }
+  }
+
+  private async linkSessionGraph(): Promise<void> {
+    try {
+      const cognitiveIndex = this.memoryStore.getCognitiveIndex();
+      if (!cognitiveIndex) return;
+
+      const sessionId = this.sessionId;
+      let summary = "无摘要会话";
+      if (this.memoryDreamLLMEnabled && this.messages.length > 0 && this.config.apiKey) {
+        try {
+          const axios = (await import("axios")).default;
+          const userMessages = this.messages.filter(m => m.role === "user").map(m => m.content);
+          const brief = userMessages.join("; ").slice(0, 500);
+          const resp = await axios.post(
+            this.config.endpoint + "/chat/completions",
+            {
+              model: this.config.model,
+              messages: [
+                { role: "system", content: "你是一个会话摘要助手。请为用户的请求写一句极为简洁的中文总结（不超过20字，例如：修复多行换行渲染与退出超时bug）。只输出总结文本，不要其他内容。" },
+                { role: "user", content: brief },
+              ],
+              max_tokens: 60,
+              temperature: 0.3,
+            },
+            {
+              headers: {
+                Authorization: "Bearer " + this.config.apiKey,
+                "Content-Type": "application/json",
+              },
+              timeout: 10_000,
+            }
+          );
+          const content = resp.data.choices?.[0]?.message?.content?.trim();
+          if (content) {
+            summary = content;
+          }
+        } catch (err) {
+          summary = "执行了 " + this.turnCount + " 轮交互的任务";
+        }
+      } else {
+        summary = "执行了 " + this.turnCount + " 轮交互的任务";
+      }
+
+      const fileRegex = /[/\w-]+\.(?:ts|js|py|md|json|yml|yaml|sh|mjs)/g;
+      const files = new Set<string>();
+      for (const msg of this.messages) {
+        let match;
+        while ((match = fileRegex.exec(msg.content)) !== null) {
+          files.add(match[0]);
+        }
+      }
+
+      const userMessages = this.messages.filter(m => m.role === "user").map(m => m.content);
+      const tasks: string[] = [];
+      if (userMessages.length > 0) {
+        tasks.push(userMessages[0].slice(0, 50));
+      }
+
+      this.memoryStore.linkSessionToEntities(sessionId, summary, Array.from(files), tasks);
+      console.error(`[Memory] 已建立会话图谱关系链: ${summary} (关联了 ${files.size} 个文件, ${tasks.length} 个任务)`);
+    } catch (err) {
+      console.error("[Memory] linkSessionGraph failed:", (err as Error).message);
     }
   }
 
@@ -1304,6 +1377,7 @@ export class AgentLoop extends AgentEventEmitter {
         .map((m) => m.content);
 
       let memories: string[];
+      let changedCount = 0;
 
       if (this.memoryDreamLLMEnabled) {
         memories = await extractDreamMemoriesLLM(
@@ -1317,23 +1391,36 @@ export class AgentLoop extends AgentEventEmitter {
             endpoint: this.config.endpoint ?? "https://api.deepseek.com",
           }
         );
+
+        const { consolidateMemoriesLLM } = await import("./memory/consolidation.js");
+        const existing = this.memoryStore.exportPersisted();
+        const ops = await consolidateMemoriesLLM(memories, existing, {
+          apiKey: this.config.apiKey,
+          endpoint: this.config.endpoint ?? "https://api.deepseek.com",
+          model: this.config.model,
+        });
+
+        this.memoryStore.applyOperations(ops, "workspace");
+        changedCount = ops.filter((op) => op.action !== "NOOP").length;
       } else {
         memories = await extractDreamMemories(
           { turnCount: this.turnCount, transcript },
           { enabled: true, turnThreshold: this.memoryDreamTurnThreshold, transcriptWindow: 4 }
         );
+        const existingContents = new Set(this.memoryStore.exportPersisted().map((e) => e.content));
+        const newMems = memories.filter((m) => !existingContents.has(m));
+        for (const mem of newMems) {
+          this.memoryStore.add(mem, "auto-dream", 0.6);
+        }
+        changedCount = newMems.length;
       }
 
-      for (const mem of memories) {
-        this.memoryStore.add(mem, "auto-dream", 0.6);
-      }
-
-      if (memories.length > 0) {
+      if (changedCount > 0) {
         this.memoryStore.compactPersisted(this.memoryMaxEntries);
         await this.memoryStore.saveToDisk();
-        console.error("[AutoDream] " + memories.length + " 条新记忆已保存");
+        console.error("[AutoDream] " + changedCount + " 项长期记忆已整理并保存");
       }
-    } catch {
+    } catch (err) {
       // ignore
     }
   }

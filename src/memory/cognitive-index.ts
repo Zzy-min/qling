@@ -173,6 +173,18 @@ export class CognitiveIndex {
     })();
   }
 
+  linkSessionToEntities(sessionId: string, summary: string, files: string[], tasks: string[]): void {
+    const sessionNode = { id: `session:${sessionId}`, type: "session", label: summary };
+    for (const file of files) {
+      const fileNode = { id: `file:${file}`, type: "file", label: file };
+      this.link(sessionNode, "modifies", fileNode);
+    }
+    for (const task of tasks) {
+      const taskNode = { id: `task:${task}`, type: "task", label: task };
+      this.link(sessionNode, "executes", taskNode);
+    }
+  }
+
   // --- 经验蒸馏操作 ---
 
   addPractice(practice: Omit<distilledPractice, "hit_count" | "created_at">): void {

@@ -1,10 +1,39 @@
 import { access, readFile } from "fs/promises";
-import { join } from "path";
+import { join, dirname } from "path";
 import Database from "better-sqlite3";
 import type { PersistedEntry } from "./types.js";
 
 const DEFAULT_MEMORY_COUNT = 10;
 const MAX_MEMORY_COUNT = 50;
+
+function getMemoryDir(stateDir: string): string {
+  const normalized = stateDir.replace(/\\/g, "/");
+  if (
+    normalized.includes("/memory/workspace") ||
+    normalized.includes("/memory/global") ||
+    normalized.endsWith("/memory")
+  ) {
+    return stateDir;
+  }
+  return join(stateDir, "memory");
+}
+
+function getRuntimeRootDir(stateDir: string, memoryDir: string): string {
+  if (memoryDir !== stateDir) {
+    return stateDir;
+  }
+  const normalized = stateDir.replace(/\\/g, "/");
+  if (normalized.includes("/memory/workspace/")) {
+    return dirname(dirname(dirname(stateDir)));
+  }
+  if (normalized.includes("/memory/global")) {
+    return dirname(dirname(stateDir));
+  }
+  if (normalized.endsWith("/memory")) {
+    return dirname(stateDir);
+  }
+  return stateDir;
+}
 
 export interface CognitiveIndexCounts {
   embeddings: number | null;
@@ -337,7 +366,7 @@ export async function buildLocalMemoryReport(
   options: LocalMemoryReportOptions = {}
 ): Promise<LocalMemoryReport> {
   const requestedCount = parseMemoryReportCount(options.count);
-  const memoryDir = join(stateDir, "memory");
+  const memoryDir = getMemoryDir(stateDir);
   const memoryFile = join(memoryDir, "memory.json");
   const cognitiveIndexDb = join(memoryDir, "cognitive_knowledge.db");
   const warnings: string[] = [];
@@ -359,7 +388,8 @@ export async function buildLocalMemoryReport(
 }
 
 export async function buildLocalMemorySourcesReport(stateDir: string): Promise<LocalMemorySourcesReport> {
-  const memoryDir = join(stateDir, "memory");
+  const memoryDir = getMemoryDir(stateDir);
+  const runtimeRootDir = getRuntimeRootDir(stateDir, memoryDir);
   const sourceSpecs = [
     {
       id: "persisted_memory",
@@ -378,14 +408,14 @@ export async function buildLocalMemorySourcesReport(stateDir: string): Promise<L
     {
       id: "session_checkpoints",
       label: "Session checkpoints",
-      path: join(stateDir, "sessions"),
+      path: join(runtimeRootDir, "sessions"),
       role: "resume metadata",
       boundary: "用于会话恢复和 checkpoint；本报告不读取 session 正文。",
     },
     {
       id: "goal_task_state",
       label: "Goal and task state",
-      path: stateDir,
+      path: runtimeRootDir,
       role: "task progress metadata",
       boundary: "goal/task 进度保存在 session-goals、session-tasks 等本地文件；本报告不读取任务正文。",
     },
@@ -405,7 +435,7 @@ export async function searchLocalMemoryEntries(
 ): Promise<LocalMemorySearchReport> {
   const requestedCount = parseMemoryReportCount(request.count);
   const query = (request.query ?? "").trim();
-  const memoryDir = join(stateDir, "memory");
+  const memoryDir = getMemoryDir(stateDir);
   const memoryFile = join(memoryDir, "memory.json");
   const warnings: string[] = [];
   const entries = await loadPersistedEntries(memoryFile, warnings);
@@ -447,7 +477,7 @@ export async function listLocalMemoryPractices(
   options: LocalMemoryReportOptions = {}
 ): Promise<LocalMemoryPracticesReport> {
   const requestedCount = parseMemoryReportCount(options.count);
-  const memoryDir = join(stateDir, "memory");
+  const memoryDir = getMemoryDir(stateDir);
   const cognitiveIndexDb = join(memoryDir, "cognitive_knowledge.db");
   const warnings: string[] = [];
 
@@ -592,7 +622,7 @@ export async function listLocalMemoryGraph(
   options: LocalMemoryReportOptions = {}
 ): Promise<LocalMemoryGraphReport> {
   const requestedCount = parseMemoryReportCount(options.count);
-  const memoryDir = join(stateDir, "memory");
+  const memoryDir = getMemoryDir(stateDir);
   const cognitiveIndexDb = join(memoryDir, "cognitive_knowledge.db");
   const warnings: string[] = [];
 
@@ -674,7 +704,8 @@ export async function listLocalMemoryGraph(
 }
 
 export async function findLocalMemoryEntry(stateDir: string, id: string): Promise<LocalMemoryReportEntry | null> {
-  const memoryFile = join(stateDir, "memory", "memory.json");
+  const memoryDir = getMemoryDir(stateDir);
+  const memoryFile = join(memoryDir, "memory.json");
   const entries = sortEntries(await loadPersistedEntries(memoryFile, []));
   const found = entries.find((entry) => entry.id === id);
   return found ? toReportEntry(found) : null;
