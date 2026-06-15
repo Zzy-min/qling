@@ -124,6 +124,14 @@ function formatCell(cell: string, width: number): string {
   return truncated + " ".repeat(Math.max(0, width - tw));
 }
 
+function normalizeTableCell(cell: string): string {
+  return cell
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]*?)`/g, "$1")
+    .trim();
+}
+
 function wrapVisibleText(text: string, width: number, firstPrefix = "", restPrefix = ""): string[] {
   const safeWidth = Math.max(10, width);
   const lines: string[] = [];
@@ -153,11 +161,14 @@ export function renderTable(table: ParsedTable, width: number): string[] {
   const colCount = table.headers.length;
   if (colCount === 0) return [];
 
+  const headers = table.headers.map(normalizeTableCell);
+  const rows = table.rows.map((row) => row.map(normalizeTableCell));
+
   // 计算最大列宽
   const maxColWidths: number[] = new Array(colCount).fill(0);
   for (let c = 0; c < colCount; c++) {
-    maxColWidths[c] = Math.max(maxColWidths[c], sw(table.headers[c] || ""));
-    for (const row of table.rows) {
+    maxColWidths[c] = Math.max(maxColWidths[c], sw(headers[c] || ""));
+    for (const row of rows) {
       maxColWidths[c] = Math.max(maxColWidths[c], sw(row[c] ?? ""));
     }
   }
@@ -207,45 +218,44 @@ export function renderTable(table: ParsedTable, width: number): string[] {
 
   const lines: string[] = [];
 
+  const borderLine = (left: string, mid: string, right: string): string => {
+    let line = left;
+    for (let c = 0; c < colCount; c++) {
+      line += "─".repeat(colWidths[c] + 2);
+      line += c < colCount - 1 ? mid : right;
+    }
+    return S.d(line);
+  };
+
+  const contentLine = (cells: string[], header = false): string => {
+    let line = S.d("│");
+    for (let c = 0; c < colCount; c++) {
+      const cell = formatCell(cells[c] || "", colWidths[c]);
+      const styled = header ? BOLD(S.b(cell)) : S.b(cell);
+      line += " " + styled + " " + S.d("│");
+    }
+    return line;
+  };
+
   // top border
-  let top = "┌";
-  for (let c = 0; c < colCount; c++) {
-    top += "─".repeat(colWidths[c] + 2);
-    top += c < colCount - 1 ? "┬" : "┐";
-  }
-  lines.push(S.p(top));
+  lines.push(borderLine("┌", "┬", "┐"));
 
   // header
-  let headerLine = "│";
-  for (let c = 0; c < colCount; c++) {
-    headerLine += " " + BOLD(formatCell(table.headers[c] || "", colWidths[c])) + " │";
-  }
-  lines.push(S.p(headerLine));
+  lines.push(contentLine(headers, true));
 
   // separator
-  let sep = "├";
-  for (let c = 0; c < colCount; c++) {
-    sep += "─".repeat(colWidths[c] + 2);
-    sep += c < colCount - 1 ? "┼" : "┤";
-  }
-  lines.push(S.p(sep));
+  lines.push(borderLine("├", "┼", "┤"));
 
   // rows
-  for (const row of table.rows) {
-    let rowLine = "│";
-    for (let c = 0; c < colCount; c++) {
-      rowLine += " " + formatCell(row[c] || "", colWidths[c]) + " │";
+  for (let r = 0; r < rows.length; r++) {
+    lines.push(contentLine(rows[r] ?? [], false));
+    if (r < rows.length - 1) {
+      lines.push(borderLine("├", "┼", "┤"));
     }
-    lines.push(S.p(rowLine));
   }
 
   // bottom border
-  let bottom = "└";
-  for (let c = 0; c < colCount; c++) {
-    bottom += "─".repeat(colWidths[c] + 2);
-    bottom += c < colCount - 1 ? "┴" : "┘";
-  }
-  lines.push(S.p(bottom));
+  lines.push(borderLine("└", "┴", "┘"));
 
   return lines;
 }

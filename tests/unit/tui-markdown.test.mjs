@@ -92,6 +92,7 @@ const x = 1;
 
   const rendered = formatMarkdownForTerminal(md, { width: 80 });
   const text = rendered.join("\n");
+  const plainText = stripAnsi(text);
 
   // 断言标题被渲染
   assert.match(text, /title-header/);
@@ -103,7 +104,7 @@ const x = 1;
   assert.match(text, /const x = 1;/);
   // 断言表格被渲染成 Box Table (含 ┌, ┬, ┐, └ 等)
   assert.match(text, /┌/);
-  assert.match(text, /│ A1/);
+  assert.match(plainText, /│ A1/);
 });
 
 test("markdown table rendering aligns Chinese wide characters without layout drift", () => {
@@ -136,4 +137,25 @@ test("markdown table rendering aligns Chinese wide characters without layout dri
   for (const w of widths) {
     assert.equal(w, firstWidth);
   }
+});
+
+test("markdown table rendering strips inline markers and draws row grid separators", () => {
+  const rendered = formatMarkdownForTerminal([
+    "| 项目 | 数据 |",
+    "|---|---|",
+    "| **最新价** | **¥4.62** |",
+    "| **涨跌幅** | **+1.54%** ↑ |",
+    "| **成交额** | ~42.47 亿元 |"
+  ].join("\n"), { width: 80 });
+
+  const plain = rendered.map(stripAnsi);
+  const text = plain.join("\n");
+  const tableLines = plain.filter((line) => /^[┌├│└]/.test(line));
+  const widths = tableLines.map((line) => stringWidth(line));
+
+  assert.doesNotMatch(text, /\*\*/);
+  assert.match(text, /│ 最新价/);
+  assert.match(text, /│ ¥4\.62/);
+  assert.ok(plain.filter((line) => line.startsWith("├")).length >= 3);
+  assert.equal(new Set(widths).size, 1, `table widths drifted: ${widths.join(", ")}`);
 });
