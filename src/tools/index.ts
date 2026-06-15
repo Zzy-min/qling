@@ -15,14 +15,15 @@ import { runUrlFetch, urlFetchTool } from "./url-fetch.js";
 import { runSubtask, subtaskTool } from "./subtask.js";
 import { runVisionAnalyze, visionAnalyzeTool } from "./vision-analyze.js";
 import { runBrowserFetch, browserFetchTool } from "./browser-fetch.js";
+import { runPatch, patchTool } from "./patch.js";
 import { toolError } from "./error-utils.js";
 import { isMCPTool, parseMCPToolName } from "../mcp/bridge.js";
 import type { MCPRegistry } from "../mcp/registry.js";
 
-export { bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool, visionAnalyzeTool, browserFetchTool };
+export { bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool, visionAnalyzeTool, browserFetchTool, patchTool };
 
 export const ALL_TOOLS: ToolDefinition[] = [
-  bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool, visionAnalyzeTool, browserFetchTool
+  bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool, visionAnalyzeTool, browserFetchTool, patchTool
 ];
 
 // Runtime MCP registry reference
@@ -68,6 +69,7 @@ const handlers: Record<string, ToolHandler> = {
   subtask: runSubtask as ToolHandler,
   vision_analyze: runVisionAnalyze as ToolHandler,
   browser_fetch: runBrowserFetch as ToolHandler,
+  patch: runPatch as ToolHandler,
 };
 
 export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {
