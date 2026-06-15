@@ -158,7 +158,7 @@ export class CognitiveIndex {
       VALUES (?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen
     `);
-    
+
     const upsertEdge = this.db.prepare(`
       INSERT INTO kg_edges (source, target, relation, weight)
       VALUES (?, ?, ?, 1.0)
@@ -196,11 +196,74 @@ export class CognitiveIndex {
   getRelatedPractices(query: string): any[] {
     // 简单的关键词模式匹配，后期可升级为向量检索
     return this.db.prepare(`
-      SELECT * FROM distilled_practices 
-      WHERE task_pattern LIKE ? 
-      ORDER BY confidence DESC, hit_count DESC 
+      SELECT * FROM distilled_practices
+      WHERE task_pattern LIKE ?
+      ORDER BY confidence DESC, hit_count DESC
       LIMIT 3
     `).all(`%${query}%`);
+  }
+
+  // --- 符号索引相关操作 ---
+  upsertSymbolNode(fileRelativePath: string, symbol: { name: string; type: string; line: number; signature: string }): void {
+    const fileId = `file:${fileRelativePath}`;
+    const symbolId = `symbol:${fileRelativePath}:${symbol.name}`;
+    const now = Date.now();
+
+    const upsertNode = this.db.prepare(`
+      INSERT INTO kg_nodes (id, type, label, metadata, last_seen)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        label = excluded.label,
+        metadata = excluded.metadata,
+        last_seen = excluded.last_seen
+    `);
+
+    const upsertEdge = this.db.prepare(`
+      INSERT INTO kg_edges (source, target, relation, weight)
+      VALUES (?, ?, ?, 1.0)
+      ON CONFLICT(source, target, relation) DO UPDATE SET weight = weight + 0.1
+    `);
+
+    this.db.transaction(() => {
+      upsertNode.run(fileId, "file", fileRelativePath, null, now);
+      const meta = JSON.stringify({ kind: symbol.type, line: symbol.line, signature: symbol.signature });
+      upsertNode.run(symbolId, "symbol", symbol.name, meta, now);
+      upsertEdge.run(symbolId, fileId, "part_of");
+    })();
+  }
+
+  getSymbolsForFile(fileRelativePath: string): { name: string; type: string; line: number; signature: string }[] {
+    const fileId = `file:${fileRelativePath}`;
+    const stmt = this.db.prepare(`
+      SELECT n.id, n.label, n.metadata
+      FROM kg_nodes n
+      JOIN kg_edges e ON n.id = e.source
+      WHERE e.target = ? AND e.relation = 'part_of' AND n.type = 'symbol'
+    `);
+    const rows = stmt.all(fileId) as any[];
+    return rows.map((r) => {
+      const meta = JSON.parse(r.metadata || "{}");
+      return {
+        name: r.label,
+        type: meta.kind || "function",
+        line: meta.line || 0,
+        signature: meta.signature || "",
+      };
+    });
+  }
+
+  clearSymbolsForFile(fileRelativePath: string): void {
+    const fileId = `file:${fileRelativePath}`;
+    this.db.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM kg_edges
+        WHERE target = ? AND relation = 'part_of'
+      `).run(fileId);
+      this.db.prepare(`
+        DELETE FROM kg_nodes
+        WHERE id LIKE ? AND type = 'symbol'
+      `).run(`symbol:${fileRelativePath}:%`);
+    })();
   }
 
   // --- 辅助工具 ---

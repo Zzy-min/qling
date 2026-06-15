@@ -23,6 +23,7 @@ import { shortcutsCommand } from "./shortcuts.js";
 import { exportCommand } from "./export.js";
 import { exportsCommand } from "./exports.js";
 import { memoryCommand } from "./memory.js";
+import { repomapCommand } from "./repomap.js";
 import { dreamCommand } from "./dream.js";
 import { distillCommand } from "./distill.js";
 import { storageCommand } from "./storage.js";
@@ -30,6 +31,7 @@ import { mcpCommand } from "./mcp.js";
 import { hooksCommand } from "./hooks.js";
 import { agentsCommand } from "./agents.js";
 import { missionCommand } from "./mission.js";
+
 import { SlashCommandContext, withDefaultWriters } from "./runtime.js";
 import { formatFocusedHelp } from "../help-topics.js";
 import {
@@ -77,6 +79,8 @@ export const COMMANDS: SlashCommand[] = [
   exportCommand,
   exportsCommand,
   memoryCommand,
+  repomapCommand,
+
   dreamCommand,
   distillCommand,
   storageCommand,

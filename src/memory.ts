@@ -27,7 +27,7 @@ export class PersistedMemory {
   private memoryDir: string;
   private wal: WriteAheadLog | null = null;
   private projectionWorker: ProjectionWorker | null = null;
-  
+
   // v0.5 认知引擎
   private cognitiveIndex: CognitiveIndex | null = null;
   private embeddingClient: EmbeddingClient | null = null;
@@ -126,7 +126,7 @@ export class PersistedMemory {
 
   async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
     const now = Date.now();
-    
+
     // 1. 关键词检索
     const keywordResults = this.entries.map((e) => {
       let score = e.importance;
@@ -181,7 +181,7 @@ export class PersistedMemory {
       if (existing) existing.score += r.score;
       else merged.set(r.entry.id, r);
     });
-    
+
     practiceResults.forEach(p => {
        merged.set(p.id, { entry: p, score: 2.0 });
     });
@@ -320,6 +320,10 @@ export class PersistedMemory {
       this.cognitiveIndex.close();
     }
   }
+
+  getCognitiveIndex(): CognitiveIndex | null {
+    return this.cognitiveIndex;
+  }
 }
 
 // --- ScratchpadMemory（会话笔记，临时，Agent 自己写入读取）---
@@ -450,6 +454,10 @@ export class MemoryStore {
 
   async rebuildSemanticIndex(): Promise<void> {
     await this.persisted.rebuildSemanticIndex();
+  }
+
+  getCognitiveIndex(): CognitiveIndex | null {
+    return this.persisted.getCognitiveIndex();
   }
 
   // --- Persisted（对外 API）---
