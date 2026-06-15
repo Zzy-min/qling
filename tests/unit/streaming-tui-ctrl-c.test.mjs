@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import stringWidth from "string-width";
 
 import { StreamUI } from "../../dist/tui/streaming-tui.js";
+
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 async function withCapturedStdout(fn) {
   const originalWrite = process.stdout.write;
@@ -297,6 +300,21 @@ test("stream ui redraw keeps complete input frame while typing", async () => {
     assert.match(output, /│ › 你/);
     assert.match(output, /└─+┘/);
     assert.doesNotMatch(output.split("│ › 你").at(-1), /^\s*$/);
+  });
+});
+
+test("stream ui input frame borders keep the same visual width as content rows", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    ui.printInputBar();
+    const frameLines = stripAnsi(getOutput())
+      .split("\n")
+      .filter((line) => line.startsWith("┌") || line.startsWith("│") || line.startsWith("└"));
+    const widths = frameLines.map((line) => stringWidth(line));
+
+    assert.ok(widths.length >= 3);
+    assert.equal(new Set(widths).size, 1, `frame widths drifted: ${widths.join(", ")}`);
   });
 });
 

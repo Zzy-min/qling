@@ -437,8 +437,9 @@ export class StreamUI {
       ? "▼ 更多内容 (共 " + wrapped.lines.length + " 行)"
       : "";
 
-    const topBorder = this.formatInputFrameBorder("┌", "┐", topLabel, contentWidth + 2);
-    const bottomBorder = this.formatInputFrameBorder("└", "┘", bottomLabel, contentWidth + 2);
+    const frameWidth = contentWidth + 4;
+    const topBorder = this.formatInputFrameBorder("┌", "┐", topLabel, frameWidth);
+    const bottomBorder = this.formatInputFrameBorder("└", "┘", bottomLabel, frameWidth);
 
     process.stdout.write(S.p(topBorder));
 
