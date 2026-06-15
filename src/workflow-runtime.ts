@@ -30,7 +30,7 @@ export class WorkflowRuntime {
   async start(workflow: WorkflowDefinition, sessionId: string, initialContext: Message[]): Promise<WorkflowCheckpoint> {
     this.workflow = workflow;
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    
+
     this.currentCheckpoint = {
       runId,
       workflowId: workflow.id,
@@ -59,13 +59,13 @@ export class WorkflowRuntime {
 
     const raw = await fs.readFile(cpPath, "utf-8");
     this.currentCheckpoint = JSON.parse(raw) as WorkflowCheckpoint;
-    
+
     // TODO: 这里需要加载对应的 WorkflowDefinition（可能需要持久化存储定义）
-    
+
     this.currentCheckpoint.status = "running";
     this.currentCheckpoint.updatedAt = Date.now();
     await this.saveCheckpoint();
-    
+
     return this.currentCheckpoint;
   }
 

@@ -10,7 +10,7 @@ export function generateExamplesFromSchema(tool: ToolDefinition): string[] {
 
   const autoExamples: string[] = [];
   const requiredParams = Object.entries(tool.paramSchema).filter(([_, p]) => p.required);
-  
+
   // 1. 生成基础成功示例 (包含所有必填项)
   if (requiredParams.length > 0) {
     const baseArgs = requiredParams.map(([name, p]) => {
@@ -30,7 +30,7 @@ export function generateExamplesFromSchema(tool: ToolDefinition): string[] {
 
 function formatExampleValue(p: ToolParam): string {
   if (p.enum && p.enum.length > 0) return `"${p.enum[0]}"`;
-  
+
   switch (p.type) {
     case "string":
       return p.pattern ? '"MATCHES_PATTERN"' : '"example_text"';
@@ -52,14 +52,14 @@ export function buildToolSpecBoostPrompt(tools: ToolDefinition[]): string {
 
   for (const tool of tools) {
     if (!tool.paramSchema) continue;
-    
+
     prompt += `### ${tool.name}\n`;
     prompt += `参数约束:\n`;
     for (const [name, p] of Object.entries(tool.paramSchema)) {
       prompt += `- ${name} (${p.type}${p.required ? ", 必填" : ""}): ${p.description}\n`;
       if (p.enum) prompt += `  枚举值: [${p.enum.join(", ")}]\n`;
     }
-    
+
     const examples = [...(tool.examples || []), ...generateExamplesFromSchema(tool)];
     if (examples.length > 0) {
       prompt += `调用示例:\n`;

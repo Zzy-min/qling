@@ -23,7 +23,7 @@ export function checkToolConsistency(
 
   for (const [name, p] of Object.entries(schema)) {
     const val = args[name];
-    
+
     // 1. 必填项检查
     if (p.required && (val === undefined || val === null)) {
       return { ok: false, warnings, error: `Missing required parameter: ${name}` };

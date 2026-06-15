@@ -79,7 +79,7 @@ export class MissionManager {
     if (error) mission.error = error;
     else if (status !== "failed") delete mission.error;
     mission.updatedAt = Date.now();
-    
+
     if (TERMINAL_STATUSES.has(status)) mission.metrics.endTime = Date.now();
     else delete mission.metrics.endTime;
 

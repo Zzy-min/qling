@@ -78,7 +78,7 @@ export class SemanticMemoryIndex {
     for (const row of all) {
       const vector = Array.from(new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4));
       const score = this.cosineSimilarity(queryVector, vector);
-      
+
       const metadata = JSON.parse(row.metadata || "{}");
       results.push({
         entry: {

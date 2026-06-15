@@ -28,7 +28,7 @@ export class DashboardServer {
     return new Promise((resolve, reject) => {
       this.server = http.createServer(async (req, res) => {
         const url = new URL(req.url || "/", `http://localhost:${this.options.port}`);
-        
+
         // 设置 CORS
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -42,7 +42,7 @@ export class DashboardServer {
 
         try {
           // --- 路由分发 ---
-          
+
           // 1. 获取所有指标 (Read-only)
           if (url.pathname === "/api/metrics" && req.method === "GET") {
             const limit = Number(url.searchParams.get("limit")) || 100;

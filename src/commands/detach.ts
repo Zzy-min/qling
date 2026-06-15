@@ -11,7 +11,7 @@ export const detachCommand: SlashCommand = {
 
     context.writeLine("");
     context.writeLine("🚀 【正在尝试后台脱离...】");
-    
+
     try {
       // 1. 获取当前状态快照
       const checkpoint = (context.agentLoop as any).getWorkflowRuntime().getCheckpoint();
@@ -36,7 +36,7 @@ export const detachCommand: SlashCommand = {
       context.writeLine("查看 : 请访问 Dashboard 或输入 qling mission list");
       context.writeLine("-----------------------------------------");
       context.writeLine("");
-      
+
       // 触发本进程退出逻辑
       process.exit(0);
 

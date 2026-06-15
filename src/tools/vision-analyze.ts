@@ -84,12 +84,12 @@ export async function runVisionAnalyze(args: {
   const provider = process.env.QLING_VISION_PROVIDER || process.env.QLING_LLM_PROVIDER || "openai";
   const model = process.env.QLING_VISION_MODEL || process.env.QLING_LLM_MODEL || "gpt-4o";
   const apiKey = process.env.QLING_LLM_API_KEY || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || "";
-  
+
   // 2. 解析 Endpoint
   let endpoint = process.env.QLING_VISION_ENDPOINT || process.env.QLING_LLM_ENDPOINT;
   if (!endpoint) {
-    endpoint = provider === "openai" 
-      ? "https://api.openai.com/v1/chat/completions" 
+    endpoint = provider === "openai"
+      ? "https://api.openai.com/v1/chat/completions"
       : provider === "deepseek"
         ? "https://api.deepseek.com/chat/completions"
         : "http://localhost:11434/v1/chat/completions";
@@ -115,10 +115,10 @@ export async function runVisionAnalyze(args: {
     if (args.image_path) {
       // 增强：处理含空格的路径并规范化
       const rawPath = args.image_path.replace(/["']/g, "").trim();
-      const fullPath = path.isAbsolute(rawPath) 
-        ? rawPath 
+      const fullPath = path.isAbsolute(rawPath)
+        ? rawPath
         : path.resolve(process.env.QLING_WORKSPACE_DIR || process.cwd(), rawPath);
-      
+
       try {
         const buffer = await fs.readFile(fullPath);
         const base64 = buffer.toString("base64");
@@ -164,7 +164,7 @@ export async function runVisionAnalyze(args: {
     );
 
     const result = resp.data.choices?.[0]?.message?.content || "";
-    
+
     // 自动重试机制：如果结果为空，尝试重新调用一次
     const internalArgs = args as any;
     if (!result && !internalArgs._is_retry) {

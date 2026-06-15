@@ -6,13 +6,13 @@
 import { Message, ToolCall, ToolResult } from "../types.js";
 import { WorkflowCheckpoint } from "../workflow-types.js";
 
-export type MissionStatus = 
-  | "queued" 
-  | "running" 
+export type MissionStatus =
+  | "queued"
+  | "running"
   | "blocked"
-  | "paused" 
-  | "succeeded" 
-  | "failed" 
+  | "paused"
+  | "succeeded"
+  | "failed"
   | "canceled";
 
 export interface Mission {
@@ -20,15 +20,15 @@ export interface Mission {
   name: string;
   description: string;
   status: MissionStatus;
-  
+
   /** 关联的会话与工作流信息 */
   sessionId: string;
   workflowRunId?: string;
   sourceMissionId?: string;
-  
+
   /** 执行上下文快照 */
   lastContext: Message[];
-  
+
   /** 统计数据 */
   metrics: {
     startTime: number;

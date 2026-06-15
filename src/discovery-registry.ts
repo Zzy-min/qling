@@ -43,7 +43,7 @@ export class DiscoveryRegistry {
 
   private async syncLocal(source: DiscoverySource): Promise<void> {
     if (!existsSync(source.uri)) return;
-    
+
     const entries = await fs.readdir(source.uri, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {

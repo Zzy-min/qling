@@ -72,7 +72,7 @@ export class ProjectionWorker {
     // checkpoint
     const currentEntries = this.getEntries();
     await this.wal.checkpoint(currentEntries);
-    
+
     // trigger post-checkpoint hook
     if (this.onCheckpoint) {
       this.onCheckpoint(currentEntries).catch(err => {

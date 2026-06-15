@@ -36,7 +36,7 @@ test("Qling v0.3 - Semantic Memory", async () => {
       importance: 0.9,
       createdAt: Date.now()
     };
-    
+
     const vector = new Array(1536).fill(0.1);
     vector[0] = 0.5;
 
