@@ -1,12 +1,14 @@
 import type { CliGlobalOptions } from "../config.js";
 import { formatFocusedHelp } from "../help-topics.js";
 
-export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks";
+export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks";
 
-const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
+const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
+  "启动": "bootstrap",
+  "初始化": "bootstrap",
   "诊断": "doctor",
   "状态": "status",
   "存储": "storage",
@@ -146,7 +148,29 @@ function quoteTaskForRun(task: string): string {
 }
 
 function formatTopLevelCommandSuggestion(input: string, suggestion: TopLevelCommandSuggestion): string {
-  return `未知命令: ${input}. 你是不是想用: qling ${suggestion.command}. 查看帮助: qling help ${suggestion.helpTopic}. 如果这是任务内容，请使用: qling run ${quoteTaskForRun(input)}.`;
+  return formatCliGuidancePanel({
+    title: `未知命令: ${input}`,
+    reason: "输入看起来像命令，但不是轻灵已注册的顶层命令。",
+    next: `你是不是想用: qling ${suggestion.command}`,
+    example: `qling help ${suggestion.helpTopic} 或 qling run ${quoteTaskForRun(input)}`,
+    boundary: "本地纠错提示，不调用模型、不执行建议命令。",
+  });
+}
+
+function formatCliGuidancePanel(input: {
+  title: string;
+  reason: string;
+  next: string;
+  example: string;
+  boundary: string;
+}): string {
+  return [
+    input.title,
+    `原因: ${input.reason}`,
+    `下一步: ${input.next}`,
+    `示例: ${input.example}`,
+    `边界: ${input.boundary}`,
+  ].join("\n");
 }
 
 export interface CliResolutionOk {
@@ -223,7 +247,13 @@ export function parseCliArgs(args: string[]): CliResolution {
         return {
           kind: "error",
           code: "CLI_MISSING_TASK",
-          message: "`--once` requires a task string, e.g. --once \"修复 bug\"",
+          message: formatCliGuidancePanel({
+            title: "缺少任务内容",
+            reason: "`--once` 后面需要一个任务字符串。",
+            next: "改用推荐形式 `qling run \"任务\"`。",
+            example: "qling run \"分析这个仓库\"",
+            boundary: "参数校验在本地完成，不调用模型。",
+          }),
           exitCode: 2,
         };
       }
@@ -238,7 +268,13 @@ export function parseCliArgs(args: string[]): CliResolution {
         return {
           kind: "error",
           code: "CLI_MISSING_TASK",
-          message: "`--once` requires a task string, e.g. --once \"修复 bug\"",
+          message: formatCliGuidancePanel({
+            title: "缺少任务内容",
+            reason: "`--once` 后面需要一个非空任务字符串。",
+            next: "改用推荐形式 `qling run \"任务\"`。",
+            example: "qling run \"分析这个仓库\"",
+            boundary: "参数校验在本地完成，不调用模型。",
+          }),
           exitCode: 2,
         };
       }
@@ -342,7 +378,13 @@ export function parseCliArgs(args: string[]): CliResolution {
       return {
         kind: "error",
         code: "CLI_MISSING_TASK",
-        message: "`run` requires a task string, e.g. qling run \"修复 bug\"",
+        message: formatCliGuidancePanel({
+          title: "缺少任务内容",
+          reason: "`run` 需要一个任务字符串。",
+          next: "在命令后写清楚要执行的任务。",
+          example: "qling run \"分析这个仓库\"",
+          boundary: "参数校验在本地完成，不调用模型。",
+        }),
         exitCode: 2,
       };
     }
@@ -456,6 +498,14 @@ export function buildHelpText(binName = "qling", topic?: string): string {
   return `
 ${binName} - 通用 CLI Agent
 
+新手路径:
+  ${binName} bootstrap                # 本机一键启动检查：目录、配置、诊断和下一步
+  ${binName} setup                    # 快速配置 Provider / Model / API key
+  ${binName} run "分析这个仓库"        # 单次执行，验证模型和工具链
+  ${binName}                          # 进入 TUI，输入 / 打开命令面板
+  ${binName} doctor                   # 本地诊断
+  ${binName} privacy                  # 查看本地数据边界
+
 主要用法:
   ${binName}                          # 默认进入流式 TUI（chat）
   ${binName} chat                     # 显式进入流式 TUI
@@ -463,7 +513,8 @@ ${binName} - 通用 CLI Agent
   ${binName} --resume <session>       # 恢复指定交互会话
   ${binName} repl                     # 简易 REPL
   ${binName} run "你的任务"            # 单次执行（推荐）
-  ${binName} setup                    # [新] 交互式配置 LLM 提供商 (v0.3)
+  ${binName} bootstrap                # 本机一键启动检查
+  ${binName} setup                    # 快速配置 LLM 提供商
   ${binName} help                     # 显示帮助
 
 管理命令 (v0.3):

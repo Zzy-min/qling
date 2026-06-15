@@ -194,3 +194,11 @@ export function formatInputFrame(options: InputFrameOptions): string[] {
 export function formatBottomHints(): string {
   return "Enter 发送   Ctrl+C 中断   /help 帮助   /clear 清空对话   /model 切换模型   /exit 退出";
 }
+
+export function formatWelcomeGuide(width = 80): string[] {
+  const safeWidth = normalizeWidth(width);
+  return [
+    truncateVisible("3 步开始: 输入任务 → 按 / 打开命令面板 → /doctor 检查环境", safeWidth),
+    truncateVisible("常用入口 : /help 命令 · /privacy 边界 · /context 上下文 · Tab agents", safeWidth),
+  ];
+}

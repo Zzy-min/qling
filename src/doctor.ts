@@ -90,6 +90,7 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
   const byId = new Map(checks.map((check) => [check.id, check]));
 
   if (byId.get("config")?.status === "warn") {
+    recommendations.push("- 新用户优先运行 `qling bootstrap` 完成本机初始化检查。");
     recommendations.push("- 运行 `qling setup` 配置本地 Provider、模型和 API key。");
   }
 

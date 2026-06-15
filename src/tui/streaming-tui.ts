@@ -25,6 +25,7 @@ import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
   formatBottomHints,
+  formatWelcomeGuide,
   formatResultBox,
   formatRoleHeader,
   formatToolTimelineRow,
@@ -300,6 +301,7 @@ export class StreamUI {
   // ── Header（只调用一次） ───────────────────────────
 
   private printHeader(): void {
+    const width = process.stdout.columns || 120;
     const lines = formatTopBar({
       productName: "轻灵",
       englishName: "Qling",
@@ -309,10 +311,13 @@ export class StreamUI {
       tokens: this.chromeStatus.tokens ?? 0,
       branch: this.chromeStatus.branch ?? "-",
       ready: this.chromeStatus.ready ?? true,
-      width: process.stdout.columns || 120,
+      width,
     });
     process.stdout.write(S.p(lines[0]) + "\n");
     process.stdout.write(S.d(lines[1]) + "\n");
+    for (const line of formatWelcomeGuide(width)) {
+      process.stdout.write(DIM(line) + "\n");
+    }
   }
 
   // ── 底部输入栏 ────────────────────────────────────
@@ -379,7 +384,7 @@ export class StreamUI {
 
   private inputDisplayLines(usePlaceholder = false): string[] {
     if (this.input.value) return this.input.value.split("\n");
-    return [usePlaceholder ? "输入任务，/help 查看命令" : ""];
+    return [usePlaceholder ? "输入任务，或按 / 打开命令面板" : ""];
   }
 
   private inputCursorPosition(): { lineIndex: number; columnText: string } {

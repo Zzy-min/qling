@@ -18,6 +18,7 @@ import { AgentLoop } from "./agent-loop.js";
 import { Repl } from "./repl.js";
 import { StreamingREPL } from "./tui/streaming-repl.js";
 import { buildHelpText, formatCliError, parseCliArgs } from "./cli/startup-contract.js";
+import { runBootstrap } from "./cli/bootstrap.js";
 import { applyConfigToProcessEnv, loadQlingConfig } from "./config.js";
 import {
   CliChannelBootstrapError,
@@ -60,7 +61,7 @@ const DIST_DIR = path.dirname(CURRENT_FILE);
 
 function findEnvPaths(): string[] {
   const paths: string[] = [];
-  
+
   // 1. 项目配置 (从当前目录向上查找，最优先)
   let dir = process.cwd();
   while (true) {
@@ -136,6 +137,20 @@ function shouldFallbackToLocalMission(err: unknown): boolean {
   return !(axios.isAxiosError(err) && err.response);
 }
 
+async function buildCliDoctorLines(loadedConfig: Awaited<ReturnType<typeof loadQlingConfig>>["config"]): Promise<string[]> {
+  const report = await buildDoctorReport({
+    workspaceDir: loadedConfig.runtime.workspace_dir ?? process.cwd(),
+    agentLoop: {
+      getWorkspaceDir: () => loadedConfig.runtime.workspace_dir ?? process.cwd(),
+      getSessionStats: () => ({ sessionId: "cli-doctor", turnCount: 0, tokens: 0 }),
+      getPermissionMode: () => loadedConfig.guard.permissions.default,
+    },
+    writeLine: () => {},
+    writeError: () => {},
+  });
+  return formatDoctorReport(report);
+}
+
 async function withMissionFallback<T>(
   daemonCall: () => Promise<T>,
   localCall: () => Promise<T>
@@ -162,11 +177,11 @@ async function executeLocalMission(agent: AgentLoop, manager: MissionManager, mi
   try {
     agent.addUserMessage(mission.description);
     const response = await agent.run();
-    await manager.updateStatus(mission.id, "succeeded");
     await manager.appendLog(mission.id, "使命执行成功", {
       source: "local_cli",
       resultPreview: response.slice(0, 120),
     });
+    await manager.updateStatus(mission.id, "succeeded");
     return response;
   } catch (err) {
     await manager.updateStatus(mission.id, "failed", {
@@ -392,18 +407,17 @@ async function main() {
     return;
   }
 
-  if (decision.mode === "doctor") {
-    const report = await buildDoctorReport({
-      workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
-      agentLoop: {
-        getWorkspaceDir: () => loaded.config.runtime.workspace_dir ?? process.cwd(),
-        getSessionStats: () => ({ sessionId: "cli-doctor", turnCount: 0, tokens: 0 }),
-        getPermissionMode: () => loaded.config.guard.permissions.default,
-      },
-      writeLine: () => {},
-      writeError: () => {},
+  if (decision.mode === "bootstrap") {
+    await runBootstrap(decision.subArgs, {
+      setupRunner: runSetup,
+      doctorRunner: () => buildCliDoctorLines(loaded.config),
+      stateDir: loaded.config.runtime.file_state_dir,
     });
-    console.log(formatDoctorReport(report).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "doctor") {
+    console.log((await buildCliDoctorLines(loaded.config)).join("\n"));
     return;
   }
 
@@ -1031,14 +1045,14 @@ async function main() {
       const sub = normalizeMissionSubcommand(rawSub);
 
       const manager = agent.getMissionManager();
-      
+
       if (sub === "start") {
         const task = mArgs.join(" ");
         if (!task) {
           console.error("用法: qling mission start \"任务描述\"");
           process.exit(1);
         }
-        
+
         // 尝试发给守护进程
         try {
           const resp = await axios.post(`${daemonUrl}/missions`, {

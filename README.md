@@ -33,19 +33,27 @@
 - npm ≥ 9
 - 可选：Playwright Chromium，用于 `browser_fetch` 工具（v0.5 已集成）
 
-### 安装
+### 一键本机启动（推荐）
 
 ```bash
 git clone https://github.com/Zzy-min/qling.git
 cd qling
-npm install
-npm run build
+npm run bootstrap
 ```
 
-启动浏览器抓取：
+需要浏览器抓取能力时：
 
 ```bash
-npx playwright install chromium
+npm run bootstrap -- --with-browser
+```
+
+`bootstrap` 会检查 Node/npm、安装依赖、构建项目、创建本地 `~/.qling/` 目录并运行 `doctor`。默认不安装浏览器依赖，也不自动开启 dashboard、semantic memory、dynamic discovery。
+
+### 手动安装
+
+```bash
+npm install
+npm run build
 ```
 
 安装为全局命令（可选）：
@@ -53,6 +61,14 @@ npx playwright install chromium
 ```bash
 npm link
 qling
+```
+
+已安装 CLI 后，可运行本机初始化检查：
+
+```bash
+qling bootstrap
+qling bootstrap --with-browser
+qling bootstrap --profile dev
 ```
 
 ### 最小配置
@@ -72,6 +88,8 @@ QLING_LLM_MODEL=deepseek-chat
 qling setup
 ```
 
+`qling setup` 默认走快速路径：Provider、Model、API key。Dashboard、语义记忆、动态技能发现等能力在 Advanced 分支中显式开启。
+
 轻灵支持任意 OpenAI 兼容 provider；通过 `QLING_LLM_ENDPOINT` / `QLING_LLM_MODEL` + 对应 API key 环境变量接入。
 
 ### 跑通 4 个命令
@@ -80,6 +98,7 @@ qling setup
 qling                   # 默认进入流式 TUI（chat）
 qling chat              # 显式进入流式 TUI
 qling run "分析这个仓库" # 单次执行，推荐形式
+qling bootstrap         # 本机初始化检查
 qling setup             # 交互式配置 LLM 提供商
 ```
 
@@ -91,6 +110,7 @@ qling setup             # 交互式配置 LLM 提供商
 | `qling chat` | 显式进入流式 TUI。 |
 | `qling repl` | 简易 REPL，无 TUI 装饰。 |
 | `qling run "任务"` | 单次执行后退出，适合脚本调用。 |
+| `qling bootstrap` | 本机初始化检查、配置提示和 doctor 验证。 |
 | `qling --continue` | 恢复最近一次交互会话。 |
 | `qling --resume <session>` | 恢复指定交互会话。 |
 | `qling daemon start` | 启动后台守护进程（qlingd）。 |

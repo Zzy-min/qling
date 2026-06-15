@@ -146,6 +146,7 @@ test("doctor config check warns when api key is missing", async () => {
   const config = report.checks.find((check) => check.id === "config");
   assert.equal(config?.status, "warn");
   assert.match(config?.detail ?? "", /api_key=missing/);
+  assert.ok(report.recommendations.some((line) => line.includes("qling bootstrap")));
   assert.ok(report.recommendations.some((line) => line.includes("qling setup")));
 });
 
@@ -188,6 +189,7 @@ test("doctor formatter emits next steps only when checks need action", async () 
   const text = formatDoctorReport(report).join("\n");
 
   assert.match(text, /Next steps/);
+  assert.match(text, /qling bootstrap/);
   assert.match(text, /qling setup/);
   assert.match(text, /qling daemon start/);
   assert.doesNotMatch(text, /DOCTOR_ENDPOINT_SECRET/);

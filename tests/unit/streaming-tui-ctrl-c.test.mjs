@@ -277,7 +277,7 @@ test("stream ui prompt renders inside input frame without duplicate bare prompt"
     ui.printInputBar();
 
     const output = getOutput();
-    assert.match(output, /│ › 输入任务，\/help 查看命令/);
+    assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
     assert.match(output, /└─+┘/);
     assert.doesNotMatch(output, /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
     assert.match(output, /\/exit 退出/);
@@ -318,6 +318,23 @@ test("stream ui renders user, assistant, executing timeline, and completion bloc
     assert.match(output, /package\.json/);
     assert.match(output, /89ms/);
     assert.match(output, /分析完成/);
+  });
+});
+
+test("stream ui startup renders concise first-run guidance card", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    ui.start();
+    ui.stop();
+
+    const output = getOutput();
+    assert.match(output, /3 步开始/);
+    assert.match(output, /输入任务/);
+    assert.match(output, /按 \/ 打开命令面板/);
+    assert.match(output, /\/doctor/);
+    assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
+    assert.match(output, /└─+┘/);
   });
 });
 

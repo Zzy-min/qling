@@ -65,12 +65,12 @@ test("tui shell formats tool timeline rows with chinese action and duration", ()
 
 test("tui shell formats result boxes and bottom input hints", () => {
   const box = formatResultBox([".", "├── src/", "└── README.md"], 80).join("\n");
-  const input = formatInputFrame({ placeholder: "输入任务，/help 查看命令", width: 80 }).join("\n");
+  const input = formatInputFrame({ placeholder: "输入任务，或按 / 打开命令面板", width: 80 }).join("\n");
   const hints = formatBottomHints();
 
   assert.match(box, /┌/);
   assert.match(box, /src\//);
-  assert.match(input, /› 输入任务，\/help 查看命令/);
+  assert.match(input, /› 输入任务，或按 \/ 打开命令面板/);
   assert.match(input, /└/);
   assert.match(hints, /Enter 发送/);
   assert.match(hints, /Ctrl\+C 中断/);

@@ -87,6 +87,8 @@ test("cli: explicit subcommands route correctly", () => {
   const memoryGraph = parseCliArgs(["memory", "graph", "3"]);
   const help = parseCliArgs(["help"]);
   const helpTopic = parseCliArgs(["help", "exports"]);
+  const bootstrap = parseCliArgs(["bootstrap"]);
+  const bootstrapFlags = parseCliArgs(["bootstrap", "--yes", "--with-browser", "--profile", "dev"]);
   assert.equal(chat.kind, "ok");
   assert.equal(chat.mode, "chat");
   assert.equal(repl.kind, "ok");
@@ -168,6 +170,12 @@ test("cli: explicit subcommands route correctly", () => {
   assert.equal(helpTopic.kind, "ok");
   assert.equal(helpTopic.mode, "help");
   assert.deepEqual(helpTopic.subArgs, ["exports"]);
+  assert.equal(bootstrap.kind, "ok");
+  assert.equal(bootstrap.mode, "bootstrap");
+  assert.deepEqual(bootstrap.subArgs, []);
+  assert.equal(bootstrapFlags.kind, "ok");
+  assert.equal(bootstrapFlags.mode, "bootstrap");
+  assert.deepEqual(bootstrapFlags.subArgs, ["--yes", "--with-browser", "--profile", "dev"]);
 });
 
 test("cli: chinese local management aliases route to canonical modes", () => {
@@ -305,10 +313,13 @@ test("cli: top-level english typo suggests local command without running task", 
   assert.equal(result.code, "CLI_UNKNOWN_COMMAND_SUGGESTION");
   assert.equal(result.exitCode, 2);
   assert.match(result.message, /expors/);
-  assert.match(result.message, /你是不是想用/);
+  assert.match(result.message, /原因/);
+  assert.match(result.message, /下一步/);
+  assert.match(result.message, /示例/);
   assert.match(result.message, /qling exports/);
   assert.match(result.message, /qling help exports/);
   assert.match(result.message, /qling run "expors"/);
+  assert.match(result.message, /不调用模型/);
 });
 
 test("cli: top-level chinese typo suggests local alias without running task", () => {
@@ -317,6 +328,8 @@ test("cli: top-level chinese typo suggests local alias without running task", ()
   assert.equal(result.code, "CLI_UNKNOWN_COMMAND_SUGGESTION");
   assert.equal(result.exitCode, 2);
   assert.match(result.message, /导出列/);
+  assert.match(result.message, /原因/);
+  assert.match(result.message, /下一步/);
   assert.match(result.message, /qling 导出列表/);
   assert.match(result.message, /qling help 导出列表/);
   assert.match(result.message, /qling run "导出列"/);
@@ -358,23 +371,32 @@ test("cli: missing --once task returns CLI_MISSING_TASK with exit code 2", () =>
   assert.equal(result.kind, "error");
   assert.equal(result.code, "CLI_MISSING_TASK");
   assert.equal(result.exitCode, 2);
+  assert.match(result.message, /原因/);
+  assert.match(result.message, /下一步/);
+  assert.match(result.message, /示例/);
 });
 
 test("cli: run without task returns CLI_MISSING_TASK", () => {
   const result = parseCliArgs(["run"]);
   assert.equal(result.kind, "error");
   assert.equal(result.code, "CLI_MISSING_TASK");
+  assert.match(result.message, /qling run "分析这个仓库"/);
 });
 
 test("cli: help text includes subcommands and compatibility hints", () => {
   const help = buildHelpText("qling");
+  assert.match(help, /新手路径/);
+  assert.match(help, /qling bootstrap/);
   assert.match(help, /qling run "你的任务"/);
+  assert.match(help, /qling run "分析这个仓库"/);
   assert.match(help, /qling help/);
+  assert.match(help, /qling setup/);
   assert.match(help, /--continue/);
   assert.match(help, /--resume <session>/);
   assert.match(help, /qling agents/);
   assert.match(help, /qling logs <id>/);
   assert.match(help, /qling doctor/);
+  assert.match(help, /qling privacy/);
   assert.match(help, /qling status/);
   assert.match(help, /qling storage/);
   assert.match(help, /qling exports \[count\]/);

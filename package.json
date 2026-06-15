@@ -1,7 +1,7 @@
 {
   "name": "qling",
   "version": "0.5.0",
-  "description": "轻灵 - 通用 CLI Agent，参考 learn-claude-code + Microsoft AI Agents for Beginners",
+  "description": "轻灵 Qling - 本地优先的中文 AI Agent CLI 工作台",
   "type": "module",
   "bin": {
     "qling": "./dist/index.js"
@@ -12,6 +12,7 @@
     "tui": "node dist/index.js chat",
     "repl": "node dist/index.js repl",
     "exec": "node dist/index.js run",
+    "bootstrap": "node scripts/bootstrap.mjs",
     "daemon": "node dist/daemon.js",
     "prepare": "npm run build",
     "prepack": "npm run build",

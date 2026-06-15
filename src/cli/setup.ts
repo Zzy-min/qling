@@ -34,10 +34,11 @@ export async function runSetup() {
   const rl = readline.createInterface({ input, output });
 
   console.log("\n=========================================");
-  console.log("🌬️  轻灵 (qling) - 初始配置向导");
+  console.log("轻灵 Qling - 快速配置");
   console.log("=========================================\n");
+  console.log("默认路径只配置 Provider / Model / API key；高级能力稍后可在 Advanced 中开启。");
 
-  console.log("请选择您的 LLM 提供商 (输入数字序号):");
+  console.log("\n请选择 LLM 提供商 (输入数字序号):");
   console.log("1. DeepSeek (推荐)");
   console.log("2. 阿里云百炼 (Qwen)");
   console.log("3. 智谱清言 (GLM)");
@@ -79,7 +80,7 @@ export async function runSetup() {
   console.log(`API Key  : ${key ? "********" : "(未配置)"}`);
   console.log("-----------------------------------------");
 
-  const confirm = await rl.question("确认保存并设为全局默认配置? (Y/n): ");
+  const confirm = await rl.question("保存为全局默认配置? (Y/n): ");
   if (confirm.trim().toLowerCase() === 'n') {
     console.log("已取消配置。");
     rl.close();
@@ -98,50 +99,56 @@ export async function runSetup() {
     envLines.push(`DEEPSEEK_API_KEY=${key}`);
   }
 
-  // 针对视觉能力的额外配置
-  const useForVision = await rl.question("\n是否将此 Provider 同时也设为默认视觉分析 (Vision) 提供商? (Y/n): ");
-  if (useForVision.trim().toLowerCase() !== 'n') {
-    envLines.push(`QLING_VISION_PROVIDER=${pName}`);
-    envLines.push(`QLING_VISION_MODEL=${pModel}`);
-    envLines.push(`QLING_VISION_ENDPOINT=${pEndpoint}`);
-  }
+  const advanced = await rl.question("\n是否进入 Advanced 高级配置? (y/N): ");
+  if (advanced.trim().toLowerCase() === "y") {
+    const useForVision = await rl.question("是否将此 Provider 同时设为默认视觉分析 Provider? (y/N): ");
+    if (useForVision.trim().toLowerCase() === "y") {
+      envLines.push(`QLING_VISION_PROVIDER=${pName}`);
+      envLines.push(`QLING_VISION_MODEL=${pModel}`);
+      envLines.push(`QLING_VISION_ENDPOINT=${pEndpoint}`);
+    }
 
-  // --- v0.4 进阶特性配置 ---
-  console.log("\n--- 进阶特性配置 (可选) ---");
-  
-  const enableDashboard = await rl.question("是否开启 Web 观测控制台 (Dashboard)? (y/N): ");
-  if (enableDashboard.trim().toLowerCase() === 'y') {
-    envLines.push("QLING_FEATURES_DASHBOARD=true");
-    envLines.push("QLING_METRICS_ENABLED=true"); // Dashboard 强依赖 Metrics 收集数据
-    const port = await rl.question("  - 请设置端口 [默认: 9999]: ");
-    if (port.trim()) envLines.push(`QLING_DASHBOARD_PORT=${port.trim()}`);
-  }
+    const enableDashboard = await rl.question("是否开启 Web 观测控制台 Dashboard? (y/N): ");
+    if (enableDashboard.trim().toLowerCase() === "y") {
+      envLines.push("QLING_FEATURES_DASHBOARD=true");
+      envLines.push("QLING_METRICS_ENABLED=true");
+      const port = await rl.question("  - 端口 [默认: 9999]: ");
+      if (port.trim()) envLines.push(`QLING_DASHBOARD_PORT=${port.trim()}`);
+    }
 
-  const enableSemantic = await rl.question("是否开启语义记忆 (需要 Embedding 支持)? (y/N): ");
-  if (enableSemantic.trim().toLowerCase() === 'y') {
-    envLines.push("QLING_FEATURES_SEMANTIC_MEMORY=true");
-  }
+    const enableSemantic = await rl.question("是否开启语义记忆? (y/N): ");
+    if (enableSemantic.trim().toLowerCase() === "y") {
+      envLines.push("QLING_FEATURES_SEMANTIC_MEMORY=true");
+    }
 
-  const enableWorkflow = await rl.question("是否开启状态机编排与 Checkpoint (断点续传)? (Y/n): ");
-  if (enableWorkflow.trim().toLowerCase() !== 'n') {
-    envLines.push("QLING_FEATURES_WORKFLOW_RUNTIME=true");
-  }
+    const enableWorkflow = await rl.question("是否开启状态机编排与 Checkpoint? (y/N): ");
+    if (enableWorkflow.trim().toLowerCase() === "y") {
+      envLines.push("QLING_FEATURES_WORKFLOW_RUNTIME=true");
+    }
 
-  const enableSpecBoost = await rl.question("是否开启工具规范增强 (防幻觉)? (Y/n): ");
-  if (enableSpecBoost.trim().toLowerCase() !== 'n') {
-    envLines.push("QLING_FEATURES_TOOL_SPEC_BOOST=true");
-  }
+    const enableSpecBoost = await rl.question("是否开启工具规范增强? (y/N): ");
+    if (enableSpecBoost.trim().toLowerCase() === "y") {
+      envLines.push("QLING_FEATURES_TOOL_SPEC_BOOST=true");
+    }
 
-  const enableDiscovery = await rl.question("是否开启动态技能发现? (Y/n): ");
-  if (enableDiscovery.trim().toLowerCase() !== 'n') {
-    envLines.push("QLING_FEATURES_DYNAMIC_DISCOVERY=true");
+    const enableDiscovery = await rl.question("是否开启动态技能发现? (y/N): ");
+    if (enableDiscovery.trim().toLowerCase() === "y") {
+      envLines.push("QLING_FEATURES_DYNAMIC_DISCOVERY=true");
+    }
   }
 
   const globalEnvPath = path.join(os.homedir(), ".qling", ".env");
   await fs.mkdir(path.dirname(globalEnvPath), { recursive: true });
   await fs.writeFile(globalEnvPath, envLines.join("\n") + "\n", "utf-8");
 
-  console.log(`\n✅ 配置已保存至全局环境变量文件: ${globalEnvPath}`);
-  console.log("提示：您可以随时再次运行 `qling setup` 或手动编辑该文件进行修改。");
+  console.log(`\n配置已保存: ${globalEnvPath}`);
+  console.log("-----------------------------------------");
+  console.log("下一步:");
+  console.log("- `qling` 进入 TUI");
+  console.log("- `/help` 查看命令面板");
+  console.log("- `/doctor` 检查本地环境");
+  console.log("- `/privacy` 查看数据边界");
+  console.log("- `qling run \"分析这个仓库\"` 验证单次执行");
+  console.log("-----------------------------------------");
   rl.close();
 }
