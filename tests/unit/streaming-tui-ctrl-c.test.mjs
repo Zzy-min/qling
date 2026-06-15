@@ -318,6 +318,18 @@ test("stream ui input frame borders keep the same visual width as content rows",
   });
 });
 
+test("stream ui cursor returns to input content row instead of top border", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    ui.printInputBar();
+    const output = getOutput();
+
+    assert.match(output, /\x1b\[1A\x1b\[5G/);
+    assert.doesNotMatch(output, /\x1b\[2A\x1b\[5G/);
+  });
+});
+
 test("stream ui renders user, assistant, executing timeline, and completion blocks", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui } = createUi();

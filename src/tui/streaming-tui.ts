@@ -384,7 +384,7 @@ export class StreamUI {
   private inputCursorPosition(wrapped: { cursorRow: number; cursorCol: number; lines: string[] }): { lineIndex: number; columnText: string } {
     const visualCursorRow = wrapped.cursorRow - this.inputStartRow;
     return {
-      lineIndex: 1 + visualCursorRow,
+      lineIndex: 2 + visualCursorRow,
       columnText: " ".repeat(wrapped.cursorCol),
     };
   }
