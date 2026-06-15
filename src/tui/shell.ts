@@ -192,7 +192,7 @@ export function formatInputFrame(options: InputFrameOptions): string[] {
 }
 
 export function formatBottomHints(): string {
-  return "Enter 发送   Ctrl+C 中断   /help 帮助   /clear 清空对话   /model 切换模型   /exit 退出";
+  return "Enter 发送   Ctrl+N 换行   粘贴多行先编辑   Ctrl+C 清空/中断   /model 切换模型   /exit 退出";
 }
 
 export function formatWelcomeGuide(width = 80): string[] {

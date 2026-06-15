@@ -26,13 +26,13 @@ import { formatProgressPulse } from "./progress.js";
 import {
   formatBottomHints,
   formatWelcomeGuide,
-  formatResultBox,
   formatRoleHeader,
   formatToolTimelineRow,
   formatTopBar,
   padVisible,
   truncateVisible,
 } from "./shell.js";
+import { formatMarkdownForTerminal } from "./markdown.js";
 
 // ── ANSI 颜色工具 ───────────────────────────────────────
 
@@ -92,73 +92,6 @@ function trunc(s: string, maxW: number): string {
     i++;
   }
   return s.slice(0, i) + "…";
-}
-
-// ── 表格渲染（box-drawing, string-width 计算列宽） ──────
-
-function printTable(rows: string[][]): void {
-  if (rows.length === 0) return;
-  const colCount = rows[0].length;
-  const colWidths: number[] = new Array(colCount).fill(0);
-  for (const row of rows) {
-    for (let c = 0; c < colCount; c++) {
-      colWidths[c] = Math.max(colWidths[c], sw(row[c] ?? ""));
-    }
-  }
-  const cellWidths = colWidths.map((w) => w + 2);
-
-  process.stdout.write("\n");
-
-  // top border
-  let t = "┌";
-  for (let c = 0; c < colCount; c++) {
-    t += "─".repeat(cellWidths[c]);
-    t += c < colCount - 1 ? "┬" : "┐";
-  }
-  process.stdout.write(t + "\n");
-
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
-    const isHeader = r === 0;
-    let line = "│";
-    for (let c = 0; c < colCount; c++) {
-      const cell = row[c] ?? "";
-      const pad = cellWidths[c] - sw(cell) - 1;
-      line += " " + cell + " ".repeat(pad + 1) + "│";
-    }
-    process.stdout.write((isHeader ? BOLD(line) : line) + "\n");
-    if (r === 0) {
-      let sep = "├";
-      for (let c = 0; c < colCount; c++) {
-        sep += "─".repeat(cellWidths[c]);
-        sep += c < colCount - 1 ? "┼" : "┤";
-      }
-      process.stdout.write(sep + "\n");
-    }
-  }
-
-  // bottom border
-  let b = "└";
-  for (let c = 0; c < colCount; c++) {
-    b += "─".repeat(cellWidths[c]);
-    b += c < colCount - 1 ? "┴" : "┘";
-  }
-  process.stdout.write(b + "\n");
-}
-
-// ── Markdown 清理 ───────────────────────────────────────
-
-function stripMarkdown(text: string): string {
-  return text
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/`{1,3}[\s\S]*?`{1,3}/g, (m) => m.replace(/`+/g, ""))
-    .replace(/^\s*[-*+]\s+/gm, "$1")
-    .replace(/^\s*\d+\.\s+/gm, "$1")
-    .replace(/^\s*>\s+/gm, "")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/\n{3,}/g, "\n\n");
 }
 
 // ── 行折叠 ─────────────────────────────────────────────
@@ -221,6 +154,7 @@ export class StreamUI {
   private lastInputHintLineCount = 0;
   private slashCompletionSelectedIndex = 0;
   private inputCursorAnchor: "current" | "bottom" = "current";
+  private inputStartRow = 0;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
 
@@ -328,7 +262,6 @@ export class StreamUI {
       process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
     }
     process.stdout.write(DIM(formatBottomHints()) + "\n");
-    process.stdout.write(S.p(this.inputFrameTop()) + "\n");
     this.writeInputValue(true);
     this.syncCursor();
   }
@@ -345,8 +278,74 @@ export class StreamUI {
     this.syncCursor();
   }
 
+  private wrapInputVisualLines(value: string, width: number, cursor: number): {
+    lines: string[];
+    cursorRow: number;
+    cursorCol: number;
+  } {
+    if (width <= 0) {
+      return { lines: [value], cursorRow: 0, cursorCol: 0 };
+    }
+    const lines: string[] = [""];
+    let currentWidth = 0;
+    let cursorRow = 0;
+    let cursorCol = 0;
+    let charIndex = 0;
+
+    const chars = Array.from(value);
+    for (const ch of chars) {
+      if (charIndex === cursor) {
+        cursorRow = lines.length - 1;
+        cursorCol = currentWidth;
+      }
+
+      if (ch === "\n") {
+        lines.push("");
+        currentWidth = 0;
+        charIndex += 1;
+        continue;
+      }
+
+      const w = sw(ch);
+      if (currentWidth + w > width) {
+        lines.push("");
+        currentWidth = 0;
+      }
+
+      lines[lines.length - 1] += ch;
+      currentWidth += w;
+      charIndex += ch.length;
+    }
+
+    if (charIndex === cursor) {
+      cursorRow = lines.length - 1;
+      cursorCol = currentWidth;
+    }
+
+    return { lines, cursorRow, cursorCol };
+  }
+
+  private formatInputFrameBorder(left: string, right: string, label: string, totalWidth: number): string {
+    if (!label) {
+      return left + "─".repeat(totalWidth - 2) + right;
+    }
+    const text = " " + label + " ";
+    const textLen = sw(text);
+    const borderLen = totalWidth - 2;
+    if (borderLen <= textLen) {
+      return left + text.slice(0, borderLen) + right;
+    }
+    const leftDash = Math.floor((borderLen - textLen) / 2);
+    const rightDash = borderLen - textLen - leftDash;
+    return left + "─".repeat(leftDash) + text + "─".repeat(rightDash) + right;
+  }
+
   private syncCursor(): void {
-    const cursor = this.inputCursorPosition();
+    const contentWidth = this.inputFrameContentWidth();
+    const wrapWidth = contentWidth - 2;
+    const wrapped = this.wrapInputVisualLines(this.input.value, wrapWidth, this.input.cursorPos);
+    const cursor = this.inputCursorPosition(wrapped);
+
     if (this.inputCursorAnchor === "bottom") {
       const rowsUp = Math.max(0, this.lastInputContentLineCount + this.lastInputHintLineCount - cursor.lineIndex);
       if (rowsUp > 0) {
@@ -360,7 +359,7 @@ export class StreamUI {
         process.stdout.write("\x1b[" + Math.abs(rowDelta) + "A");
       }
     }
-    const col = 5 + sw(cursor.columnText);
+    const col = 5 + cursor.columnText.length;
     process.stdout.write("\x1b[" + col + "G");
     this.lastInputCursorLineIndex = cursor.lineIndex;
     this.inputCursorAnchor = "current";
@@ -382,18 +381,11 @@ export class StreamUI {
     return "└" + "─".repeat(this.inputFrameContentWidth() + 2) + "┘";
   }
 
-  private inputDisplayLines(usePlaceholder = false): string[] {
-    if (this.input.value) return this.input.value.split("\n");
-    return [usePlaceholder ? "输入任务，或按 / 打开命令面板" : ""];
-  }
-
-  private inputCursorPosition(): { lineIndex: number; columnText: string } {
-    const beforeCursor = this.input.value.slice(0, this.input.cursorPos);
-    const beforeLines = beforeCursor.split("\n");
-    const lineIndex = Math.max(0, beforeLines.length - 1);
+  private inputCursorPosition(wrapped: { cursorRow: number; cursorCol: number; lines: string[] }): { lineIndex: number; columnText: string } {
+    const visualCursorRow = wrapped.cursorRow - this.inputStartRow;
     return {
-      lineIndex,
-      columnText: beforeLines.at(-1) ?? "",
+      lineIndex: 1 + visualCursorRow,
+      columnText: " ".repeat(wrapped.cursorCol),
     };
   }
 
@@ -422,21 +414,64 @@ export class StreamUI {
 
   private writeInputValue(usePlaceholder = false): void {
     const contentWidth = this.inputFrameContentWidth();
-    const lines = this.inputDisplayLines(usePlaceholder);
+    const valueToWrap = this.input.value || (usePlaceholder ? "输入任务，或按 / 打开命令面板" : "");
+    const isPlaceholder = !this.input.value && usePlaceholder;
 
-    for (let i = 0; i < lines.length; i++) {
-      const prefix = i === 0 ? "› " : "  ";
-      const rendered = truncateVisible(prefix + (lines[i] ?? ""), contentWidth);
-      if (i > 0) process.stdout.write("\n");
-      process.stdout.write(S.p("│ " + padVisible(rendered, contentWidth) + " │"));
+    const wrapWidth = contentWidth - 2;
+    const wrapped = this.wrapInputVisualLines(valueToWrap, wrapWidth, isPlaceholder ? 0 : this.input.cursorPos);
+
+    const visibleCount = Math.min(5, wrapped.lines.length);
+    if (wrapped.cursorRow < this.inputStartRow) {
+      this.inputStartRow = wrapped.cursorRow;
+    } else if (wrapped.cursorRow >= this.inputStartRow + 5) {
+      this.inputStartRow = wrapped.cursorRow - 4;
     }
-    process.stdout.write("\n" + S.p(this.inputFrameBottom()));
+    this.inputStartRow = Math.max(0, Math.min(this.inputStartRow, wrapped.lines.length - visibleCount));
+
+    const visibleLines = wrapped.lines.slice(this.inputStartRow, this.inputStartRow + visibleCount);
+
+    const topLabel = this.inputStartRow > 0
+      ? "▲ 更多内容 (当前第 " + (wrapped.cursorRow + 1) + " 行)"
+      : "";
+    const bottomLabel = this.inputStartRow + visibleCount < wrapped.lines.length
+      ? "▼ 更多内容 (共 " + wrapped.lines.length + " 行)"
+      : "";
+
+    const topBorder = this.formatInputFrameBorder("┌", "┐", topLabel, contentWidth + 2);
+    const bottomBorder = this.formatInputFrameBorder("└", "┘", bottomLabel, contentWidth + 2);
+
+    process.stdout.write(S.p(topBorder));
+
+    for (let i = 0; i < visibleLines.length; i++) {
+      const absoluteRow = this.inputStartRow + i;
+      const prefix = absoluteRow === 0 ? "› " : "  ";
+      const textLine = visibleLines[i] ?? "";
+      const contentText = textLine;
+      const rendered = truncateVisible(prefix + contentText, contentWidth);
+      process.stdout.write("\n" + S.p("│ " + padVisible(rendered, contentWidth) + " │"));
+    }
+
+    process.stdout.write("\n" + S.p(bottomBorder));
+
+    let extraHint = "";
+    if (this.input.value.includes("\n") || wrapped.lines.length > 1) {
+      extraHint = S.y("多行草稿：Enter 发送全部内容");
+    }
+    if (extraHint) {
+      process.stdout.write("\n" + extraHint);
+    }
+
     const hints = this.formatCurrentSlashCompletionHints();
     for (const hint of hints) {
       process.stdout.write("\n" + DIM(hint));
     }
-    this.lastInputContentLineCount = lines.length;
-    this.lastInputHintLineCount = hints.length;
+
+    this.lastInputContentLineCount = 1 + visibleLines.length + 1;
+    this.lastInputHintLineCount = hints.length + (extraHint ? 1 : 0);
+
+    const cursor = this.inputCursorPosition(wrapped);
+    this.lastInputCursorLineIndex = cursor.lineIndex;
+
     this.inputCursorAnchor = "bottom";
   }
 
@@ -483,6 +518,7 @@ export class StreamUI {
 
   showPrompt(): void {
     if (!this.running) return;
+    this.inputStartRow = 0;
     const w = process.stdout.columns || 80;
     process.stdout.write("\n");
     if (this.statusLineEnabled && this.statusLine) {
@@ -512,6 +548,29 @@ export class StreamUI {
       if (!this.running) return;
       if (chunk === "\x1b") {
         partial = "";
+        return;
+      }
+
+      // 非 bracketed 粘贴保护
+      let isMultilinePaste = false;
+      if (!bracketedPaste && !chunk.includes("\x1b") && chunk.length > 1) {
+        const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        const withoutTrailing = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+        if (withoutTrailing.includes("\n")) {
+          isMultilinePaste = true;
+        }
+      }
+
+      if (isMultilinePaste) {
+        const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        for (const ch of normalized) {
+          if (ch === "\n") {
+            this.input.insertNewline();
+          } else if (ch >= " " || ch === "\t") {
+            this.input.insertChar(ch);
+          }
+        }
+        this.redrawInput();
         return;
       }
 
@@ -645,6 +704,7 @@ export class StreamUI {
     const cmd = this.input.value.trim();
     if (!cmd) return;
     this.lastEmptyCtrlCAt = 0;
+    this.inputStartRow = 0;
     this.moveAfterInputFrame();
     process.stdout.write("\n");
     this.input.submit();
@@ -701,6 +761,7 @@ export class StreamUI {
     this.lastEmptyCtrlCAt = 0;
     this.lastClearedDraft = this.input.value;
     this.input.clear();
+    this.inputStartRow = 0;
     this.backToPrompt();
     process.stdout.write(S.r("^C") + " " + DIM("草稿已清空，Ctrl+Z 恢复"));
     process.stdout.write("\n");
@@ -1002,47 +1063,12 @@ export class StreamUI {
   }
 
   appendFinal(text: string): void {
-    const cleaned = stripMarkdown(text);
-    const lines = cleaned.split("\n");
-    const hasTable = lines.some((l) => l.includes("│") || l.includes("|"));
-    if (hasTable) {
-      const tableRows = this.parseTableLines(lines);
-      if (tableRows.length > 1) {
-        printTable(tableRows);
-        return;
-      }
-    }
     process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
-    if (this.shouldBoxFinalLines(lines)) {
-      for (const line of formatResultBox(lines, process.stdout.columns || 100)) {
-        process.stdout.write(S.d(line) + "\n");
-      }
-      return;
-    }
+    const width = process.stdout.columns || 100;
+    const lines = formatMarkdownForTerminal(text, { width });
     for (const line of lines) {
-      if (line.trim()) {
-        process.stdout.write(line + "\n");
-      }
+      process.stdout.write(line + "\n");
     }
-  }
-
-  private shouldBoxFinalLines(lines: string[]): boolean {
-    const nonEmpty = lines.filter((line) => line.trim());
-    if (nonEmpty.length < 2) return false;
-    return nonEmpty.some((line) => /[├└│─]/.test(line) || /^\s*[./\w-]+\/\s*$/.test(line));
-  }
-
-  private parseTableLines(lines: string[]): string[][] {
-    const rows: string[][] = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === "|" || /^[\|\-\s]+$/.test(trimmed)) continue;
-      const cells = trimmed.split("|").map((c) => c.trim()).filter((c) => c !== "");
-      if (cells.length >= 2) {
-        rows.push(cells);
-      }
-    }
-    return rows;
   }
 
   appendError(text: string): void {

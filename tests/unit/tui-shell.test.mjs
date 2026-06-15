@@ -73,7 +73,7 @@ test("tui shell formats result boxes and bottom input hints", () => {
   assert.match(input, /› 输入任务，或按 \/ 打开命令面板/);
   assert.match(input, /└/);
   assert.match(hints, /Enter 发送/);
-  assert.match(hints, /Ctrl\+C 中断/);
+  assert.match(hints, /Ctrl\+C/);
   assert.match(hints, /\/model 切换模型/);
   assert.match(hints, /\/exit 退出/);
 });

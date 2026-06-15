@@ -260,9 +260,11 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.match(getOutput(), /Model: test-model/);
     assert.match(getOutput(), /Tokens:/);
     assert.match(getOutput(), /Git:/);
-    assert.match(getOutput(), /│ › draft prompt/);
+    const outputStr = getOutput();
+    assert.match(outputStr, /› draft prompt/);
+    assert.match(outputStr, /│/);
     assert.match(getOutput(), /Enter 发送/);
-    assert.match(getOutput(), /Ctrl\+C 中断/);
+    assert.match(getOutput(), /Ctrl\+C/);
     assert.match(getOutput(), /\/model 切换模型/);
     assert.match(getOutput(), /model=test session=session-1/);
     assert.match(getOutput(), /draft prompt/);
@@ -824,5 +826,49 @@ test("stream ui ctrl+r search miss prints local feedback and keeps draft", async
     assert.equal(ui.input.cursorPos, "depl".length);
     assert.deepEqual(submitted, []);
     assert.match(getOutput(), /无匹配历史|没有匹配/);
+  });
+});
+
+test("stream ui non-bracketed paste of multiline text does not submit and handles newlines", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+
+      dataHandler("line 1\nline 2\nline 3");
+
+      assert.equal(ui.input.value, "line 1\nline 2\nline 3");
+      assert.deepEqual(submitted, []);
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui visually wraps inputs and shows scroll window top and bottom indicators when exceeding 5 lines", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+    const longText = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7";
+    for (const ch of longText) {
+      if (ch === "\n") ui.input.insertNewline();
+      else ui.input.insertChar(ch);
+    }
+
+    ui.input.cursorPos = 0;
+    ui.writeInputValue();
+    const output = getOutput();
+
+    assert.match(output, /▼ 更多内容/);
+    assert.match(output, /line 1/);
+    assert.match(output, /line 5/);
+    assert.doesNotMatch(output.split("▼ 更多内容").at(-1), /line 6/);
+
+    ui.input.moveEnd();
+    ui.writeInputValue();
+    const output2 = getOutput();
+    assert.match(output2, /▲ 更多内容/);
+    assert.match(output2, /line 7/);
+    assert.doesNotMatch(output2.split("▲ 更多内容").at(-1), /line 1/);
   });
 });
