@@ -4,13 +4,14 @@
 // ============================================================
 
 import { Message } from "./types.js";
+import * as path from "path";
 
 // --- Token 估算（中文字符 ≈ 2 tokens，英文 ≈ 0.25 tokens）---
 
 function estimateTokens(text: string): number {
   let count = 0;
   for (const ch of text) {
-    // CJK \u5b57\u7b26\u7ea6 1.5 tokens\uff0cASCII \u7ea6 0.25 tokens
+    // CJK 字符约 1.5 tokens，ASCII 约 0.25 tokens
     count += ch >= "\u4e00" && ch <= "\u9fff" ? 1.5 : 0.25;
   }
   return count;
@@ -135,20 +136,23 @@ export class ContextCompactor {
 
   // 执行压缩：摘要旧消息 + 保留 recent
   async compact(messages: Message[], recentKeep = 6): Promise<Message[]> {
-    if (messages.length <= recentKeep + 1) return messages;
+    const modifiedFiles = getModifiedFilesFromHistory(messages);
+    const skeletonizedAll = skeletonizeMessages(messages, modifiedFiles);
+
+    if (skeletonizedAll.length <= recentKeep + 1) return skeletonizedAll;
 
     // recent 必须包含完整的 tool_call chain（最近的 assistant 的 tool_calls + 对应 tool 结果）
     // 保护机制：若 recentKeep 内有 tool 消息对，往外扩直到找到对应的 assistant message
-    let recentMsgs = messages.slice(-recentKeep);
-    const recentStartIdx = messages.length - recentMsgs.length;
+    let recentMsgs = skeletonizedAll.slice(-recentKeep);
+    const recentStartIdx = skeletonizedAll.length - recentMsgs.length;
 
-    // 检查 recent 中是否有 tool 消息但缺少对应的 assistant（tool_calls）
+    // 检查 recent 中是否有 tool 消息构建链路完整性
     let protectedStartIdx = recentStartIdx;
     for (let i = 0; i < recentMsgs.length; i++) {
       const msg = recentMsgs[i];
       if (msg.role === "tool") {
         const toolAbsIdx = recentStartIdx + i;
-        const assistantIdx = findLinkedAssistantIndex(messages, toolAbsIdx);
+        const assistantIdx = findLinkedAssistantIndex(skeletonizedAll, toolAbsIdx);
         const chainStartIdx = assistantIdx >= 0 ? assistantIdx : toolAbsIdx;
         if (chainStartIdx < protectedStartIdx) {
           protectedStartIdx = chainStartIdx;
@@ -157,15 +161,15 @@ export class ContextCompactor {
     }
 
     if (protectedStartIdx < recentStartIdx) {
-      recentMsgs = messages.slice(protectedStartIdx);
-      console.error(`📦 保护 tool chain，向外扩展 recent 到 ${messages.length - protectedStartIdx} 条`);
+      recentMsgs = skeletonizedAll.slice(protectedStartIdx);
+      console.error(`📦 保护 tool chain，向外扩展 recent 到 ${skeletonizedAll.length - protectedStartIdx} 条`);
     }
 
     // oldMsgs = recent 之前的所有消息（不含 system，因为 AgentLoop.messages 不含 system）
-    const oldMsgs = messages.slice(0, messages.length - recentMsgs.length);
+    const oldMsgs = skeletonizedAll.slice(0, skeletonizedAll.length - recentMsgs.length);
 
     // 1. 冲突检测（Lesson 12: Context Pruning）
-    const conflicts = detectConflicts(messages);
+    const conflicts = detectConflicts(skeletonizedAll);
     if (conflicts.length > 0) {
       console.error(`⚠️ 检测到 ${conflicts.length} 处指令冲突`);
     }
@@ -288,4 +292,251 @@ export class ContextCompactor {
       return `[摘要失败: ${text.slice(0, 200)}...]`;
     }
   }
+}
+
+export function skeletonizePython(code: string): string {
+  const lines = code.split("\n");
+  const result: string[] = [];
+  let i = 0;
+  const n = lines.length;
+
+  while (i < n) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("def ")) {
+      result.push(line);
+      const indentMatch = line.match(/^(\s*)/);
+      const indent = indentMatch ? indentMatch[1] : "";
+
+      i++;
+      let folded = false;
+      while (i < n) {
+        const subLine = lines[i];
+        if (subLine.trim() === "") {
+          i++;
+          continue;
+        }
+        const subIndentMatch = subLine.match(/^(\s*)/);
+        const subIndent = subIndentMatch ? subIndentMatch[1].length : 0;
+        if (subIndent > indent.length) {
+          if (!folded) {
+            result.push(indent + "    # ... (remaining body folded)");
+            folded = true;
+          }
+          i++;
+        } else {
+          break;
+        }
+      }
+      continue;
+    }
+
+    result.push(line);
+    i++;
+  }
+  return result.join("\n");
+}
+
+export function skeletonizeBraceLanguage(code: string): string {
+  let result = "";
+  let i = 0;
+  const n = code.length;
+  let braceDepth = 0;
+
+  while (i < n) {
+    if (code.startsWith("//", i)) {
+      const nextNewline = code.indexOf("\n", i);
+      const end = nextNewline === -1 ? n : nextNewline;
+      result += code.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (code.startsWith("/*", i)) {
+      const end = code.indexOf("*/", i);
+      if (end === -1) {
+        result += code.slice(i);
+        i = n;
+      } else {
+        result += code.slice(i, end + 2);
+        i = end + 2;
+      }
+      continue;
+    }
+
+    const char = code[i];
+    if (char === '"' || char === "'" || char === "`") {
+      result += char;
+      const quote = char;
+      i++;
+      while (i < n && code[i] !== quote) {
+        if (code[i] === "\\" && i + 1 < n) {
+          result += code[i] + code[i + 1];
+          i += 2;
+        } else {
+          result += code[i];
+          i++;
+        }
+      }
+      if (i < n) {
+        result += code[i];
+        i++;
+      }
+      continue;
+    }
+
+    if (char === "{") {
+      let startIdx = i - 1;
+      while (startIdx >= 0 && code[startIdx] !== ";" && code[startIdx] !== "}" && code[startIdx] !== "{") {
+        startIdx--;
+      }
+      const preceding = code.slice(startIdx + 1, i);
+      const isContainer = /\b(class|interface|namespace|enum|struct)\b/.test(preceding);
+
+      if (isContainer) {
+        result += "{";
+        braceDepth++;
+        i++;
+      } else {
+        if (result.endsWith(" ") || result.endsWith("\t")) {
+          result += "{\n  // ... (remaining body folded)\n";
+        } else {
+          result += " {\n  // ... (remaining body folded)\n";
+        }
+        let depth = 1;
+        i++;
+        while (i < n && depth > 0) {
+          const c = code[i];
+          if (c === '"' || c === "'" || c === "`") {
+            const q = c;
+            i++;
+            while (i < n && code[i] !== q) {
+              if (code[i] === "\\" && i + 1 < n) i += 2;
+              else i++;
+            }
+            if (i < n) i++;
+            continue;
+          }
+          if (code.startsWith("//", i)) {
+            const nextNewline = code.indexOf("\n", i);
+            i = nextNewline === -1 ? n : nextNewline;
+            continue;
+          }
+          if (code.startsWith("/*", i)) {
+            const end = code.indexOf("*/", i);
+            i = end === -1 ? n : end + 2;
+            continue;
+          }
+          if (c === "{") depth++;
+          else if (c === "}") depth--;
+          i++;
+        }
+        result += "}";
+      }
+      continue;
+    }
+
+    if (char === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      result += "}";
+      i++;
+      continue;
+    }
+
+    result += char;
+    i++;
+  }
+  return result;
+}
+
+export function skeletonizeCode(code: string, ext: string): string {
+  if (ext === ".py") {
+    return skeletonizePython(code);
+  } else if ([".ts", ".js", ".tsx", ".jsx", ".go", ".java", ".cpp", ".c", ".h"].includes(ext)) {
+    return skeletonizeBraceLanguage(code);
+  }
+  return code;
+}
+
+export function getModifiedFilesFromHistory(messages: Message[]): Set<string> {
+  const modified = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "assistant" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.function.name === "write" || tc.function.name === "patch") {
+          try {
+            const args = typeof tc.function.arguments === "string"
+              ? JSON.parse(tc.function.arguments)
+              : tc.function.arguments;
+            if (args && args.path) {
+              modified.add(args.path);
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      }
+    }
+  }
+  return modified;
+}
+
+export function skeletonizeMessages(messages: Message[], modifiedFiles: Set<string>): Message[] {
+  const result: Message[] = [];
+
+  const toolCallMap = new Map<string, { name: string; path: string }>();
+  for (const msg of messages) {
+    if (msg.role === "assistant" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.id) {
+          let filePath = "";
+          try {
+            const args = typeof tc.function.arguments === "string"
+              ? JSON.parse(tc.function.arguments)
+              : tc.function.arguments;
+            if (args && args.path) {
+              filePath = args.path;
+            }
+          } catch {
+            // Ignore
+          }
+          toolCallMap.set(tc.id, { name: tc.function.name, path: filePath });
+        }
+      }
+    }
+  }
+
+  for (const msg of messages) {
+    if (msg.role === "tool" && msg.tool_call_id) {
+      const callInfo = toolCallMap.get(msg.tool_call_id);
+      if (callInfo && callInfo.name === "read" && callInfo.path) {
+        const isModified = Array.from(modifiedFiles).some(f => {
+          const normA = f.replace(/\\/g, "/").toLowerCase();
+          const normB = callInfo.path.replace(/\\/g, "/").toLowerCase();
+          return normA === normB || normA.endsWith(normB) || normB.endsWith(normA);
+        });
+
+        if (!isModified) {
+          try {
+            const toolResult = JSON.parse(msg.content);
+            if (toolResult && !toolResult.is_error && typeof toolResult.output === "string") {
+              const ext = path.extname(callInfo.path).toLowerCase();
+              const skeletonized = skeletonizeCode(toolResult.output, ext);
+              toolResult.output = skeletonized;
+              result.push({
+                ...msg,
+                content: JSON.stringify(toolResult)
+              });
+              continue;
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      }
+    }
+    result.push(msg);
+  }
+
+  return result;
 }
