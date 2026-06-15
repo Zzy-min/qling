@@ -44,6 +44,11 @@ test("patch: unique replacement works successfully", async () => {
 
     assert.equal(result.is_error, undefined);
     assert.match(result.output, /applied 1 patch chunk/i);
+    assert.match(result.output, /--- target\.txt/);
+    assert.match(result.output, /\+\+\+ target\.txt/);
+    assert.match(result.output, /@@ -1,4 \+1,4 @@/);
+    assert.match(result.output, /-line2/);
+    assert.match(result.output, /\+line-two-replaced/);
 
     const updated = await readFile(file, "utf-8");
     assert.equal(updated, "line1\nline-two-replaced\nline3\n");

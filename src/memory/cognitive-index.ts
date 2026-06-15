@@ -266,6 +266,28 @@ export class CognitiveIndex {
     })();
   }
 
+  getAllSymbols(): { file: string; name: string; type: string; line: number; signature: string }[] {
+    if (!this.db) return [];
+    const stmt = this.db.prepare(`
+      SELECT n.label, n.metadata, e.target
+      FROM kg_nodes n
+      JOIN kg_edges e ON n.id = e.source
+      WHERE n.type = 'symbol' AND e.relation = 'part_of'
+    `);
+    const rows = stmt.all() as any[];
+    return rows.map((r) => {
+      const meta = JSON.parse(r.metadata || "{}");
+      const file = r.target.startsWith("file:") ? r.target.substring(5) : r.target;
+      return {
+        file,
+        name: r.label,
+        type: meta.kind || "function",
+        line: meta.line || 0,
+        signature: meta.signature || "",
+      };
+    });
+  }
+
   // --- 辅助工具 ---
 
   private cosineSimilarity(v1: number[], v2: number[]): number {

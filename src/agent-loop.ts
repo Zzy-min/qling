@@ -10,7 +10,7 @@ import { exec } from "child_process";
 import { existsSync } from "fs";
 import { dispatch, ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
-import { buildDefaultRegistry, buildSystemPrompt, SECTION_IDS } from "./pipeline/sections.js";
+import { buildDefaultRegistry, buildSystemPrompt, SECTION_IDS, buildRepoMapSection } from "./pipeline/sections.js";
 import { MemoryStore, TokenBudgetManager, extractDreamMemories } from "./memory.js";
 import { WriteAheadLog } from "./memory/wal.js";
 import { extractDreamMemoriesLLM } from "./memory/memory-llm-dream.js";
@@ -1102,6 +1102,17 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private async buildSystemPrompt(): Promise<string> {
+    // 加载代码地图并更新 REPOMAP section
+    const cognitiveIndex = (this.memoryStore as any)?.getCognitiveIndex?.();
+    if (cognitiveIndex) {
+      try {
+        const symbols = cognitiveIndex.getAllSymbols();
+        this.sectionRegistry.register(buildRepoMapSection(symbols));
+      } catch (err) {
+        // Ignore
+      }
+    }
+
     // 更新 token budget section
     const budgetSec = this.sectionRegistry.get(SECTION_IDS.TOKEN_BUDGET);
     if (budgetSec) {

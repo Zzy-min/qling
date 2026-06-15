@@ -169,7 +169,13 @@ export async function runSearch(args: {
     return rgResult;
   }
 
-  // 2. Fallback to Node.js native search
+  // 2. Try Git grep fallback
+  const gitGrepResult = await searchWithGitGrep(absPath, pattern, target, args.file_glob, context, limit);
+  if (gitGrepResult !== null) {
+    return gitGrepResult;
+  }
+
+  // 3. Fallback to Node.js native search
   try {
     if (target === "files") {
       return await searchFilesNative(absPath, pattern, limit);
@@ -233,10 +239,17 @@ async function searchWithRipgrep(
       }
 
       if (target === "files") {
-        const truncated = rawLines.length > limit;
-        const sliced = rawLines.slice(0, limit);
+        const flags = process.platform === "win32" ? "i" : "";
+        const matcher = globToRegExp(pattern, flags);
+        const filteredLines = rawLines.filter(l => matcher.test(basename(l)));
+        if (filteredLines.length === 0) {
+          resolve(toolSuccess("No files found matching pattern."));
+          return;
+        }
+        const truncated = filteredLines.length > limit;
+        const sliced = filteredLines.slice(0, limit);
         const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
-        resolve(toolSuccess(`Found ${truncated ? `${limit}+` : rawLines.length} file(s):\n${sliced.join("\n")}${suffix}`));
+        resolve(toolSuccess(`Found ${truncated ? `${limit}+` : filteredLines.length} file(s):\n${sliced.join("\n")}${suffix}`));
         return;
       }
 
@@ -345,29 +358,187 @@ async function loadGitignores(absPath: string): Promise<((p: string) => boolean)
   }
 }
 
+async function searchWithGitGrep(
+  absPath: string,
+  pattern: string,
+  target: string,
+  fileGlob: string | undefined,
+  context: number,
+  limit: number
+): Promise<ToolResult | null> {
+  return new Promise((resolve) => {
+    let args: string[] = [];
+    if (target === "files") {
+      args = ["ls-files", absPath];
+      execFile("git", args, { maxBuffer: 10 * 1024 * 1024, cwd: absPath }, (err, stdout, stderr) => {
+        if (err) {
+          resolve(null);
+          return;
+        }
+
+        const rawLines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const flags = process.platform === "win32" ? "i" : "";
+        const matcher = globToRegExp(pattern, flags);
+        const fileMatcher = fileGlob ? globToRegExp(fileGlob, flags) : null;
+
+        const matched: string[] = [];
+        for (const line of rawLines) {
+          const absFile = join(absPath, line);
+          if (fileMatcher && !fileMatcher.test(basename(absFile))) {
+            continue;
+          }
+          if (!matcher.test(basename(absFile))) {
+            continue;
+          }
+          matched.push(absFile);
+        }
+
+        if (matched.length === 0) {
+          resolve(toolSuccess("No files found matching pattern."));
+          return;
+        }
+
+        const truncated = matched.length > limit;
+        const sliced = matched.slice(0, limit);
+        const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+        resolve(toolSuccess(`Found ${truncated ? `${limit}+` : matched.length} file(s):\n${sliced.join("\n")}${suffix}`));
+      });
+    } else {
+      args = ["grep", "-n", "-I", "--no-color"];
+      if (context > 0) {
+        args.push("-C", String(context));
+      }
+      args.push("-e", pattern);
+
+      execFile("git", args, { maxBuffer: 10 * 1024 * 1024, cwd: absPath }, (err, stdout, stderr) => {
+        if (err && (err as any).code !== 1 && (err as any).code !== 0) {
+          resolve(null);
+          return;
+        }
+
+        const rawLines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (rawLines.length === 0) {
+          resolve(toolSuccess("No matches found."));
+          return;
+        }
+
+        const parsedLines: { file: string; line: number; isMatch: boolean; content: string }[] = [];
+        const flags = process.platform === "win32" ? "i" : "";
+        const fileMatcher = fileGlob ? globToRegExp(fileGlob, flags) : null;
+
+        for (const line of rawLines) {
+          const m = line.match(/^(.*?)([:-])(\d+)\2(.*)$/);
+          if (m) {
+            const relativeFile = m[1];
+            const absFile = join(absPath, relativeFile);
+            if (fileMatcher && !fileMatcher.test(basename(absFile))) {
+              continue;
+            }
+            parsedLines.push({
+              file: absFile,
+              isMatch: m[2] === ":",
+              line: parseInt(m[3], 10),
+              content: m[4],
+            });
+          }
+        }
+
+        if (parsedLines.length === 0) {
+          resolve(toolSuccess("No matches found."));
+          return;
+        }
+
+        if (context <= 0) {
+          const truncated = parsedLines.length > limit;
+          const sliced = parsedLines.slice(0, limit);
+          const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+          const formatted = sliced.map(pl => `${pl.file}:${pl.line}:${pl.content}`).join("\n");
+          resolve(toolSuccess(`${truncated ? `${limit}+` : parsedLines.length} match(es):\n${formatted}${suffix}`));
+          return;
+        }
+
+        // Group context blocks
+        const fileGroups = new Map<string, typeof parsedLines>();
+        for (const pl of parsedLines) {
+          if (!fileGroups.has(pl.file)) {
+            fileGroups.set(pl.file, []);
+          }
+          fileGroups.get(pl.file)!.push(pl);
+        }
+
+        const formattedBlocks: string[] = [];
+        let matchCount = 0;
+        let truncated = false;
+
+        for (const [file, fileLines] of fileGroups.entries()) {
+          fileLines.sort((a, b) => a.line - b.line);
+          const matchesInFile = fileLines.filter(l => l.isMatch);
+
+          for (const matchLine of matchesInFile) {
+            matchCount++;
+            if (matchCount > limit) {
+              truncated = true;
+              break;
+            }
+
+            const start = matchLine.line - context;
+            const end = matchLine.line + context;
+            const blockLines = fileLines.filter(l => l.line >= start && l.line <= end);
+
+            const block: string[] = [`${file}:${matchLine.line}:`];
+            for (const bl of blockLines) {
+              const marker = bl.line === matchLine.line ? ">" : " ";
+              block.push(`  ${marker} ${bl.line}: ${bl.content}`);
+            }
+            formattedBlocks.push(block.join("\n"));
+          }
+
+          if (truncated) break;
+        }
+
+        const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+        resolve(toolSuccess(`${truncated ? `${limit}+` : matchCount} match(es):\n${formattedBlocks.join("\n")}${suffix}`));
+      });
+    }
+  });
+}
+
 async function searchFilesNative(absPath: string, pattern: string, limit: number): Promise<ToolResult> {
   const flags = process.platform === "win32" ? "i" : "";
   const matcher = globToRegExp(pattern, flags);
   const matched: string[] = [];
   let truncated = false;
+  let budgetExceeded = false;
 
-  await walkFiles(absPath, async (filePath) => {
-    if (!matcher.test(basename(filePath))) {
+  try {
+    await walkFiles(absPath, async (filePath) => {
+      if (!matcher.test(basename(filePath))) {
+        return true;
+      }
+      matched.push(filePath);
+      if (matched.length >= limit) {
+        truncated = true;
+        return false;
+      }
       return true;
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === "TRAVERSAL_BUDGET_EXCEEDED") {
+      budgetExceeded = true;
+    } else {
+      throw err;
     }
-    matched.push(filePath);
-    if (matched.length >= limit) {
-      truncated = true;
-      return false;
-    }
-    return true;
-  });
+  }
 
   if (matched.length === 0) {
+    if (budgetExceeded) {
+      return toolSuccess("No files found matching pattern. (Warning: Traversal budget of 10,000 files was exceeded)");
+    }
     return toolSuccess("No files found matching pattern.");
   }
 
-  const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+  const suffix = (truncated ? `\n... (truncated at ${limit} results)` : "") +
+                 (budgetExceeded ? `\n⚠️ Warning: Search traversal budget of 10,000 files was exceeded. Results may be incomplete.` : "");
   return toolSuccess(
     `Found ${truncated ? `${limit}+` : matched.length} file(s):\n${matched.join("\n")}${suffix}`
   );
@@ -386,44 +557,57 @@ async function searchContentNative(
   const outputs: string[] = [];
   let matches = 0;
   let truncated = false;
+  let budgetExceeded = false;
 
-  await walkFiles(absPath, async (filePath) => {
-    if (fileMatcher && !fileMatcher.test(basename(filePath))) {
-      return true;
-    }
-
-    let text: string;
-    try {
-      const fileStat = await stat(filePath);
-      if (fileStat.size > MAX_SEARCH_FILE_BYTES) {
+  try {
+    await walkFiles(absPath, async (filePath) => {
+      if (fileMatcher && !fileMatcher.test(basename(filePath))) {
         return true;
       }
-      text = await readFile(filePath, "utf-8");
-    } catch {
-      return true;
-    }
 
-    const lines = text.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!contentRegex.test(line)) continue;
-
-      matches++;
-      outputs.push(formatMatch(filePath, lines, i, context));
-      if (matches >= limit) {
-        truncated = true;
-        return false;
+      let text: string;
+      try {
+        const fileStat = await stat(filePath);
+        if (fileStat.size > MAX_SEARCH_FILE_BYTES) {
+          return true;
+        }
+        text = await readFile(filePath, "utf-8");
+      } catch {
+        return true;
       }
-    }
 
-    return true;
-  });
+      const lines = text.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!contentRegex.test(line)) continue;
+
+        matches++;
+        outputs.push(formatMatch(filePath, lines, i, context));
+        if (matches >= limit) {
+          truncated = true;
+          return false;
+        }
+      }
+
+      return true;
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === "TRAVERSAL_BUDGET_EXCEEDED") {
+      budgetExceeded = true;
+    } else {
+      throw err;
+    }
+  }
 
   if (matches === 0) {
+    if (budgetExceeded) {
+      return toolSuccess("No matches found. (Warning: Traversal budget of 10,000 files was exceeded)");
+    }
     return toolSuccess("No matches found.");
   }
 
-  const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+  const suffix = (truncated ? `\n... (truncated at ${limit} results)` : "") +
+                 (budgetExceeded ? `\n⚠️ Warning: Search traversal budget of 10,000 files was exceeded. Results may be incomplete.` : "");
   return toolSuccess(`${truncated ? `${limit}+` : matches} match(es):\n${outputs.join("\n")}${suffix}`);
 }
 
@@ -456,8 +640,16 @@ async function walkFiles(
   const gitignores = await loadGitignores(rootPath);
 
   const stack: string[] = [rootPath];
+  let visitCount = 0;
+  const TRAVERSAL_BUDGET = 10000;
+
   while (stack.length > 0) {
     const current = stack.pop()!;
+    visitCount++;
+    if (visitCount > TRAVERSAL_BUDGET) {
+      throw new Error("TRAVERSAL_BUDGET_EXCEEDED");
+    }
+
     let entries: Dirent[];
     try {
       entries = await readdir(current, { withFileTypes: true });
@@ -487,6 +679,11 @@ async function walkFiles(
         continue;
       }
       if (!entry.isFile()) continue;
+
+      visitCount++;
+      if (visitCount > TRAVERSAL_BUDGET) {
+        throw new Error("TRAVERSAL_BUDGET_EXCEEDED");
+      }
 
       const shouldContinue = await onFile(fullPath);
       if (!shouldContinue) return;

@@ -17,9 +17,9 @@
     "prepare": "npm run build",
     "prepack": "npm run build",
     "dev": "tsc --watch",
-    "test": "npm run build && node --test \"tests/unit/**/*.test.mjs\"",
+    "test": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\"",
     "test:smoke": "npm run build && node --test \"tests/smoke/**/*.test.mjs\"",
-    "ci:check": "npm run build && node --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\""
+    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\""
   },
   "dependencies": {
     "axios": "^1.7.0",

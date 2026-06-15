@@ -13,6 +13,7 @@ export const SECTION_IDS = {
   WORKFLOW: "workflow",
   RESTRICTIONS: "restrictions",
   TONE: "tone",
+  REPOMAP: "repomap",
   TOKEN_BUDGET: "token_budget",
   SESSION: "session",
   MCP: "mcp",
@@ -205,6 +206,41 @@ export function buildMCPSection(serverInfo?: string): PromptSection {
   };
 }
 
+export function buildRepoMapSection(
+  symbols: { file: string; name: string; type: string; line: number; signature: string }[]
+): PromptSection {
+  const fileGroups = new Map<string, typeof symbols>();
+  for (const sym of symbols) {
+    if (!fileGroups.has(sym.file)) {
+      fileGroups.set(sym.file, []);
+    }
+    fileGroups.get(sym.file)!.push(sym);
+  }
+
+  const lines: string[] = [];
+  const sortedFiles = Array.from(fileGroups.keys()).sort();
+  for (const file of sortedFiles) {
+    lines.push(`📄 ${file}`);
+    const fileSymbols = fileGroups.get(file)!;
+    fileSymbols.sort((a, b) => a.line - b.line);
+    for (const sym of fileSymbols) {
+      lines.push(`  - [${sym.type}] L${sym.line}: ${sym.name} (${sym.signature})`);
+    }
+  }
+
+  const content = lines.length > 0
+    ? `已编制项目符号索引，供全局参考：\n\n${lines.join("\n")}`
+    : "当前没有索引到项目符号。运行 /repomap 命令来索引符号。";
+
+  return {
+    id: SECTION_IDS.REPOMAP,
+    title: "代码地图",
+    content,
+    cacheable: true,
+    cached: false,
+  };
+}
+
 // --- 默认 Registry Builder ---
 
 export function buildDefaultRegistry(
@@ -219,6 +255,7 @@ export function buildDefaultRegistry(
   registry.register(buildWorkflowSection());
   registry.register(buildRestrictionsSection());
   registry.register(buildToneSection());
+  registry.register(buildRepoMapSection([]));
   registry.register(buildSessionSection());
   registry.register(buildMemorySection());
   registry.register(buildTokenBudgetSection(usedTokens, maxTokens));

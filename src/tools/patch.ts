@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "fs/promises";
+import { relative } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
@@ -134,7 +135,10 @@ export async function runPatch(args: {
   // Write changes after all validations pass
   try {
     await writeFile(resolvedPath, currentContent, "utf-8");
-    return toolSuccess(`✅ Successfully applied ${chunks.length} patch chunk(s) to ${resolvedPath}`);
+    const workspaceDir = roots.workspaceDir ?? process.cwd();
+    const relFile = relative(workspaceDir, resolvedPath).replace(/\\/g, "/");
+    const diffText = generateUnifiedDiff(relFile, originalContent, currentContent);
+    return toolSuccess(`✅ Successfully applied ${chunks.length} patch chunk(s) to ${resolvedPath}\n\n${diffText}`);
   } catch (err: unknown) {
     return toolError("PATCH_WRITE_FAILED", `failed to write file: ${getErrorMessage(err)}`);
   }
@@ -149,4 +153,151 @@ function countOccurrences(text: string, searchStr: string): number {
     pos = text.indexOf(searchStr, pos + searchStr.length);
   }
   return count;
+}
+
+export function generateUnifiedDiff(
+  filePath: string,
+  originalContent: string,
+  newContent: string
+): string {
+  const originalLines = originalContent.split(/\r?\n/);
+  const newLines = newContent.split(/\r?\n/);
+
+  const m = originalLines.length;
+  const n = newLines.length;
+
+  // Simple LCS DP table
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (originalLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to build diff items
+  interface DiffItem {
+    type: "same" | "add" | "delete";
+    line: string;
+    originalLineNum: number;
+    newLineNum: number;
+  }
+  const diff: DiffItem[] = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && originalLines[i - 1] === newLines[j - 1]) {
+      diff.push({
+        type: "same",
+        line: originalLines[i - 1],
+        originalLineNum: i,
+        newLineNum: j
+      });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      diff.push({
+        type: "add",
+        line: newLines[j - 1],
+        originalLineNum: -1,
+        newLineNum: j
+      });
+      j--;
+    } else {
+      diff.push({
+        type: "delete",
+        line: originalLines[i - 1],
+        originalLineNum: i,
+        newLineNum: -1
+      });
+      i--;
+    }
+  }
+  diff.reverse();
+
+  // Group diff items into hunks with context
+  const contextLines = 3;
+  const hunks: { start: number; end: number }[] = [];
+
+  let inHunk = false;
+  let hunkStart = -1;
+  let lastModifiedIdx = -1;
+
+  for (let idx = 0; idx < diff.length; idx++) {
+    const isMod = diff[idx].type !== "same";
+    if (isMod) {
+      if (!inHunk) {
+        inHunk = true;
+        hunkStart = Math.max(0, idx - contextLines);
+      }
+      lastModifiedIdx = idx;
+    } else {
+      if (inHunk && idx - lastModifiedIdx > contextLines * 2) {
+        hunks.push({ start: hunkStart, end: lastModifiedIdx + contextLines });
+        inHunk = false;
+      }
+    }
+  }
+  if (inHunk) {
+    hunks.push({ start: hunkStart, end: Math.min(diff.length - 1, lastModifiedIdx + contextLines) });
+  }
+
+  // Merge overlapping hunks
+  const mergedHunks: { start: number; end: number }[] = [];
+  for (const hunk of hunks) {
+    if (mergedHunks.length === 0) {
+      mergedHunks.push(hunk);
+    } else {
+      const prev = mergedHunks[mergedHunks.length - 1];
+      if (hunk.start <= prev.end) {
+        prev.end = Math.max(prev.end, hunk.end);
+      } else {
+        mergedHunks.push(hunk);
+      }
+    }
+  }
+
+  // Format hunks into standard unified diff format
+  const result: string[] = [];
+  result.push(`--- ${filePath}`);
+  result.push(`+++ ${filePath}`);
+
+  for (const hunk of mergedHunks) {
+    const hunkSlice = diff.slice(hunk.start, hunk.end + 1);
+
+    const originalSlice = hunkSlice.filter(x => x.type !== "add");
+    const newSlice = hunkSlice.filter(x => x.type !== "delete");
+
+    const originalCount = originalSlice.length;
+    const newCount = newSlice.length;
+
+    let originalStart = 0;
+    if (originalCount > 0) {
+      originalStart = originalSlice[0].originalLineNum;
+    } else {
+      originalStart = hunk.start > 0 ? diff[hunk.start - 1].originalLineNum : 0;
+    }
+
+    let newStart = 0;
+    if (newCount > 0) {
+      newStart = newSlice[0].newLineNum;
+    } else {
+      newStart = hunk.start > 0 ? diff[hunk.start - 1].newLineNum : 0;
+    }
+
+    result.push(`@@ -${originalStart},${originalCount} +${newStart},${newCount} @@`);
+    for (const item of hunkSlice) {
+      if (item.type === "same") {
+        result.push(` ${item.line}`);
+      } else if (item.type === "add") {
+        result.push(`+${item.line}`);
+      } else {
+        result.push(`-${item.line}`);
+      }
+    }
+  }
+
+  return result.join("\n");
 }
