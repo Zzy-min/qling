@@ -526,7 +526,6 @@ export class StreamUI {
       process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
     }
     process.stdout.write(DIM(formatBottomHints()) + "\n");
-    process.stdout.write(S.p(this.inputFrameTop()) + "\n");
     this.writeInputValue(true);
     this.syncCursor();
   }

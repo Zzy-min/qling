@@ -345,6 +345,22 @@ test("stream ui delete on empty input redraws only the input frame", async () =>
   });
 });
 
+test("stream ui showPrompt renders one input frame top border", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+
+    ui.running = true;
+    ui.setStatusLine("model=test session=session-1");
+    ui.showPrompt();
+
+    const topBorderLines = stripAnsi(getOutput())
+      .split("\n")
+      .filter((line) => line.startsWith("┌"));
+
+    assert.equal(topBorderLines.length, 1, `expected one input top border, got ${topBorderLines.length}`);
+  });
+});
+
 test("stream ui renders user, assistant, executing timeline, and completion blocks", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui } = createUi();
