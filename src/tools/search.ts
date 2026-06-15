@@ -1,17 +1,33 @@
 // ============================================================
 // 轻灵 - search 工具
-// 文件内容搜索（regex）和文件名搜索（glob）
-// 使用 Node 原生遍历，避免子进程大输出导致 ENOBUFS
+// 文件内容搜索（grep）和文件名搜索（glob）
+// 优先使用 ripgrep，失败时降级到 Node 原生遍历（带智能忽略与 .gitignore 过滤）
 // ============================================================
 
 import { readdir, readFile, stat } from "fs/promises";
-import type { Dirent } from "fs";
-import { basename, join } from "path";
+import { existsSync, Dirent } from "fs";
+import { basename, join, relative } from "path";
+import { execFile } from "child_process";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
 
 const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024; // 2MB
+
+const DEFAULT_IGNORES = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "coverage",
+  "out",
+  "target",
+  ".qling",
+  ".idea",
+  ".vscode",
+  "bin",
+  "obj",
+]);
 
 export const searchTool: ToolDefinition = {
   name: "search",
@@ -29,13 +45,7 @@ export const searchTool: ToolDefinition = {
 
 2. **文件搜索**（target="files"）:
    - 用 glob 模式查找文件名
-   - 返回匹配的文件路径列表
-
-**使用场景**:
-- 在项目中搜索某个函数/变量的使用位置
-- 查找所有 TypeScript 文件
-- 搜索错误信息的出处
-- 查找配置文件位置`,
+   - 返回匹配的文件路径列表`,
   parameters: {
     type: "object",
     properties: {
@@ -153,17 +163,189 @@ export async function runSearch(args: {
     return toolError("SEARCH_PATH_NOT_FOUND", `path not found: ${searchPath}`);
   }
 
+  // 1. Try Ripgrep first
+  const rgResult = await searchWithRipgrep(absPath, pattern, target, args.file_glob, context, limit);
+  if (rgResult !== null) {
+    return rgResult;
+  }
+
+  // 2. Fallback to Node.js native search
   try {
     if (target === "files") {
-      return await searchFiles(absPath, pattern, limit);
+      return await searchFilesNative(absPath, pattern, limit);
     }
-    return await searchContent(absPath, pattern, args.file_glob, context, limit);
+    return await searchContentNative(absPath, pattern, args.file_glob, context, limit);
   } catch (err: unknown) {
     return toolError("SEARCH_FAILED", getErrorMessage(err));
   }
 }
 
-async function searchFiles(absPath: string, pattern: string, limit: number): Promise<ToolResult> {
+async function searchWithRipgrep(
+  absPath: string,
+  pattern: string,
+  target: string,
+  fileGlob: string | undefined,
+  context: number,
+  limit: number
+): Promise<ToolResult | null> {
+  return new Promise((resolve) => {
+    let args = ["--color=never"];
+
+    // Add default ignores explicitly to rg
+    for (const folder of DEFAULT_IGNORES) {
+      args.push("--glob", `!**/${folder}/**`);
+    }
+
+    // Add .gitignore explicitly if it exists
+    const gitignorePath = join(absPath, ".gitignore");
+    if (existsSync(gitignorePath)) {
+      args.push("--ignore-file", gitignorePath);
+    }
+
+    if (target === "files") {
+      args.push("--files");
+      if (fileGlob) {
+        args.push("--glob", fileGlob);
+      }
+    } else {
+      args.push("--line-number", "--with-filename");
+      if (context > 0) {
+        args.push("-C", String(context));
+      }
+      if (fileGlob) {
+        args.push("--glob", fileGlob);
+      }
+      args.push("-e", pattern);
+    }
+    args.push(absPath);
+
+    execFile("rg", args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && (err as any).code !== 1 && (err as any).code !== 0) {
+        // Ripgrep not installed/available, fallback
+        resolve(null);
+        return;
+      }
+
+      const rawLines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (rawLines.length === 0) {
+        resolve(toolSuccess("No matches found."));
+        return;
+      }
+
+      if (target === "files") {
+        const truncated = rawLines.length > limit;
+        const sliced = rawLines.slice(0, limit);
+        const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+        resolve(toolSuccess(`Found ${truncated ? `${limit}+` : rawLines.length} file(s):\n${sliced.join("\n")}${suffix}`));
+        return;
+      }
+
+      // Parse and format content matches uniformly to match Node fallback
+      const parsedLines: { file: string; line: number; isMatch: boolean; content: string }[] = [];
+      for (const line of rawLines) {
+        const m = line.match(/^(.*?)([:-])(\d+)\2(.*)$/);
+        if (m) {
+          parsedLines.push({
+            file: m[1],
+            isMatch: m[2] === ":",
+            line: parseInt(m[3], 10),
+            content: m[4],
+          });
+        }
+      }
+
+      if (context <= 0) {
+        const truncated = parsedLines.length > limit;
+        const sliced = parsedLines.slice(0, limit);
+        const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+        const formatted = sliced.map(pl => `${pl.file}:${pl.line}:${pl.content}`).join("\n");
+        resolve(toolSuccess(`${truncated ? `${limit}+` : parsedLines.length} match(es):\n${formatted}${suffix}`));
+        return;
+      }
+
+      // Group context blocks
+      const fileGroups = new Map<string, typeof parsedLines>();
+      for (const pl of parsedLines) {
+        if (!fileGroups.has(pl.file)) {
+          fileGroups.set(pl.file, []);
+        }
+        fileGroups.get(pl.file)!.push(pl);
+      }
+
+      const formattedBlocks: string[] = [];
+      let matchCount = 0;
+      let truncated = false;
+
+      for (const [file, fileLines] of fileGroups.entries()) {
+        fileLines.sort((a, b) => a.line - b.line);
+        const matchesInFile = fileLines.filter(l => l.isMatch);
+
+        for (const matchLine of matchesInFile) {
+          matchCount++;
+          if (matchCount > limit) {
+            truncated = true;
+            break;
+          }
+
+          const start = matchLine.line - context;
+          const end = matchLine.line + context;
+          const blockLines = fileLines.filter(l => l.line >= start && l.line <= end);
+
+          const block: string[] = [`${file}:${matchLine.line}:`];
+          for (const bl of blockLines) {
+            const marker = bl.line === matchLine.line ? ">" : " ";
+            block.push(`  ${marker} ${bl.line}: ${bl.content}`);
+          }
+          formattedBlocks.push(block.join("\n"));
+        }
+
+        if (truncated) break;
+      }
+
+      const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
+      resolve(toolSuccess(`${truncated ? `${limit}+` : matchCount} match(es):\n${formattedBlocks.join("\n")}${suffix}`));
+    });
+  });
+}
+
+async function loadGitignores(absPath: string): Promise<((p: string) => boolean)[]> {
+  const gitignorePath = join(absPath, ".gitignore");
+  if (!existsSync(gitignorePath)) return [];
+  try {
+    const content = await readFile(gitignorePath, "utf-8");
+    const lines = content
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+
+    return lines.map((line) => {
+      let regexStr = line
+        .replace(/\./g, "\\.")
+        .replace(/\*/g, ".*")
+        .replace(/\?/g, ".");
+      if (line.endsWith("/")) {
+        regexStr = regexStr + ".*";
+      } else {
+        regexStr = regexStr + "($|/.*)";
+      }
+      if (!line.startsWith("/")) {
+        regexStr = "(^|/)" + regexStr;
+      } else {
+        regexStr = "^" + regexStr.slice(1);
+      }
+      try {
+        const regex = new RegExp(regexStr);
+        return (p: string) => regex.test(p);
+      } catch {
+        return () => false;
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function searchFilesNative(absPath: string, pattern: string, limit: number): Promise<ToolResult> {
   const flags = process.platform === "win32" ? "i" : "";
   const matcher = globToRegExp(pattern, flags);
   const matched: string[] = [];
@@ -191,7 +373,7 @@ async function searchFiles(absPath: string, pattern: string, limit: number): Pro
   );
 }
 
-async function searchContent(
+async function searchContentNative(
   absPath: string,
   pattern: string,
   fileGlob: string | undefined,
@@ -218,7 +400,6 @@ async function searchContent(
       }
       text = await readFile(filePath, "utf-8");
     } catch {
-      // 非文本文件或无权限时跳过
       return true;
     }
 
@@ -272,6 +453,8 @@ async function walkFiles(
   }
   if (!rootStat.isDirectory()) return;
 
+  const gitignores = await loadGitignores(rootPath);
+
   const stack: string[] = [rootPath];
   while (stack.length > 0) {
     const current = stack.pop()!;
@@ -284,12 +467,27 @@ async function walkFiles(
 
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
+      const nameLower = entry.name.toLowerCase();
+
+      // Check default ignores
+      if (DEFAULT_IGNORES.has(nameLower)) {
+        continue;
+      }
+
       const fullPath = join(current, entry.name);
+      const relativePath = relative(rootPath, fullPath).replace(/\\/g, "/");
+
+      // Check gitignore matches
+      if (gitignores.some((fn) => fn(relativePath))) {
+        continue;
+      }
+
       if (entry.isDirectory()) {
         stack.push(fullPath);
         continue;
       }
       if (!entry.isFile()) continue;
+
       const shouldContinue = await onFile(fullPath);
       if (!shouldContinue) return;
     }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -112,5 +112,60 @@ test("search: Windows-style path works on win32", async (t) => {
 
     assert.equal(result.is_error, undefined);
     assert.match(result.output, /only\.txt/i);
+  });
+});
+
+test("search: default ignore directories (node_modules, .git) are excluded", async () => {
+  await withTempDir(async (dir) => {
+    const nodeModulesDir = join(dir, "node_modules");
+    const gitDir = join(dir, ".git");
+    const safeDir = join(dir, "safe-dir");
+
+    await mkdir(nodeModulesDir, { recursive: true });
+    await mkdir(gitDir, { recursive: true });
+    await mkdir(safeDir, { recursive: true });
+
+    await writeFile(join(nodeModulesDir, "bad.txt"), "hello-modules", "utf-8");
+    await writeFile(join(gitDir, "bad-git.txt"), "hello-git", "utf-8");
+    await writeFile(join(safeDir, "good.txt"), "hello-good", "utf-8");
+
+    // Clear environment variable for workspace dir so it respects our custom dir in native fallback
+    const result = await runSearch({
+      pattern: "hello",
+      target: "content",
+      path: dir,
+      limit: 10,
+    });
+
+    assert.equal(result.is_error, undefined);
+    assert.match(result.output, /good\.txt/);
+    assert.doesNotMatch(result.output, /bad\.txt/);
+    assert.doesNotMatch(result.output, /bad-git\.txt/);
+  });
+});
+
+test("search: respects gitignore filter when falling back", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(join(dir, ".gitignore"), "ignored.txt\n*.log\ntemp-dir/\n", "utf-8");
+    await writeFile(join(dir, "allowed.txt"), "hit-allowed", "utf-8");
+    await writeFile(join(dir, "ignored.txt"), "hit-ignored", "utf-8");
+    await writeFile(join(dir, "test.log"), "hit-log", "utf-8");
+
+    const tempDir = join(dir, "temp-dir");
+    await mkdir(tempDir, { recursive: true });
+    await writeFile(join(tempDir, "inside.txt"), "hit-inside", "utf-8");
+
+    const result = await runSearch({
+      pattern: "hit",
+      target: "content",
+      path: dir,
+      limit: 10,
+    });
+
+    assert.equal(result.is_error, undefined);
+    assert.match(result.output, /allowed\.txt/);
+    assert.doesNotMatch(result.output, /ignored\.txt/);
+    assert.doesNotMatch(result.output, /test\.log/);
+    assert.doesNotMatch(result.output, /inside\.txt/);
   });
 });
