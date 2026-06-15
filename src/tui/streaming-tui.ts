@@ -392,7 +392,7 @@ export class StreamUI {
   private moveToInputContentStart(): void {
     const rowsUp = this.inputCursorAnchor === "bottom"
       ? this.lastInputContentLineCount + this.lastInputHintLineCount
-      : this.lastInputCursorLineIndex;
+      : Math.max(0, this.lastInputCursorLineIndex - 1);
     if (rowsUp > 0) {
       process.stdout.write("\x1b[" + rowsUp + "A");
     }

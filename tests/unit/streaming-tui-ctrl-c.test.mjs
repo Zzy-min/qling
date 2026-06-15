@@ -330,6 +330,21 @@ test("stream ui cursor returns to input content row instead of top border", asyn
   });
 });
 
+test("stream ui delete on empty input redraws only the input frame", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+
+    ui.printInputBar();
+    ui.handleDelete();
+    const output = getOutput();
+
+    assert.equal(ui.input.value, "");
+    assert.deepEqual(submitted, []);
+    assert.match(output, /\x1b\[1A\r\x1b\[J/);
+    assert.doesNotMatch(output, /\x1b\[2A\r\x1b\[J/);
+  });
+});
+
 test("stream ui renders user, assistant, executing timeline, and completion blocks", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui } = createUi();
