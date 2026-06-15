@@ -41,7 +41,7 @@ function loadEnv() {
 
 async function main() {
   loadEnv();
-  
+
   const stateDir = process.env.QLING_FILE_STATE_DIR || DEFAULT_STATE_DIR;
   const manager = new MissionManager(stateDir);
   await manager.init();
@@ -63,7 +63,7 @@ async function main() {
   supervisor.start();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${PORT}`);
-    
+
     res.setHeader("Content-Type", "application/json");
 
     try {
@@ -79,10 +79,10 @@ async function main() {
         const data = await readJsonBody(req);
         const mission = await manager.createMission(data.name, data.description, data.sessionId);
         await manager.appendLog(mission.id, "使命已提交到后台队列", { source: "daemon" });
-        
+
         // 异步启动任务执行 (Detach) - 传入全量数据以支持状态恢复
         executeMissionInBackground(mission.id, manager, stateDir, data);
-        
+
         res.end(JSON.stringify({ ok: true, missionId: mission.id }));
         return;
       }
@@ -260,7 +260,7 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
 
     await manager.updateStatus(id, "running");
     await manager.appendLog(id, "使命开始执行", { source: "daemon" });
-    
+
     // 重新加载配置
     const { config: loadedConfig } = await loadQlingConfig({});
     const { buildToolRegistry } = await import("./tools/index.js");
@@ -299,14 +299,14 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
     } else {
        agent.addUserMessage(mission.description);
     }
-    
+
     const result = await agent.run();
-    
-    await manager.updateStatus(id, "succeeded");
+
     await manager.appendLog(id, "使命执行成功", {
       source: "daemon",
       resultPreview: typeof result === "string" ? result.slice(0, 120) : String(result),
     });
+    await manager.updateStatus(id, "succeeded");
     console.log(`[qlingd] 使命 ${id} 执行成功。`);
     await agent.shutdown();
 

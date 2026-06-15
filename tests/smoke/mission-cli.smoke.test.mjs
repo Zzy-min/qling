@@ -58,6 +58,22 @@ async function waitForMissionStatus(baseUrl, missionId, expected, timeoutMs = 10
   throw new Error(`mission ${missionId} did not reach status ${expected}`);
 }
 
+async function waitForMissionLog(baseUrl, missionId, regex, timeoutMs = 5_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const response = await fetch(`${baseUrl}/missions/${missionId}/logs`);
+    if (response.ok) {
+      const logs = await response.json();
+      if (logs.some((event) => event.type === "log" && regex.test(event.data.message))) {
+        return logs;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`mission ${missionId} log did not match regex ${regex}`);
+}
+
+
 test("mission daemon smoke: detail, logs, control endpoints and retry work end to end", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-daemon-"));
   const daemonPort = await getFreePort();
@@ -169,9 +185,8 @@ test("mission daemon smoke: detail, logs, control endpoints and retry work end t
     const completed = await waitForMissionStatus(baseUrl, payload.missionId, "succeeded");
     assert.equal(completed.status, "succeeded");
 
-    response = await fetch(`${baseUrl}/missions/${payload.missionId}/logs`);
-    const logs = await getJson(response);
-    assert.equal(logs.some((event) => event.type === "log" && /执行成功|success/i.test(event.data.message)), true);
+    const logs = await waitForMissionLog(baseUrl, payload.missionId, /执行成功|success/i);
+    assert.ok(logs);
 
     response = await fetch(`${baseUrl}/missions/${payload.missionId}/retry`, { method: "POST" });
     assert.equal(response.status, 200);

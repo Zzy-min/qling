@@ -6,6 +6,8 @@ import axios from "axios";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { exec } from "child_process";
+import { existsSync } from "fs";
 import { dispatch, ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry, buildSystemPrompt, SECTION_IDS } from "./pipeline/sections.js";
@@ -117,6 +119,7 @@ export class AgentLoop extends AgentEventEmitter {
   private sessionCreatedAt: string;
   private sessionRegistry: SessionRegistry;
   private guardConfig: GuardConfig;
+  private verificationCommand: string | null = null;
 
   // --- v0.3 Getters (Management) ---
   getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
@@ -126,6 +129,11 @@ export class AgentLoop extends AgentEventEmitter {
   getRuntimeRootDir(): string { return this.runtimeRootDir; }
   getWorkspaceDir(): string { return this.config.runtime?.workspaceDir ?? process.cwd(); }
   getMessagesSnapshot(): Message[] { return this.messages.map((message) => ({ ...message })); }
+  getVerificationCommand(): string | null { return this.verificationCommand; }
+  async setVerificationCommand(cmd: string | null): Promise<void> {
+    this.verificationCommand = cmd;
+    await this.persistVerificationCommand();
+  }
   getSessionStats(): { sessionId: string; turnCount: number; tokens: number; tokenSource: TokenUsageSource; compactions: number } {
     return {
       sessionId: this.sessionId,
@@ -246,7 +254,7 @@ export class AgentLoop extends AgentEventEmitter {
     this.verifier = new VerificationAgent(apiKey, this.config.model);
     this.compactor = new ContextCompactor(6000, this.config.model);
     this.knowledgeAdapter = new KnowledgeAgentAdapter(this.memoryStore);
-    
+
     // v0.3 Workflow Runtime
     this.workflowRuntime = new WorkflowRuntime(
       path.join(this.runtimeRootDir, "workflows")
@@ -313,6 +321,7 @@ export class AgentLoop extends AgentEventEmitter {
     await fs.mkdir(this.runtimeRootDir, { recursive: true });
     await fs.mkdir(this.memoryDir, { recursive: true });
     await this.missionManager.init();
+    await this.loadVerificationCommand();
 
     // v0.3 Sync dynamic discovery
     if (process.env.QLING_FEATURES_DYNAMIC_DISCOVERY === "true") {
@@ -357,13 +366,13 @@ export class AgentLoop extends AgentEventEmitter {
         this.wal = new WriteAheadLog(walDir);
         await this.wal.init();
         this.memoryStore.setWAL(this.wal, { intervalMs: projectionInterval });
-        
+
         // v0.3 语义记忆初始化 (v0.5 升级为认知引擎)
         const semanticEnabled = process.env.QLING_FEATURES_SEMANTIC_MEMORY === "true";
         if (semanticEnabled) {
           const { CognitiveIndex } = await import("./memory/cognitive-index.js");
           const { EmbeddingClient } = await import("./memory/embedding.js");
-          
+
           const cognitiveIndex = new CognitiveIndex(this.memoryDir);
           const embeddingClient = new EmbeddingClient({
             apiKey: process.env.QLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
@@ -371,7 +380,7 @@ export class AgentLoop extends AgentEventEmitter {
             model: process.env.QLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small",
             dimensions: Number(process.env.QLING_MEMORY_SEMANTIC_DIM) || 1536,
           });
-          
+
           this.memoryStore.setCognitiveIndex(cognitiveIndex, embeddingClient);
           console.error("🧠 认知引擎模块已启动 (Triple-Path Retrieval Mode)");
         }
@@ -405,12 +414,12 @@ export class AgentLoop extends AgentEventEmitter {
           Number.isFinite(flushIntervalRaw) && flushIntervalRaw > 0
             ? flushIntervalRaw
             : 10000;
-        
+
         this.metricsCollector = new MetricsCollector(metricsDir, this.sessionId, flushIntervalMs);
         await this.metricsCollector.init();
         this.metricsFlushTimer = this.metricsCollector.startAutoFlush();
         this.telemetry = new AgentTelemetry(this.metricsCollector, this.sessionId);
-        
+
         if (metricsEnabled) {
           console.error("[Metrics] enabled, dir=" + metricsDir);
         }
@@ -493,6 +502,7 @@ export class AgentLoop extends AgentEventEmitter {
     await this.initPromise;
     const toolSignatureCounts = new Map<string, number>();
     const toolRepeatLimit = Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6);
+    let selfHealingCount = 0;
 
     for (let i = 0; i < this.config.maxIterations; i++) {
       this.turnCount++;
@@ -620,7 +630,7 @@ export class AgentLoop extends AgentEventEmitter {
         }
         preparedCalls.push({ call });
       }
-      
+
       // v0.3 Workflow Checkpoint: Set pending tools
       if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
         await this.workflowRuntime.setPendingTools(preparedCalls.map(p => p.call));
@@ -746,7 +756,7 @@ export class AgentLoop extends AgentEventEmitter {
             }
           }
           const taskId = "task_" + Buffer.from(lastUserMsg.slice(0, 10)).toString("hex");
-          
+
           this.memoryStore.link(
             { id: taskId, type: "task", label: lastUserMsg.slice(0, 50) },
             "uses",
@@ -791,7 +801,7 @@ export class AgentLoop extends AgentEventEmitter {
         const preview = result.output.split("\n")[0].slice(0, 80);
         const icon = result.is_error ? "❌" : "✅";
         console.error(icon + " " + tc.name + ": " + preview + (result.output.length > 80 ? "..." : ""));
-        
+
         // v0.3 Workflow Checkpoint: Add result
         if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
           await this.workflowRuntime.addToolResult(result);
@@ -805,9 +815,35 @@ export class AgentLoop extends AgentEventEmitter {
       }
 
       // 6. 验证阶段（针对写操作）
-      const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "bash");
+      const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "patch" || t.call.name === "bash");
       if (hasWrites) {
-        await this.verifyLastOperation();
+        if (this.verificationCommand) {
+          console.error(`\n🔍 正在运行自动验证: ${this.verificationCommand}`);
+          const { code, stdout, stderr } = await this.runVerificationCommand(this.verificationCommand);
+          if (code !== 0) {
+            if (selfHealingCount < 3) {
+              selfHealingCount++;
+              const truncatedStdout = stdout.length > 2000 ? stdout.slice(-2000) : stdout;
+              const truncatedStderr = stderr.length > 2000 ? stderr.slice(-2000) : stderr;
+              const errorContent = `【自动验证失败】运行验证命令 \`${this.verificationCommand}\` 失败。\n` +
+                `[stdout]\n${truncatedStdout}\n` +
+                `[stderr]\n${truncatedStderr}\n` +
+                `请分析上述报错信息，并使用 patch 或其它工具修正它。(自愈尝试: ${selfHealingCount}/3)`;
+
+              this.messages.push({ role: "user", content: errorContent });
+              console.error(`❌ 自动验证失败，触发第 ${selfHealingCount} 轮自愈调试...`);
+              continue;
+            } else {
+              console.error(`❌ 自动自愈达到 3 轮上限，验证命令仍然失败。`);
+              return `❌ [自动验证失败] 已达到最多 3 轮自愈上限，验证命令仍然失败。\n最后报错信息:\n${stderr || stdout}`;
+            }
+          } else {
+            console.error("✅ 自动验证成功！");
+            selfHealingCount = 0; // Reset counter on success
+          }
+        } else {
+          await this.verifyLastOperation();
+        }
       }
 
       // 7. Auto-dream 检查
@@ -818,7 +854,7 @@ export class AgentLoop extends AgentEventEmitter {
          const successfulCmds = preparedCalls
            .filter(p => p.call.name === "bash")
            .map(p => (p.call.arguments as any).cmd || (p.call.arguments as any).command);
-         
+
          if (successfulCmds.length > 0) {
            let lastUserMsg = "";
            for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -828,8 +864,8 @@ export class AgentLoop extends AgentEventEmitter {
              }
            }
            this.memoryStore.addPractice(
-             lastUserMsg.slice(0, 100), 
-             successfulCmds, 
+             lastUserMsg.slice(0, 100),
+             successfulCmds,
              preparedCalls.map(p => (p.call.arguments as any).path || (p.call.arguments as any).file).filter(Boolean)
            );
            console.error(`✨ [认知] 已将 ${successfulCmds.length} 条成功指令蒸馏为最佳实践`);
@@ -1043,7 +1079,7 @@ export class AgentLoop extends AgentEventEmitter {
   private async reflectiveThink(tc: ToolCall): Promise<{ decision: "proceed" | "ask" | "block" | "warn", reason: string }> {
     const { buildReflectionPrompt } = await import("./pipeline/sections.js");
     const prompt = buildReflectionPrompt(tc.name, tc.arguments);
-    
+
     try {
       // 执行一次极简的内部调用进行风险评估
       const resp = await this.chat(prompt, { max_tokens: 200, temperature: 0 });
@@ -1209,6 +1245,45 @@ export class AgentLoop extends AgentEventEmitter {
     } catch {
       // 忽略验证错误
     }
+  }
+
+  async persistVerificationCommand(): Promise<void> {
+    const workspaceDir = this.getWorkspaceDir();
+    const filePath = path.join(workspaceDir, ".qling-verify.json");
+    try {
+      if (this.verificationCommand) {
+        await fs.writeFile(filePath, JSON.stringify({ verificationCommand: this.verificationCommand }, null, 2), "utf-8");
+      } else {
+        if (existsSync(filePath)) {
+          await fs.unlink(filePath);
+        }
+      }
+    } catch (err) {
+      console.error("[AgentLoop] Failed to persist verification command: " + (err as Error).message);
+    }
+  }
+
+  async loadVerificationCommand(): Promise<void> {
+    const workspaceDir = this.getWorkspaceDir();
+    const filePath = path.join(workspaceDir, ".qling-verify.json");
+    if (existsSync(filePath)) {
+      try {
+        const content = await fs.readFile(filePath, "utf-8");
+        const data = JSON.parse(content);
+        this.verificationCommand = data.verificationCommand ?? null;
+      } catch (err) {
+        console.error("[AgentLoop] Failed to load verification command: " + (err as Error).message);
+      }
+    }
+  }
+
+  runVerificationCommand(cmd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      exec(cmd, { cwd: this.getWorkspaceDir() }, (error, stdout, stderr) => {
+        const code = error ? (error.code ?? 1) : 0;
+        resolve({ code, stdout, stderr });
+      });
+    });
   }
 
   private async checkAutoDream(): Promise<void> {

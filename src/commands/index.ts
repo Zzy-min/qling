@@ -31,7 +31,7 @@ import { mcpCommand } from "./mcp.js";
 import { hooksCommand } from "./hooks.js";
 import { agentsCommand } from "./agents.js";
 import { missionCommand } from "./mission.js";
-
+import { verifyCommand } from "./verify.js";
 import { SlashCommandContext, withDefaultWriters } from "./runtime.js";
 import { formatFocusedHelp } from "../help-topics.js";
 import {
@@ -80,7 +80,7 @@ export const COMMANDS: SlashCommand[] = [
   exportsCommand,
   memoryCommand,
   repomapCommand,
-
+  verifyCommand,
   dreamCommand,
   distillCommand,
   storageCommand,

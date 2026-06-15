@@ -266,6 +266,28 @@ const TOPICS: HelpTopic[] = [
     cliExamples: ["{bin} recap latest 5", "{bin} 回顾 5"],
     boundary: "只读取本地已保存会话快照；不调用模型、不联网。",
   },
+  {
+    id: "repomap",
+    title: "扫描代码地图",
+    summary: "扫描项目文件并生成符号地图（Repo Map）。",
+    aliases: ["repomap", "/repomap", "代码地图", "/代码地图"],
+    slashUsage: "/repomap [path] [limit]",
+    cliUsage: "仅 slash：在当前交互会话中使用",
+    slashExamples: ["/repomap", "/repomap src/ 20"],
+    cliExamples: [],
+    boundary: "读取本地源文件并提取符号定义写入 sqlite 索引，不联网、不调用模型。",
+  },
+  {
+    id: "verify",
+    title: "自动验证与自愈",
+    summary: "配置与运行构建/测试验证与自动自愈。",
+    aliases: ["verify", "/verify", "验证", "/验证"],
+    slashUsage: "/verify status | set <command> | clear | run",
+    cliUsage: "仅 slash：在当前交互会话中使用",
+    slashExamples: ["/verify status", "/verify set \"npm run build\"", "/verify run"],
+    cliExamples: [],
+    boundary: "在本地子进程运行配置的验证命令；自愈最多运行 3 轮，不联网。",
+  },
 ];
 
 function normalizeTopicName(value: string): string {

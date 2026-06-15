@@ -47,6 +47,8 @@ export const HELP_LINES = [
   "/dream [count], /沉淀    - 从当前会话沉淀本地记忆",
   "/distill [count], /蒸馏  - 查看本地蒸馏实践摘要",
   "/storage, /存储         - 查看本地数据存储占用",
+  "/repomap [path] [limit] - 扫描项目文件并生成符号地图（Repo Map）",
+  "/verify status|set <cmd>|clear|run - 配置与运行构建/测试验证与自动自愈",
   "/mcp, /外部工具         - 查看本地 MCP server 配置摘要",
   "/hooks, /钩子           - 查看本地 hooks/guard 配置摘要",
   "/doctor, /诊断          - 运行本地稳定性与数据留存诊断",
