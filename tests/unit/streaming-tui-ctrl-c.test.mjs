@@ -330,7 +330,7 @@ test("stream ui cursor returns to input content row instead of top border", asyn
   });
 });
 
-test("stream ui delete on empty input redraws only the input frame", async () => {
+test("stream ui delete on empty input keeps cursor scoped without redrawing", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
 
@@ -340,7 +340,7 @@ test("stream ui delete on empty input redraws only the input frame", async () =>
 
     assert.equal(ui.input.value, "");
     assert.deepEqual(submitted, []);
-    assert.match(output, /\x1b\[1A\r\x1b\[J/);
+    assert.doesNotMatch(output, /\x1b\[1A\r\x1b\[J/);
     assert.doesNotMatch(output, /\x1b\[2A\r\x1b\[J/);
   });
 });
@@ -806,7 +806,7 @@ test("stream ui dispatches delete escape sequence", async () => {
 });
 
 test("stream ui bracketed paste inserts multiline text without submitting", async () => {
-  await withCapturedStdout(async () => {
+  await withCapturedStdout(async (getOutput) => {
     await withCapturedStdinDataHandler(async (getDataHandler) => {
       const { ui, submitted } = createUi();
 
@@ -820,6 +820,10 @@ test("stream ui bracketed paste inserts multiline text without submitting", asyn
       assert.equal(ui.input.value, "first line\nsecond line");
       assert.equal(ui.input.cursorPos, "first line\nsecond line".length);
       assert.deepEqual(submitted, []);
+      const output = stripAnsi(getOutput());
+      assert.match(output, /\[Pasted: 2 lines\]/);
+      assert.doesNotMatch(output, /│ › first line/);
+      assert.doesNotMatch(output, /│   second line/);
 
       ui.running = false;
     });
@@ -846,6 +850,74 @@ test("stream ui bracketed paste submits only after explicit enter", async () => 
 
       ui.running = false;
     });
+  });
+});
+
+test("stream ui compact pasted draft keeps cursor inside input row", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui } = createUi();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[200~alpha\nbeta\ncharlie\x1b[201~");
+
+      const output = getOutput();
+      assert.match(stripAnsi(output), /\[Pasted: 3 lines\]/);
+      assert.match(output, /\x1b\[2A\x1b\[\d+G/);
+      assert.doesNotMatch(output, /\x1b\[3A\x1b\[\d+G/);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui large multiline paste renders line count chip instead of pasted body", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      const pasted = Array.from({ length: 54 }, (_, index) => {
+        return `line ${index + 1} ${"x".repeat(120)}`;
+      }).join("\n");
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler(`\x1b[200~${pasted}\x1b[201~`);
+
+      const output = stripAnsi(getOutput());
+      assert.equal(Buffer.byteLength(pasted, "utf8") > 5 * 1024, true);
+      assert.equal(ui.input.value, pasted);
+      assert.deepEqual(submitted, []);
+      assert.match(output, /\[Pasted: 54 lines\]/);
+      assert.doesNotMatch(output, /│ › line 1/);
+      assert.doesNotMatch(output, /│   line 54/);
+
+      dataHandler("\r");
+      assert.deepEqual(submitted, [pasted]);
+
+      ui.running = false;
+    });
+  });
+});
+
+test("stream ui empty ctrl+c feedback does not clear above the input frame", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+
+    ui.printInputBar();
+    ui.handleCtrlC();
+    const output = getOutput();
+
+    assert.deepEqual(submitted, []);
+    assert.doesNotMatch(output, /\x1b\[J/);
+    assert.match(stripAnsi(output), /再次 Ctrl\+C 退出/);
+    assert.match(stripAnsi(output), /输入任务，或按 \/ 打开命令面板/);
   });
 });
 
@@ -891,7 +963,7 @@ test("stream ui ctrl+r search miss prints local feedback and keeps draft", async
 });
 
 test("stream ui non-bracketed paste of multiline text does not submit and handles newlines", async () => {
-  await withCapturedStdout(async () => {
+  await withCapturedStdout(async (getOutput) => {
     await withCapturedStdinDataHandler(async (getDataHandler) => {
       const { ui, submitted } = createUi();
       ui.running = true;
@@ -902,14 +974,18 @@ test("stream ui non-bracketed paste of multiline text does not submit and handle
 
       assert.equal(ui.input.value, "line 1\nline 2\nline 3");
       assert.deepEqual(submitted, []);
+      const output = stripAnsi(getOutput());
+      assert.match(output, /\[Pasted: 3 lines\]/);
+      assert.doesNotMatch(output, /│ › line 1/);
+      assert.doesNotMatch(output, /│   line 2/);
       ui.running = false;
     });
   });
 });
 
-test("stream ui visually wraps inputs and shows scroll window top and bottom indicators when exceeding 5 lines", async () => {
+test("stream ui compact draft summarizes manual multiline input without losing submitted content", async () => {
   await withCapturedStdout(async (getOutput) => {
-    const { ui } = createUi();
+    const { ui, submitted } = createUi();
     const longText = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7";
     for (const ch of longText) {
       if (ch === "\n") ui.input.insertNewline();
@@ -920,16 +996,53 @@ test("stream ui visually wraps inputs and shows scroll window top and bottom ind
     ui.writeInputValue();
     const output = getOutput();
 
-    assert.match(output, /▼ 更多内容/);
-    assert.match(output, /line 1/);
-    assert.match(output, /line 5/);
-    assert.doesNotMatch(output.split("▼ 更多内容").at(-1), /line 6/);
+    assert.match(stripAnsi(output), /\[Draft: 7 lines, \d+ B\]/);
+    assert.doesNotMatch(stripAnsi(output), /▼ 更多内容/);
+    assert.doesNotMatch(stripAnsi(output), /│ › line 1/);
+    assert.doesNotMatch(stripAnsi(output), /│   line 5/);
 
     ui.input.moveEnd();
-    ui.writeInputValue();
-    const output2 = getOutput();
-    assert.match(output2, /▲ 更多内容/);
-    assert.match(output2, /line 7/);
-    assert.doesNotMatch(output2.split("▲ 更多内容").at(-1), /line 1/);
+    ui.handleEnter();
+    assert.deepEqual(submitted, [longText]);
+  });
+});
+
+test("stream ui repeated delete on empty input keeps redraw scoped to one frame", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui, submitted } = createUi();
+
+    ui.printInputBar();
+    ui.handleDelete();
+    ui.handleDelete();
+    ui.handleDelete();
+    const output = getOutput();
+
+    assert.equal(ui.input.value, "");
+    assert.deepEqual(submitted, []);
+    assert.doesNotMatch(output, /\x1b\[2J/);
+    assert.doesNotMatch(output, /\x1b\[[3-9]\d*A/);
+    assert.doesNotMatch(output, /\x1b\[1A\r\x1b\[J/);
+  });
+});
+
+test("stream ui ctrl+z restores compact draft metadata", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui } = createUi();
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[200~alpha\nbeta\x1b[201~");
+      ui.handleCtrlC();
+      ui.handleCtrlZ();
+
+      assert.equal(ui.input.value, "alpha\nbeta");
+      assert.match(stripAnsi(getOutput()), /\[Pasted: 2 lines\]/);
+
+      ui.running = false;
+    });
   });
 });

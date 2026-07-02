@@ -132,6 +132,8 @@ export type AgentEvent =
   | { type: "state"; from: string; to: string }
   | { type: "done"; durationMs: number };
 
+type DraftDisplaySource = "typed" | "pasted";
+
 export class StreamUI {
   private model: string;
   private tools: number;
@@ -141,6 +143,7 @@ export class StreamUI {
   private inputCallback: ((cmd: string) => Promise<void>) | null = null;
   private currentToolRunning: boolean = false;
   private dataHandler: ((chunk: string) => void) | null = null;
+  private resizeHandler: (() => void) | null = null;
   private statusLine: string | null = null;
   private statusLineEnabled = true;
   private progressTimer: NodeJS.Timeout | null = null;
@@ -148,6 +151,8 @@ export class StreamUI {
   private progressLabel = "agent";
   private lastEmptyCtrlCAt = 0;
   private lastClearedDraft: string | null = null;
+  private lastClearedDraftDisplaySource: DraftDisplaySource | null = null;
+  private draftDisplaySource: DraftDisplaySource | null = null;
   private expandLongToolOutput = false;
   private lastInputContentLineCount = 1;
   private lastInputCursorLineIndex = 0;
@@ -181,6 +186,10 @@ export class StreamUI {
     if (this.dataHandler) {
       process.stdin.off("data", this.dataHandler);
       this.dataHandler = null;
+    }
+    if (this.resizeHandler) {
+      process.stdout.off("resize", this.resizeHandler);
+      this.resizeHandler = null;
     }
     if (typeof process.stdin.setRawMode === "function") {
       process.stdin.setRawMode(false);
@@ -278,6 +287,13 @@ export class StreamUI {
     this.syncCursor();
   }
 
+  private appendFeedbackAndRedraw(message: string, usePlaceholder = false): void {
+    this.moveAfterInputFrame();
+    process.stdout.write("\n" + message + "\n");
+    this.writeInputValue(usePlaceholder);
+    this.syncCursor();
+  }
+
   private wrapInputVisualLines(value: string, width: number, cursor: number): {
     lines: string[];
     cursorRow: number;
@@ -325,6 +341,48 @@ export class StreamUI {
     return { lines, cursorRow, cursorCol };
   }
 
+  private formatByteSize(value: string): string {
+    const bytes = Buffer.byteLength(value, "utf8");
+    if (bytes < 1024) return `${bytes} B`;
+    const kb = bytes / 1024;
+    if (kb < 10) return `${kb.toFixed(1)} KB`;
+    return `${Math.round(kb)} KB`;
+  }
+
+  private countInputLines(value: string): number {
+    if (!value) return 0;
+    return value.split("\n").length;
+  }
+
+  private shouldUseCompactDraft(value: string, wrappedLineCount: number, isPlaceholder: boolean): boolean {
+    return !isPlaceholder && Boolean(value) && (value.includes("\n") || wrappedLineCount > 1);
+  }
+
+  private formatDraftChip(value: string): string {
+    const source = this.draftDisplaySource === "pasted" ? "pasted" : "typed";
+    const size = this.formatByteSize(value);
+    if (source === "pasted") {
+      const lines = this.countInputLines(value);
+      if (lines > 1) {
+        return `[Pasted: ${lines} lines]`;
+      }
+      return `[Pasted: ${size}]`;
+    }
+    return `[Draft: ${this.countInputLines(value)} lines, ${size}]`;
+  }
+
+  private resetDraftDisplaySourceIfEmpty(): void {
+    if (!this.input.value) {
+      this.draftDisplaySource = null;
+    }
+  }
+
+  private markPastedDraft(): void {
+    if (this.input.value) {
+      this.draftDisplaySource = "pasted";
+    }
+  }
+
   private formatInputFrameBorder(left: string, right: string, label: string, totalWidth: number): string {
     if (!label) {
       return left + "─".repeat(totalWidth - 2) + right;
@@ -344,7 +402,10 @@ export class StreamUI {
     const contentWidth = this.inputFrameContentWidth();
     const wrapWidth = contentWidth - 2;
     const wrapped = this.wrapInputVisualLines(this.input.value, wrapWidth, this.input.cursorPos);
-    const cursor = this.inputCursorPosition(wrapped);
+    const compactDraft = this.shouldUseCompactDraft(this.input.value, wrapped.lines.length, false);
+    const cursor = compactDraft
+      ? { lineIndex: 2, columnText: " ".repeat(Math.min(contentWidth - 1, 2 + sw(this.formatDraftChip(this.input.value)))) }
+      : this.inputCursorPosition(wrapped);
 
     if (this.inputCursorAnchor === "bottom") {
       const rowsUp = Math.max(0, this.lastInputContentLineCount + this.lastInputHintLineCount - cursor.lineIndex);
@@ -419,21 +480,28 @@ export class StreamUI {
 
     const wrapWidth = contentWidth - 2;
     const wrapped = this.wrapInputVisualLines(valueToWrap, wrapWidth, isPlaceholder ? 0 : this.input.cursorPos);
+    const compactDraft = this.shouldUseCompactDraft(this.input.value, wrapped.lines.length, isPlaceholder);
 
-    const visibleCount = Math.min(5, wrapped.lines.length);
+    const visibleCount = compactDraft ? 1 : Math.min(5, wrapped.lines.length);
     if (wrapped.cursorRow < this.inputStartRow) {
       this.inputStartRow = wrapped.cursorRow;
     } else if (wrapped.cursorRow >= this.inputStartRow + 5) {
       this.inputStartRow = wrapped.cursorRow - 4;
     }
-    this.inputStartRow = Math.max(0, Math.min(this.inputStartRow, wrapped.lines.length - visibleCount));
+    if (compactDraft) {
+      this.inputStartRow = 0;
+    } else {
+      this.inputStartRow = Math.max(0, Math.min(this.inputStartRow, wrapped.lines.length - visibleCount));
+    }
 
-    const visibleLines = wrapped.lines.slice(this.inputStartRow, this.inputStartRow + visibleCount);
+    const visibleLines = compactDraft
+      ? [this.formatDraftChip(this.input.value)]
+      : wrapped.lines.slice(this.inputStartRow, this.inputStartRow + visibleCount);
 
-    const topLabel = this.inputStartRow > 0
+    const topLabel = !compactDraft && this.inputStartRow > 0
       ? "▲ 更多内容 (当前第 " + (wrapped.cursorRow + 1) + " 行)"
       : "";
-    const bottomLabel = this.inputStartRow + visibleCount < wrapped.lines.length
+    const bottomLabel = !compactDraft && this.inputStartRow + visibleCount < wrapped.lines.length
       ? "▼ 更多内容 (共 " + wrapped.lines.length + " 行)"
       : "";
 
@@ -445,7 +513,7 @@ export class StreamUI {
 
     for (let i = 0; i < visibleLines.length; i++) {
       const absoluteRow = this.inputStartRow + i;
-      const prefix = absoluteRow === 0 ? "› " : "  ";
+      const prefix = compactDraft || absoluteRow === 0 ? "› " : "  ";
       const textLine = visibleLines[i] ?? "";
       const contentText = textLine;
       const rendered = truncateVisible(prefix + contentText, contentWidth);
@@ -455,7 +523,7 @@ export class StreamUI {
     process.stdout.write("\n" + S.p(bottomBorder));
 
     let extraHint = "";
-    if (this.input.value.includes("\n") || wrapped.lines.length > 1) {
+    if (compactDraft) {
       extraHint = S.y("多行草稿：Enter 发送全部内容");
     }
     if (extraHint) {
@@ -470,7 +538,9 @@ export class StreamUI {
     this.lastInputContentLineCount = 1 + visibleLines.length + 1;
     this.lastInputHintLineCount = hints.length + (extraHint ? 1 : 0);
 
-    const cursor = this.inputCursorPosition(wrapped);
+    const cursor = compactDraft
+      ? { lineIndex: 2, columnText: " ".repeat(Math.min(contentWidth - 1, 2 + sw(this.formatDraftChip(this.input.value)))) }
+      : this.inputCursorPosition(wrapped);
     this.lastInputCursorLineIndex = cursor.lineIndex;
 
     this.inputCursorAnchor = "bottom";
@@ -501,6 +571,7 @@ export class StreamUI {
     if (!completion) return false;
     this.input.value = completion.name + " ";
     this.input.cursorPos = this.input.value.length;
+    this.draftDisplaySource = null;
     this.slashCompletionSelectedIndex = 0;
     this.lastEmptyCtrlCAt = 0;
     this.redrawInput();
@@ -540,6 +611,13 @@ export class StreamUI {
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
 
+    this.resizeHandler = () => {
+      if (this.running) {
+        this.redrawInput();
+      }
+    };
+    process.stdout.on("resize", this.resizeHandler);
+
     let partial = "";
     let bracketedPaste = false;
     let pasteSawCarriageReturn = false;
@@ -570,6 +648,7 @@ export class StreamUI {
             this.input.insertChar(ch);
           }
         }
+        this.markPastedDraft();
         this.redrawInput();
         return;
       }
@@ -589,6 +668,7 @@ export class StreamUI {
           partial = "";
           bracketedPaste = false;
           pasteSawCarriageReturn = false;
+          this.markPastedDraft();
           this.redrawInput();
         } else if (seq === "\x1b[" || /^\x1b\[\d*(?:;\d*)?$/.test(seq)) {
           partial = seq;
@@ -708,6 +788,7 @@ export class StreamUI {
     this.moveAfterInputFrame();
     process.stdout.write("\n");
     this.input.submit();
+    this.draftDisplaySource = null;
     if (this.inputCallback) {
       this.inputCallback(cmd);
     }
@@ -727,11 +808,7 @@ export class StreamUI {
       return;
     }
 
-    this.backToPrompt();
-    process.stdout.write(S.y("Tab agents 仅在空输入时打开；当前草稿已保留，补全未启用"));
-    process.stdout.write("\n");
-    this.writeInputValue();
-    this.syncCursor();
+    this.appendFeedbackAndRedraw(S.y("Tab agents 仅在空输入时打开；当前草稿已保留，补全未启用"));
   }
 
   private handleCtrlC(): void {
@@ -750,41 +827,27 @@ export class StreamUI {
         return;
       }
 
-      this.backToPrompt();
-      process.stdout.write(S.r("^C") + " " + DIM("再次 Ctrl+C 退出，或输入 exit"));
-      process.stdout.write("\n");
-      this.writeInputValue();
-      this.syncCursor();
+      this.appendFeedbackAndRedraw(S.r("^C") + " " + DIM("再次 Ctrl+C 退出，或输入 exit"), true);
       return;
     }
 
     this.lastEmptyCtrlCAt = 0;
     this.lastClearedDraft = this.input.value;
+    this.lastClearedDraftDisplaySource = this.draftDisplaySource;
     this.input.clear();
+    this.draftDisplaySource = null;
     this.inputStartRow = 0;
-    this.backToPrompt();
-    process.stdout.write(S.r("^C") + " " + DIM("草稿已清空，Ctrl+Z 恢复"));
-    process.stdout.write("\n");
-    this.writeInputValue();
-    this.syncCursor();
+    this.appendFeedbackAndRedraw(S.r("^C") + " " + DIM("草稿已清空，Ctrl+Z 恢复"), true);
   }
 
   private handleCtrlZ(): void {
     if (this.input.value) {
-      this.backToPrompt();
-      process.stdout.write(S.y("当前输入不会被覆盖，草稿未恢复"));
-      process.stdout.write("\n");
-      this.writeInputValue();
-      this.syncCursor();
+      this.appendFeedbackAndRedraw(S.y("当前输入不会被覆盖，草稿未恢复"));
       return;
     }
 
     if (!this.lastClearedDraft) {
-      this.backToPrompt();
-      process.stdout.write(S.y("没有可恢复的草稿"));
-      process.stdout.write("\n");
-      this.writeInputValue();
-      this.syncCursor();
+      this.appendFeedbackAndRedraw(S.y("没有可恢复的草稿"), true);
       return;
     }
 
@@ -795,16 +858,21 @@ export class StreamUI {
         this.input.insertChar(ch);
       }
     }
+    this.draftDisplaySource = this.lastClearedDraftDisplaySource;
     this.lastClearedDraft = null;
-    this.backToPrompt();
-    process.stdout.write(S.g("已恢复草稿"));
-    process.stdout.write("\n");
-    this.writeInputValue();
-    this.syncCursor();
+    this.lastClearedDraftDisplaySource = null;
+    this.appendFeedbackAndRedraw(S.g("已恢复草稿"));
   }
 
   private handleBackspace(): void {
+    const beforeValue = this.input.value;
+    const beforeCursor = this.input.cursorPos;
     this.input.backspace();
+    if (this.input.value === beforeValue && this.input.cursorPos === beforeCursor) {
+      this.syncCursor();
+      return;
+    }
+    this.resetDraftDisplaySourceIfEmpty();
     this.slashCompletionSelectedIndex = 0;
     this.redrawInput();
   }
@@ -821,26 +889,37 @@ export class StreamUI {
 
   private handleCtrlU(): void {
     this.input.deleteBeforeCursor();
+    this.resetDraftDisplaySourceIfEmpty();
     this.redrawInput();
   }
 
   private handleCtrlK(): void {
     this.input.deleteAfterCursor();
+    this.resetDraftDisplaySourceIfEmpty();
     this.redrawInput();
   }
 
   private handleCtrlW(): void {
     this.input.deleteWordBeforeCursor();
+    this.resetDraftDisplaySourceIfEmpty();
     this.redrawInput();
   }
 
   private handleAltD(): void {
     this.input.deleteWordAfterCursor();
+    this.resetDraftDisplaySourceIfEmpty();
     this.redrawInput();
   }
 
   private handleDelete(): void {
+    const beforeValue = this.input.value;
+    const beforeCursor = this.input.cursorPos;
     this.input.deleteAfterCursorChar();
+    if (this.input.value === beforeValue && this.input.cursorPos === beforeCursor) {
+      this.syncCursor();
+      return;
+    }
+    this.resetDraftDisplaySourceIfEmpty();
     this.redrawInput();
   }
 
@@ -853,21 +932,13 @@ export class StreamUI {
 
   private handleCtrlO(): void {
     this.expandLongToolOutput = !this.expandLongToolOutput;
-    this.backToPrompt();
     const state = this.expandLongToolOutput ? "展开后续工具输出" : "折叠后续工具输出";
-    process.stdout.write(S.s("长输出：") + DIM(state));
-    process.stdout.write("\n");
-    this.writeInputValue();
-    this.syncCursor();
+    this.appendFeedbackAndRedraw(S.s("长输出：") + DIM(state), !this.input.value);
   }
 
   private handleCtrlD(): void {
     if (this.input.value) {
-      this.backToPrompt();
-      process.stdout.write(S.y("非空输入不会退出，草稿已保留"));
-      process.stdout.write("\n");
-      this.writeInputValue();
-      this.syncCursor();
+      this.appendFeedbackAndRedraw(S.y("非空输入不会退出，草稿已保留"));
       return;
     }
     this.lastEmptyCtrlCAt = 0;
@@ -879,25 +950,24 @@ export class StreamUI {
   private handleHistoryUp(): void {
     if (this.moveSlashCompletionSelection(-1)) return;
     this.input.historyUp();
+    this.draftDisplaySource = this.input.value ? "typed" : null;
     this.redrawInput();
   }
 
   private handleHistoryDown(): void {
     if (this.moveSlashCompletionSelection(1)) return;
     this.input.historyDown();
+    this.draftDisplaySource = this.input.value ? "typed" : null;
     this.redrawInput();
   }
 
   private handleHistorySearch(): void {
     const matched = this.input.searchHistory();
     if (!matched) {
-      this.backToPrompt();
-      process.stdout.write(S.y("无匹配历史"));
-      process.stdout.write("\n");
-      this.writeInputValue();
-      this.syncCursor();
+      this.appendFeedbackAndRedraw(S.y("无匹配历史"));
       return;
     }
+    this.draftDisplaySource = this.input.value ? "typed" : null;
     this.redrawInput();
   }
 
@@ -943,12 +1013,18 @@ export class StreamUI {
 
   private handleChar(ch: string): void {
     this.input.insertChar(ch);
+    if (this.draftDisplaySource !== "pasted") {
+      this.draftDisplaySource = "typed";
+    }
     this.slashCompletionSelectedIndex = 0;
     this.redrawInput();
   }
 
   private handleNewline(): void {
     this.input.insertNewline();
+    if (this.draftDisplaySource !== "pasted") {
+      this.draftDisplaySource = "typed";
+    }
     this.redrawInput();
   }
 

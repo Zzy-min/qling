@@ -286,9 +286,17 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
 
     // 1. 处理代码块开始/结束
     if (line.trim().startsWith("```")) {
-      inCodeBlock = !inCodeBlock;
-      const border = "─".repeat(Math.max(10, width - 4));
-      resultLines.push(DIM(inCodeBlock ? "  ┌" + border : "  └" + border));
+      if (!inCodeBlock) {
+        // starting, capture lang
+        const lang = line.trim().slice(3).trim() || "code";
+        const border = "─".repeat(Math.max(10, width - 4));
+        resultLines.push(DIM(`  ┌${border} [${lang}]`));
+        inCodeBlock = true;
+      } else {
+        const border = "─".repeat(Math.max(10, width - 4));
+        resultLines.push(DIM("  └" + border));
+        inCodeBlock = false;
+      }
       i++;
       continue;
     }
