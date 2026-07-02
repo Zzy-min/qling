@@ -73,13 +73,20 @@ qling bootstrap --profile dev
 
 ### 最小配置
 
-把 API key 写到 `.env`（项目根或 `~/.qling/.env`）：
+**强烈建议**：永远不要把 API key 直接写到可被同步、备份或分享的运行时文件（包括项目根 `.env` 或 `~/.qling/.env`）。
 
+推荐做法：
+- 使用系统用户环境变量（Windows: 设置 → 环境变量，或 PowerShell `$env:DEEPSEEK_API_KEY=...` 并持久化）。
+- 或运行 `qling setup` 由交互引导配置。
+
+如果必须使用文件，仅在**项目本地** `.env` 且已加入 `.gitignore`。运行时 `~/.qling/.env` 主要用于非敏感 provider/model 配置。
+
+示例（仅演示，实际请勿提交）：
 ```bash
-DEEPSEEK_API_KEY=sk-your-deepseek-api-key-here
 QLING_LLM_PROVIDER=deepseek
 QLING_LLM_ENDPOINT=https://api.deepseek.com
 QLING_LLM_MODEL=deepseek-chat
+# API key 请通过系统环境变量或 qling setup 提供
 ```
 
 或者直接走交互式向导：
@@ -91,6 +98,8 @@ qling setup
 `qling setup` 默认走快速路径：Provider、Model、API key。Dashboard、语义记忆、动态技能发现等能力在 Advanced 分支中显式开启。
 
 轻灵支持任意 OpenAI 兼容 provider；通过 `QLING_LLM_ENDPOINT` / `QLING_LLM_MODEL` + 对应 API key 环境变量接入。
+
+> 使用 `/doctor`、`/privacy`、`bootstrap` 时会主动检测运行时 .env 中的明文密钥变量（仅报告名称和路径）。
 
 ### 跑通 4 个命令
 

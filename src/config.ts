@@ -853,3 +853,71 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
   }
   return out as T;
 }
+
+/* ===== Runtime Secret Scanner (20260617) ===== */
+
+const SECRET_VAR_NAME_REGEXES = [
+  /API_KEY$/i,
+  /^API_KEY$/i,
+  /TOKEN$/i,
+  /SECRET$/i,
+  /AUTH_TOKEN$/i,
+  /ACCESS_KEY$/i,
+  /PRIVATE_KEY$/i,
+];
+
+export interface EnvSecretHit {
+  file: string;
+  varName: string;
+}
+
+/**
+ * Pure scanner for a single .env file content.
+ * Returns only varName + file. NEVER includes or logs the secret value.
+ */
+export function scanDotEnvContent(filePath: string, content: string): EnvSecretHit[] {
+  const hits: EnvSecretHit[] = [];
+  const lines = content.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const eqIdx = line.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const varName = line.slice(0, eqIdx).trim();
+    const value = line.slice(eqIdx + 1).trim();
+    if (!value) continue;
+
+    const looksLikeSecret = SECRET_VAR_NAME_REGEXES.some((re) => re.test(varName));
+    if (looksLikeSecret) {
+      hits.push({ file: filePath, varName });
+    }
+  }
+  return hits;
+}
+
+/**
+ * Scan common runtime locations for plaintext secrets in .env files.
+ * Locations: ~/.qling/.env and process.cwd()/.env
+ * Only reports hits; never emits values.
+ */
+export async function scanRuntimeDotEnvSecrets(stateDir?: string): Promise<EnvSecretHit[]> {
+  const { readFile } = await import("fs/promises");
+  const hits: EnvSecretHit[] = [];
+  const home = os.homedir();
+  const candidates: string[] = [
+    path.join(stateDir || path.join(home, ".qling"), ".env"),
+    path.join(process.cwd(), ".env"),
+  ];
+
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) {
+        const content = await readFile(p, "utf8");
+        hits.push(...scanDotEnvContent(p, content));
+      }
+    } catch {
+      // best-effort scanner, ignore unreadable files
+    }
+  }
+  return hits;
+}

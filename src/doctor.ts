@@ -5,7 +5,7 @@ import type { SlashCommandContext } from "./commands/runtime.js";
 import { resolveGitBranch } from "./statusline.js";
 import { sanitizeEndpoint } from "./config-report.js";
 import { buildLocalMcpReport } from "./mcp-report.js";
-import { guardConfigFromEnv } from "./config.js";
+import { guardConfigFromEnv, scanRuntimeDotEnvSecrets, type EnvSecretHit } from "./config.js";
 import { buildLocalHooksReport } from "./hooks-report.js";
 
 export type DoctorStatus = "pass" | "warn" | "fail";
@@ -85,6 +85,33 @@ function buildConfigCheck(env: DoctorOptions["env"]): DoctorCheck {
   };
 }
 
+async function buildSecretsCheck(): Promise<DoctorCheck> {
+  const hits: EnvSecretHit[] = await scanRuntimeDotEnvSecrets();
+  if (hits.length === 0) {
+    return {
+      id: "secrets",
+      label: "secrets",
+      status: "pass",
+      detail: "未在 ~/.qling/.env 或项目 .env 发现明文密钥变量",
+    };
+  }
+  // Group by file, list only var names
+  const byFile = new Map<string, string[]>();
+  for (const h of hits) {
+    if (!byFile.has(h.file)) byFile.set(h.file, []);
+    byFile.get(h.file)!.push(h.varName);
+  }
+  const details = Array.from(byFile.entries())
+    .map(([f, vars]) => `${f} → ${vars.join(", ")}`)
+    .join(" | ");
+  return {
+    id: "secrets",
+    label: "secrets",
+    status: "warn",
+    detail: `检测到明文密钥变量（仅列出变量名）: ${details}`,
+  };
+}
+
 function buildRecommendations(checks: DoctorCheck[]): string[] {
   const recommendations: string[] = [];
   const byId = new Map(checks.map((check) => [check.id, check]));
@@ -106,6 +133,13 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
 
   if (byId.get("git")?.status === "warn") {
     recommendations.push("- 在 Git 仓库内运行可获得更完整的分支和工作区诊断。");
+  }
+
+  if (byId.get("secrets")?.status === "warn") {
+    recommendations.push("- 检测到运行时 .env 中的明文 API key/secret。");
+    recommendations.push("  立即在 Provider 控制台轮换密钥。");
+    recommendations.push("  将密钥迁移到系统用户环境变量（推荐）或安全的 secret store，删除 .env 中的对应行。");
+    recommendations.push("  运行 `qling doctor` 再次确认。");
   }
 
   return recommendations;
@@ -182,6 +216,7 @@ export async function buildDoctorReport(
     : env.QLING_GUARD_PERMISSIONS_DEFAULT;
   const branch = gitBranch(workspaceDir);
   const daemon = options.daemonProbe ? await options.daemonProbe() : await probeDaemon(env);
+  const secretsCheck = await buildSecretsCheck();
 
   const checks: DoctorCheck[] = [
     {
@@ -212,6 +247,7 @@ export async function buildDoctorReport(
       detail: permissionMode ? `mode=${permissionMode}` : "未显式配置权限默认策略。",
     },
     buildConfigCheck(env),
+    secretsCheck,
     buildMcpCheck(env),
     buildHooksCheck(env),
     {
@@ -247,7 +283,7 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   }
   if (report.recommendations.length > 0) {
     lines.push("");
-    lines.push("Next steps:");
+    lines.push("后续步骤：");
     lines.push(...report.recommendations);
   }
   lines.push("-----------------------------------------");

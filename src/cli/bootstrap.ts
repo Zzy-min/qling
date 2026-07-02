@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import * as readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
+import { scanDotEnvContent, scanRuntimeDotEnvSecrets } from "../config.js";
 
 export type BootstrapBrowserMode = "auto" | "with" | "none";
 export type BootstrapProfile = "minimal" | "dev";
@@ -35,6 +36,7 @@ export interface BootstrapReport {
     dynamicDiscovery: boolean;
   };
   nextSteps: string[];
+  plaintextSecretFiles: string[]; // only file paths, no values
 }
 
 function readNpmVersion(): string {
@@ -99,10 +101,19 @@ export function buildBootstrapReport(input: BootstrapReportInput): BootstrapRepo
       dynamicDiscovery: false,
     },
     nextSteps,
+    plaintextSecretFiles: [],
   };
 }
 
 export function formatBootstrapReport(report: BootstrapReport): string[] {
+  const secretNote: string[] = [];
+  if (report.plaintextSecretFiles && report.plaintextSecretFiles.length > 0) {
+    secretNote.push("");
+    secretNote.push("⚠️  检测到 .env 中包含明文密钥（仅路径）：");
+    report.plaintextSecretFiles.forEach((f) => secretNote.push(`    ${f}`));
+    secretNote.push("   请轮换密钥并迁移至系统环境变量。");
+  }
+
   return [
     "",
     "🚀 轻灵 Bootstrap（本机一键启动）",
@@ -114,6 +125,7 @@ export function formatBootstrapReport(report: BootstrapReport): string[] {
     `API key   : ${report.apiKeyConfigured ? "set(redacted)" : "missing"}`,
     `Browser   : ${report.browserMode === "with" ? "install requested" : report.browserMode === "none" ? "skipped" : "optional"}`,
     `Advanced  : dashboard=${report.advancedDefaults.dashboard} semantic=${report.advancedDefaults.semanticMemory} discovery=${report.advancedDefaults.dynamicDiscovery}`,
+    ...secretNote,
     "",
     "Next steps:",
     ...report.nextSteps.map((step) => `- ${step}`),
@@ -149,11 +161,19 @@ export async function runBootstrap(
   const stateDir = options.stateDir ?? path.join(os.homedir(), ".qling");
   await fs.mkdir(stateDir, { recursive: true });
 
-  const report = buildBootstrapReport({
+  let report = buildBootstrapReport({
     args,
     stateDir,
     npmVersion: options.npmVersion ?? readNpmVersion(),
   });
+
+  // Async secret file scan for bootstrap (best effort, names only)
+  try {
+    const hits = await scanRuntimeDotEnvSecrets(stateDir);
+    const files = Array.from(new Set(hits.map((h) => h.file)));
+    report = { ...report, plaintextSecretFiles: files };
+  } catch {}
+
   console.log(formatBootstrapReport(report).join("\n"));
   await maybeRunSetup(args, report, options.setupRunner);
   console.log((await options.doctorRunner()).join("\n"));

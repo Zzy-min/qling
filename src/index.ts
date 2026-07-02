@@ -33,7 +33,7 @@ import { MissionManager } from "./mission/manager.js";
 import { getDaemonStatus, startDaemon, stopDaemon } from "./cli/daemon-control.js";
 import { followMissionAttach, renderAgentsView, renderMissionEvents } from "./cli/mission-views.js";
 import { buildDoctorReport, formatDoctorReport } from "./doctor.js";
-import { buildLocalStorageReport, formatLocalStorageReport } from "./local-storage-report.js";
+import { storageCommand } from "./commands/storage.js";
 import { formatSessionExportIndex, listSessionExportFiles, parseSessionExportCount } from "./session-export-index.js";
 import { formatSessionListReport, listLocalSessions, parseSessionListCount } from "./session-list-report.js";
 import { createLocalSessionCheckpoint, formatLocalSessionCheckpointResult, parseLocalSessionCheckpointArgs } from "./session-checkpoint-report.js";
@@ -428,22 +428,20 @@ async function main() {
   }
 
   if (decision.mode === "storage") {
-    const report = await buildLocalStorageReport({
+    await storageCommand.execute(decision.subArgs, {
       workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
       agentLoop: {
         getWorkspaceDir: () => loaded.config.runtime.workspace_dir ?? process.cwd(),
         getRuntimeRootDir: () => loaded.config.runtime.file_state_dir,
       },
-      writeLine: () => {},
-      writeError: () => {},
-    }, {
+      writeLine: (line = "") => console.log(line),
+      writeError: (line = "") => console.error(line),
       env: {
         ...process.env,
         QLING_FILE_STATE_DIR: loaded.config.runtime.file_state_dir,
         QLING_FILE_CACHE_DIR: loaded.config.runtime.file_cache_dir,
       },
-    });
-    console.log(formatLocalStorageReport(report).join("\n"));
+    } as any);
     return;
   }
 

@@ -230,6 +230,73 @@ test("cli startup smoke: storage exits with code 0 and prints local storage repo
   }
 });
 
+test("cli startup smoke: storage clean dry-run reports candidates without deleting", () => {
+  const root = mkdtempSync(join(tmpdir(), "qling-cli-storage-clean-dry-"));
+  try {
+    mkdirSync(join(root, "sessions"), { recursive: true });
+    mkdirSync(join(root, "cache"), { recursive: true });
+    writeFileSync(join(root, "tmp_fetch.ps1"), "Write-Host temp", "utf8");
+    writeFileSync(join(root, ".env"), "DEEPSEEK_API_KEY=sk-storage-secret", "utf8");
+    writeFileSync(join(root, "sessions", "session.json"), "SECRET_STORAGE_SESSION_BODY", "utf8");
+    writeFileSync(join(root, "cache", "scratch.txt"), "cache", "utf8");
+
+    const result = spawnSync(process.execPath, [ENTRY, "storage", "clean", "--dry-run"], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        QLING_FILE_STATE_DIR: root,
+        QLING_FILE_CACHE_DIR: join(root, "cache"),
+      },
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /storage clean --dry-run/);
+    assert.match(result.stdout, /tmp_fetch\.ps1/);
+    assert.match(result.stdout, /scratch\.txt/);
+    assert.doesNotMatch(result.stdout, /SECRET_STORAGE_SESSION_BODY/);
+    assert.doesNotMatch(result.stdout, /sk-storage-secret/);
+    assert.equal(existsSync(join(root, "tmp_fetch.ps1")), true);
+    assert.equal(existsSync(join(root, "cache", "scratch.txt")), true);
+    assert.equal(existsSync(join(root, ".env")), true);
+    assert.equal(existsSync(join(root, "sessions", "session.json")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli startup smoke: storage clean yes removes only safe candidates", () => {
+  const root = mkdtempSync(join(tmpdir(), "qling-cli-storage-clean-yes-"));
+  try {
+    mkdirSync(join(root, "sessions"), { recursive: true });
+    mkdirSync(join(root, "cache"), { recursive: true });
+    writeFileSync(join(root, "tmp_fetch.py"), "print('temp')", "utf8");
+    writeFileSync(join(root, ".env"), "OPENAI_API_KEY=sk-storage-secret", "utf8");
+    writeFileSync(join(root, "sessions", "session.json"), "SECRET_STORAGE_SESSION_BODY", "utf8");
+    writeFileSync(join(root, "cache", "scratch.txt"), "cache", "utf8");
+
+    const result = spawnSync(process.execPath, [ENTRY, "storage", "clean", "--yes"], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        QLING_FILE_STATE_DIR: root,
+        QLING_FILE_CACHE_DIR: join(root, "cache"),
+      },
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /storage clean 已执行/);
+    assert.match(result.stdout, /sessions、memory、guard\/audit、\.env 未被触碰/);
+    assert.doesNotMatch(result.stdout, /SECRET_STORAGE_SESSION_BODY/);
+    assert.doesNotMatch(result.stdout, /sk-storage-secret/);
+    assert.equal(existsSync(join(root, "tmp_fetch.py")), false);
+    assert.equal(existsSync(join(root, "cache", "scratch.txt")), false);
+    assert.equal(existsSync(join(root, ".env")), true);
+    assert.equal(existsSync(join(root, "sessions", "session.json")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cli startup smoke: exports exits with code 0 and prints local export index", () => {
   const root = mkdtempSync(join(tmpdir(), "qling-cli-exports-"));
   try {

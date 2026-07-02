@@ -2,6 +2,7 @@ import { homedir } from "os";
 import { join } from "path";
 import type { SlashCommandContext } from "./commands/runtime.js";
 import { SessionRegistry } from "./session/session-registry.js";
+import { scanRuntimeDotEnvSecrets, type EnvSecretHit } from "./config.js";
 
 export interface PrivacyReport {
   workspaceDir: string;
@@ -10,6 +11,7 @@ export interface PrivacyReport {
   cacheDir: string;
   savedSessionCount: number;
   model: string;
+  plaintextSecretHits: EnvSecretHit[];
 }
 
 export interface PrivacyReportOptions {
@@ -41,6 +43,7 @@ export async function buildPrivacyReport(
   const agentLoop = context.agentLoop as any;
   const stateDir = resolveStateDir(env, agentLoop);
   const savedSessions = context.listSavedSessions ? await context.listSavedSessions() : [];
+  const hits = await scanRuntimeDotEnvSecrets(stateDir);
 
   return {
     workspaceDir: context.workspaceDir || agentLoop.getWorkspaceDir?.() || process.cwd(),
@@ -49,12 +52,14 @@ export async function buildPrivacyReport(
     cacheDir: resolveCacheDir(env, stateDir),
     savedSessionCount: Array.isArray(savedSessions) ? savedSessions.length : 0,
     model: agentLoop.getModel?.() || "unknown",
+    plaintextSecretHits: hits,
   };
 }
 
 export async function buildLocalPrivacyReport(options: LocalPrivacyReportOptions): Promise<PrivacyReport> {
   const registry = new SessionRegistry({ stateDir: options.stateDir });
   const savedSessions = await registry.list();
+  const hits = await scanRuntimeDotEnvSecrets(options.stateDir);
 
   return {
     workspaceDir: options.workspaceDir,
@@ -63,10 +68,26 @@ export async function buildLocalPrivacyReport(options: LocalPrivacyReportOptions
     cacheDir: options.cacheDir || join(options.stateDir, "cache"),
     savedSessionCount: savedSessions.length,
     model: options.model || "unknown",
+    plaintextSecretHits: hits,
   };
 }
 
 export function formatPrivacyReport(report: PrivacyReport): string[] {
+  const secretLines: string[] = [];
+  if (report.plaintextSecretHits && report.plaintextSecretHits.length > 0) {
+    const byFile = new Map<string, string[]>();
+    for (const h of report.plaintextSecretHits) {
+      if (!byFile.has(h.file)) byFile.set(h.file, []);
+      byFile.get(h.file)!.push(h.varName);
+    }
+    secretLines.push("");
+    secretLines.push("⚠️  检测到运行时明文密钥（仅显示变量名）：");
+    for (const [f, vars] of byFile.entries()) {
+      secretLines.push(`   ${f} : ${vars.join(", ")}`);
+    }
+    secretLines.push("   建议：轮换密钥 → 移至系统环境变量 → 删除 .env 中对应行 → 重新运行 /privacy 或 /doctor 确认。");
+  }
+
   return [
     "",
     "🔒 【本地数据留存】",
@@ -77,6 +98,7 @@ export function formatPrivacyReport(report: PrivacyReport): string[] {
     `Cache dir  : ${report.cacheDir}`,
     `已存快照   : ${report.savedSessionCount}`,
     `模型配置   : ${report.model}`,
+    ...secretLines,
     "-----------------------------------------",
     "本命令只读取本地状态，不上传诊断数据，也不扫描消息正文。",
     "边界说明: 模型请求仍按 provider 配置发送必要上下文；如需完全离线，需要配置本地模型/provider。",
