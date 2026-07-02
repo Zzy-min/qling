@@ -376,9 +376,15 @@ export class AgentLoop extends AgentEventEmitter {
           const { EmbeddingClient } = await import("./memory/embedding.js");
 
           const cognitiveIndex = new CognitiveIndex(this.memoryStore.getWorkspaceMemoryDir());
+          let embedEndpoint = process.env.QLING_MEMORY_SEMANTIC_ENDPOINT || this.config.endpoint;
+          if (!embedEndpoint) {
+            embedEndpoint = this.config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com/v1";
+          } else if (!/\/v1\/?$/.test(embedEndpoint)) {
+            embedEndpoint = embedEndpoint.replace(/\/$/, "") + "/v1";
+          }
           const embeddingClient = new EmbeddingClient({
             apiKey: process.env.QLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
-            endpoint: process.env.QLING_MEMORY_SEMANTIC_ENDPOINT || this.config.endpoint || (this.config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com"),
+            endpoint: embedEndpoint,
             model: process.env.QLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small",
             dimensions: Number(process.env.QLING_MEMORY_SEMANTIC_DIM) || 1536,
           });

@@ -203,8 +203,18 @@ export class PersistedMemory {
       for (let i = 0; i < entriesToIndex.length; i++) {
         this.cognitiveIndex.upsertVector(entriesToIndex[i], vectors[i]);
       }
-    } catch (err) {
-      console.error(`[PersistedMemory] Async cognitive indexing failed: ${(err as Error).message}`);
+    } catch (err: any) {
+      const msg = err.message || String(err);
+      if (msg.includes("404")) {
+        if (!(this as any)._semanticWarned404) {
+          console.warn(`[Memory] ⚠️ 当前提供商不支持 Embedding 接口 (404)，已禁用语义索引（降级为关键词+实践检索）。请为语义记忆配置支持 embeddings 的 provider（如 OpenAI）或设置 QLING_MEMORY_SEMANTIC_ENDPOINT / _MODEL。`);
+          (this as any)._semanticWarned404 = true;
+          // 禁用后续索引
+          this.embeddingClient = null;
+        }
+      } else {
+        console.error(`[PersistedMemory] Async cognitive indexing failed: ${msg}`);
+      }
     }
   }
 
@@ -312,9 +322,14 @@ export class PersistedMemory {
     const batchSize = 10;
     for (let i = 0; i < this.entries.length; i += batchSize) {
       const batch = this.entries.slice(i, i + batchSize);
-      const vectors = await this.embeddingClient.getEmbeddings(batch.map(e => e.content));
-      for (let j = 0; j < batch.length; j++) {
-        this.cognitiveIndex.upsertVector(batch[j], vectors[j]);
+      try {
+        const vectors = await this.embeddingClient.getEmbeddings(batch.map(e => e.content));
+        for (let j = 0; j < batch.length; j++) {
+          this.cognitiveIndex.upsertVector(batch[j], vectors[j]);
+        }
+      } catch (err: any) {
+        console.error(`[PersistedMemory] rebuildSemanticIndex batch failed: ${err.message}`);
+        break; // stop on failure
       }
     }
   }
