@@ -23,17 +23,20 @@ test("symbol-extractor: extracts TS/JS symbols successfully", () => {
   `;
 
   const symbols = extractSymbols(tsContent, "ts");
-  assert.equal(symbols.length, 5);
+  // Enriched extraction now also captures constructor as method (richer map)
+  assert.equal(symbols.length, 6);
   assert.equal(symbols[0].name, "MyClass");
   assert.equal(symbols[0].type, "class");
-  assert.equal(symbols[1].name, "myFunction");
-  assert.equal(symbols[1].type, "function");
-  assert.equal(symbols[2].name, "arrowFunc");
+  assert.equal(symbols[1].name, "constructor");
+  assert.equal(symbols[1].type, "method");
+  assert.equal(symbols[2].name, "myFunction");
   assert.equal(symbols[2].type, "function");
-  assert.equal(symbols[3].name, "MyInterface");
-  assert.equal(symbols[3].type, "interface");
-  assert.equal(symbols[4].name, "MyType");
-  assert.equal(symbols[4].type, "type");
+  assert.equal(symbols[3].name, "arrowFunc");
+  assert.equal(symbols[3].type, "function");
+  assert.equal(symbols[4].name, "MyInterface");
+  assert.equal(symbols[4].type, "interface");
+  assert.equal(symbols[5].name, "MyType");
+  assert.equal(symbols[5].type, "type");
 });
 
 test("symbol-extractor: extracts Python and Go symbols successfully", () => {
@@ -51,7 +54,7 @@ def global_func():
   assert.equal(pySymbols[0].name, "PythonClass");
   assert.equal(pySymbols[0].type, "class");
   assert.equal(pySymbols[1].name, "method");
-  assert.equal(pySymbols[1].type, "function");
+  assert.equal(pySymbols[1].type, "method");  // richer: indented def as method
   assert.equal(pySymbols[2].name, "global_func");
   assert.equal(pySymbols[2].type, "function");
 

@@ -73,6 +73,9 @@ test("patch: non-unique/multiple occurrences rejects and does not edit file", as
 
     assert.equal(result.is_error, true);
     assert.match(result.error?.message, /matches 2 locations/i);
+    assert.match(result.error?.message, /more context lines/i);
+    assert.match(result.error?.message, /Relevant context from file \(line numbers\)/i); // new diagnostic
+    assert.match(result.error?.message, /1: line1/); // line-numbered snippet
 
     const updated = await readFile(file, "utf-8");
     assert.equal(updated, original);
@@ -97,6 +100,9 @@ test("patch: zero occurrences rejects and does not edit file", async () => {
 
     assert.equal(result.is_error, true);
     assert.match(result.error?.message, /was not found/i);
+    assert.match(result.error?.message, /read.*tool/i);
+    assert.match(result.error?.message, /Relevant context from file \(line numbers\)/i); // new diagnostic
+    assert.match(result.error?.message, /1: line1/); // snippet with lines
 
     const updated = await readFile(file, "utf-8");
     assert.equal(updated, original);
@@ -146,5 +152,30 @@ test("patch: outside workspace path validation rejects", async () => {
 
     assert.equal(result.is_error, true);
     assert.match(result.error?.message, /outside allowed roots/i);
+  });
+});
+
+test("patch: not-found provides suggested search block from actual content", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "target.txt");
+    const original = "export function calculateTotal(items) {\n  let sum = 0;\n  for (const item of items) {\n    sum += item.price;\n  }\n  return sum;\n}\n";
+    await writeFile(file, original, "utf-8");
+
+    // Search has wrong text but overlaps significantly
+    const result = await runPatch({
+      path: "target.txt",
+      chunks: [
+        {
+          search: "  for (const item of items) {\n    sum += item.amount;\n  }",
+          replace: "  for (const item of items) {\n    sum += item.price * item.qty;\n  }",
+        },
+      ],
+    });
+
+    assert.equal(result.is_error, true);
+    assert.match(result.error?.message, /was not found/i);
+    // New suggestion feature
+    assert.match(result.error?.message, /Suggested exact block from file/i);
+    assert.match(result.error?.message, /sum \+= item\.price/);  // actual content appears in suggestion
   });
 });

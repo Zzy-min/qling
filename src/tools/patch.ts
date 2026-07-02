@@ -7,7 +7,7 @@ import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from ".
 export const patchTool: ToolDefinition = {
   name: "patch",
   description:
-    "Apply precise search-and-replace edits (chunks) to an existing file. Only writes to the file if all chunks uniquely match.",
+    "Apply precise search-and-replace edits (chunks) to an existing file. Only writes to the file if all chunks uniquely match. Prefer larger unique context blocks for reliability.",
   longDescription: `精准局部替换文件内容（补丁）。**会修改磁盘文件**。
 
 **使用场景**:
@@ -17,7 +17,13 @@ export const patchTool: ToolDefinition = {
 **工作逻辑**:
 - 必须精确匹配 search 字段中的代码段（包括空格、缩进与换行）
 - 只有当所有指定的 chunks 在文件中**有且仅有唯一匹配**时，才会将替换内容写入文件。
-- 如果任意一个 chunk 未能匹配或匹配到多个位置，将不作任何修改，并返回详细冲突上下文。`,
+- 如果任意一个 chunk 未能匹配或匹配到多个位置，将不作任何修改，并返回详细冲突上下文 + 实际文件中的最接近代码块建议（帮助 LLM 快速修正）。
+
+**最佳实践（强烈推荐给 LLM）**:
+- 使用包含周围几行的较大唯一块作为 search，而不是孤立的一行。
+- 复制时务必 100% 精确，包括所有空白和换行。
+- 不确定时，先调用 read 工具获取文件精确内容片段再构造 patch。
+- 多 chunk 时按顺序，前面 chunk 成功后后面基于更新内容匹配（当前实现是模拟全部再写）。`,
   parameters: {
     type: "object",
     properties: {
@@ -116,16 +122,30 @@ export async function runPatch(args: {
     // Split content to search for occurrences
     const occurrences = countOccurrences(currentContent, searchStr);
     if (occurrences === 0) {
-      return toolError(
-        "PATCH_SEARCH_NOT_FOUND",
-        `Chunk index ${idx} search block was not found in the file. Please verify exact spelling, whitespace and indents.\nSearch block:\n"""\n${searchStr}\n"""`
-      );
+      const ctx = getDiagnosticContext(currentContent, searchStr);
+      const suggestion = getSuggestedSearchBlock(currentContent, searchStr);
+      let msg = `Chunk index ${idx} search block was not found in the file. Please verify exact spelling, whitespace and indents.\n` +
+        `Tip: Use the "read" tool first to get exact text, then copy a unique block.\n` +
+        `Search block tried:\n"""\n${searchStr}\n"""\n\n` +
+        `Relevant context from file (line numbers):\n"""\n${ctx}\n"""`;
+
+      if (suggestion) {
+        msg += `\n\nSuggested exact block from file (copy/adapt this as your search):\n"""\n${suggestion}\n"""`;
+      }
+      return toolError("PATCH_SEARCH_NOT_FOUND", msg);
     }
     if (occurrences > 1) {
-      return toolError(
-        "PATCH_SEARCH_AMBIGUOUS",
-        `Chunk index ${idx} search block matches ${occurrences} locations. Please provide more context lines to ensure uniqueness.\nSearch block:\n"""\n${searchStr}\n"""`
-      );
+      const ctx = getDiagnosticContext(currentContent, searchStr);
+      const suggestion = getSuggestedSearchBlock(currentContent, searchStr);
+      let msg = `Chunk index ${idx} search block matches ${occurrences} locations. Please provide more context lines to ensure uniqueness.\n` +
+        `Tip: Enlarge the search block with surrounding code until unique.\n` +
+        `Search block:\n"""\n${searchStr}\n"""\n\n` +
+        `Relevant context from file (line numbers):\n"""\n${ctx}\n"""`;
+
+      if (suggestion) {
+        msg += `\n\nSuggested unique block from file (use more context like this):\n"""\n${suggestion}\n"""`;
+      }
+      return toolError("PATCH_SEARCH_AMBIGUOUS", msg);
     }
 
     // Uniquely found, execute replacement in simulation
@@ -153,6 +173,123 @@ function countOccurrences(text: string, searchStr: string): number {
     pos = text.indexOf(searchStr, pos + searchStr.length);
   }
   return count;
+}
+
+/**
+ * On failure, return a line-numbered snippet around likely matching areas.
+ * Helps the LLM construct a better exact search block (Aider-like experience).
+ */
+function getDiagnosticContext(content: string, searchStr: string, contextLines = 4): string {
+  const lines = content.split(/\r?\n/);
+  if (lines.length === 0) return '';
+
+  const searchLines = searchStr.split(/\r?\n/).filter(l => l.trim().length > 0);
+  const keyPhrase = searchLines[0]?.trim().slice(0, 40) || '';
+
+  const candidateIdxs: number[] = [];
+
+  // Try direct partial match on first significant line
+  if (keyPhrase) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(keyPhrase) || lines[i].trim() === keyPhrase) {
+        candidateIdxs.push(i);
+      }
+    }
+  }
+
+  // Fallback: word based match for short unique words
+  if (candidateIdxs.length === 0) {
+    const words = keyPhrase.split(/\s+/).filter(w => w.length > 4);
+    for (let i = 0; i < lines.length; i++) {
+      if (words.some(w => lines[i].includes(w))) {
+        candidateIdxs.push(i);
+        if (candidateIdxs.length >= 3) break;
+      }
+    }
+  }
+
+  if (candidateIdxs.length === 0) {
+    // Last resort: head of file
+    const preview = lines.slice(0, 12).map((l, i) => `${i + 1}: ${l}`).join('\n');
+    return `File head preview:\n${preview}`;
+  }
+
+  const idx = candidateIdxs[0];
+  const start = Math.max(0, idx - contextLines);
+  const end = Math.min(lines.length, idx + contextLines + Math.max(1, searchLines.length));
+
+  let snippet = lines
+    .slice(start, end)
+    .map((l, j) => `${start + j + 1}: ${l}`)
+    .join('\n');
+
+  if (candidateIdxs.length > 1) {
+    snippet += `\n... (similar content also near lines: ${candidateIdxs.slice(1, 5).map(n => n + 1).join(', ')})`;
+  }
+
+  return snippet;
+}
+
+/**
+ * 当搜索失败时，尝试找到文件中与 search 最接近的实际代码块，
+ * 并返回建议的精确 search 文本（带上下文）。
+ * 这能显著帮助 LLM 构造可工作的 patch（类似 Aider 的反馈）。
+ */
+function getSuggestedSearchBlock(content: string, searchStr: string, contextLines = 2): string | null {
+  const lines = content.split(/\r?\n/);
+  if (lines.length === 0) return null;
+
+  const searchTrimmed = searchStr.trim();
+  if (!searchTrimmed) return null;
+
+  let bestScore = 0;
+  let bestIdx = -1;
+
+  const searchLines = searchStr.split(/\r?\n/).filter(l => l.trim().length > 0);
+  const searchWords = searchTrimmed.split(/\s+/).filter(w => w.length > 2);
+  const firstSearchLine = searchStr.split(/\r?\n/)[0]?.trim() || '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let score = 0;
+
+    if (firstSearchLine && line.includes(firstSearchLine.slice(0, 30))) {
+      score += 20;
+    }
+    score += searchWords.filter(w => line.includes(w)).length * 3;
+
+    // Bonus for multi-line searches if nearby lines match
+    if (searchStr.includes('\n')) {
+      const nextSearch = searchStr.split('\n')[1]?.trim();
+      if (nextSearch && i + 1 < lines.length && lines[i + 1].includes(nextSearch.slice(0, 20))) {
+        score += 15;
+      }
+    }
+
+    // Deeper: consecutive line overlap score for better multi-line suggestion (Aider style)
+    let consecutive = 0;
+    for (let k = 0; k < searchLines.length && (i + k) < lines.length; k++) {
+      const sline = searchLines[k].trim().toLowerCase();
+      const aline = lines[i + k].trim().toLowerCase();
+      if (sline && (aline.includes(sline.slice(0, 20)) || sline.includes(aline.slice(0, 20)))) {
+        consecutive += 10;
+      }
+    }
+    score += consecutive;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+
+  if (bestIdx < 0 || bestScore < 4) return null; // threshold to avoid bad suggestions
+
+  const start = Math.max(0, bestIdx - contextLines);
+  const end = Math.min(lines.length, bestIdx + contextLines + 2);
+
+  const block = lines.slice(start, end).join('\n');
+  return block;
 }
 
 export function generateUnifiedDiff(

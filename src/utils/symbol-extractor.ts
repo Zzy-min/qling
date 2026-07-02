@@ -1,6 +1,6 @@
 export interface ExtractedSymbol {
   name: string;
-  type: "class" | "function" | "interface" | "type" | "struct";
+  type: "class" | "function" | "interface" | "type" | "struct" | "variable" | "method";
   line: number;
   signature: string;
 }
@@ -87,12 +87,13 @@ export function extractSymbols(fileContent: string, fileExtension: string): Extr
         continue;
       }
 
-      // 2. Python Def
-      const defMatch = line.match(/^\s*def\s+([a-zA-Z0-9_]+)\s*\(/);
+      // 2. Python Def (top level function or indented method)
+      const defMatch = line.match(/^(\s*)def\s+([a-zA-Z0-9_]+)\s*\(/);
       if (defMatch) {
+        const isMethod = defMatch[1].length > 0;
         symbols.push({
-          name: defMatch[1],
-          type: "function",
+          name: defMatch[2],
+          type: isMethod ? "method" : "function",
           line: lineNum,
           signature: line.trim().replace(/:$/, ""),
         });
@@ -129,6 +130,71 @@ export function extractSymbols(fileContent: string, fileExtension: string): Extr
         symbols.push({
           name: funcMatch[1],
           type: "function",
+          line: lineNum,
+          signature: line.trim(),
+        });
+        continue;
+      }
+    } else if (ext === "rs") {
+      // Rust fn
+      const fnMatch = line.match(/^\s*(?:pub\s+)?fn\s+([a-zA-Z0-9_]+)\s*\(/);
+      if (fnMatch) {
+        symbols.push({
+          name: fnMatch[1],
+          type: "function",
+          line: lineNum,
+          signature: line.trim(),
+        });
+        continue;
+      }
+      // Rust struct
+      const structMatch = line.match(/^\s*(?:pub\s+)?struct\s+([a-zA-Z0-9_]+)/);
+      if (structMatch) {
+        symbols.push({
+          name: structMatch[1],
+          type: "struct",
+          line: lineNum,
+          signature: line.trim(),
+        });
+        continue;
+      }
+    }
+
+    // Additional TS/JS: exported const/var assigned function expr (more complete)
+    if (["ts", "js", "tsx", "jsx"].includes(ext)) {
+      const fnExprMatch = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s+)?function/);
+      if (fnExprMatch) {
+        symbols.push({
+          name: fnExprMatch[1],
+          type: "function",
+          line: lineNum,
+          signature: line.trim(),
+        });
+        continue;
+      }
+    }
+
+    // Top-level variables (const/let/var not functions)
+    if (["ts", "js", "tsx", "jsx"].includes(ext)) {
+      const varMatch = line.match(/^\s*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*[:=](?!\s*(?:async\s+)?(?:function|\(|\s*=>))/);
+      if (varMatch) {
+        symbols.push({
+          name: varMatch[1],
+          type: "variable",
+          line: lineNum,
+          signature: line.trim(),
+        });
+        continue;
+      }
+    }
+
+    // Rough class/instance methods (indented name(...) { or : type { )
+    if (["ts", "js", "tsx", "jsx"].includes(ext)) {
+      const methMatch = line.match(/^\s+([a-zA-Z0-9_$]+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*[{]/);
+      if (methMatch && !line.trim().startsWith("if ") && !line.trim().startsWith("for ") && !line.trim().startsWith("while ")) {
+        symbols.push({
+          name: methMatch[1],
+          type: "method",
           line: lineNum,
           signature: line.trim(),
         });

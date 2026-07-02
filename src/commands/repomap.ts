@@ -19,7 +19,27 @@ const DEFAULT_IGNORES = new Set([
   "obj",
 ]);
 
+async function loadGitignores(rootPath: string): Promise<((p: string) => boolean)[]> {
+  // Simple .gitignore loader (reuse pattern from search.ts for consistency)
+  const gitignorePath = join(rootPath, ".gitignore");
+  if (!existsSync(gitignorePath)) return [];
+  try {
+    const content = await readFile(gitignorePath, "utf-8");
+    const rules = content.split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith("#") && !l.startsWith("!"));
+    return rules.map(rule => {
+      // Simple matcher: exact dir or prefix
+      const r = rule.replace(/^\//, "").replace(/\/$/, "");
+      return (p: string) => p.includes(r) || p.startsWith(r + "/");
+    });
+  } catch {
+    return [];
+  }
+}
+
 async function walkFiles(rootPath: string, onFile: (filePath: string) => Promise<void>): Promise<void> {
+  const gitignores = await loadGitignores(rootPath);
   const stack: string[] = [rootPath];
   while (stack.length > 0) {
     const current = stack.pop()!;
@@ -36,6 +56,10 @@ async function walkFiles(rootPath: string, onFile: (filePath: string) => Promise
         continue;
       }
       const fullPath = join(current, entry.name);
+      const rel = relative(rootPath, fullPath).replace(/\\/g, "/");
+      if (gitignores.some(g => g(rel))) {
+        continue;
+      }
       if (entry.isDirectory()) {
         stack.push(fullPath);
       } else if (entry.isFile()) {
@@ -81,7 +105,7 @@ export const repomapCommand: SlashCommand = {
     const memoryStore = (agentLoop as any).getMemoryStore?.();
     const cognitiveIndex = memoryStore?.getCognitiveIndex?.();
 
-    const allowedExtensions = new Set([".ts", ".js", ".tsx", ".jsx", ".py", ".go"]);
+    const allowedExtensions = new Set([".ts", ".js", ".tsx", ".jsx", ".py", ".go", ".rs"]);
     const fileSymbolMap = new Map<string, any[]>();
     let fileCount = 0;
 
@@ -119,7 +143,8 @@ export const repomapCommand: SlashCommand = {
       context.writeLine(`📄 ${file}`);
       const symbols = fileSymbolMap.get(file)!;
       for (const sym of symbols) {
-        context.writeLine(`  [${sym.type}] L${sym.line}: ${sym.name}`);
+        const sig = sym.signature ? ` (${sym.signature.substring(0, 60)})` : "";
+        context.writeLine(`  [${sym.type}] L${sym.line}: ${sym.name}${sig}`);
       }
     }
 
