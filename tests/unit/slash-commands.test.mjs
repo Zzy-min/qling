@@ -100,7 +100,7 @@ function createContext(overrides = {}) {
 test("slash catalog exposes Claude-compatible command shell metadata", () => {
   const catalog = getSlashCommandCatalog();
   const byName = new Map(catalog.map((item) => [item.name, item]));
-  for (const name of ["/usage", "/model", "/plan", "/diff", "/copy", "/init", "/rewind", "/login", "/desktop"]) {
+  for (const name of ["/usage", "/model", "/plan", "/diff", "/commit", "/copy", "/init", "/rewind", "/login", "/desktop"]) {
     assert.ok(byName.has(name), `${name} should be discoverable`);
   }
   assert.equal(byName.get("/model").category, "session");

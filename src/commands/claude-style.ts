@@ -156,13 +156,14 @@ export const planCommand: SlashCommand = {
 
 export const diffCommand: SlashCommand = {
   name: "/diff",
-  description: "查看当前工作区 Git 变更摘要",
-  usage: "/diff",
+  description: "查看当前工作区 Git 变更摘要（支持 /diff full 查看完整 diff）",
+  usage: "/diff [full]",
   category: "git",
   availability: "local",
   claudeCompatibleName: "/diff",
-  execute: async (_args, context) => {
+  execute: async (args, context) => {
     const cwd = workspaceOf(context);
+    const showFull = args.includes("full") || args.includes("--full");
     context.writeLine("");
     context.writeLine("🧾 【Git Diff】");
     context.writeLine("-----------------------------------------");
@@ -177,12 +178,58 @@ export const diffCommand: SlashCommand = {
         context.writeLine("");
         context.writeLine(statText);
       }
-      context.writeLine("边界      : 只读 git status/diff，不修改文件。");
+      if (showFull) {
+        try {
+          const full = await execFileAsync("git", ["diff"], { cwd, timeout: 15_000 });
+          const fullText = String(full.stdout || "").trim();
+          if (fullText) {
+            context.writeLine("\n--- full diff (truncated if long) ---");
+            context.writeLine(fullText.slice(0, 2000) + (fullText.length > 2000 ? "\n... (truncated)" : ""));
+          }
+        } catch {}
+      }
+      context.writeLine("边界      : 只读 git status/diff，不修改文件。使用 /diff full 查看内容。");
     } catch {
       context.writeLine(`Workspace : ${cwd}`);
       context.writeLine("状态      : 非 Git 仓库或 Git 不可用。");
       context.writeLine("边界      : 未执行任何修改。");
     }
+    context.writeLine("-----------------------------------------");
+    context.writeLine("");
+  },
+};
+
+export const commitCommand: SlashCommand = {
+  name: "/commit",
+  description: "安全提交当前 Git 变更（本地操作，自动 add -A）",
+  usage: "/commit [message]",
+  category: "git",
+  availability: "local",
+  claudeCompatibleName: "/commit",
+  execute: async (args, context) => {
+    const cwd = workspaceOf(context);
+    const message = args.join(" ").trim() || "chore: qling agent update";
+    context.writeLine("");
+    context.writeLine("🧾 【Git Commit】");
+    context.writeLine("-----------------------------------------");
+    try {
+      const status = await execFileAsync("git", ["status", "--porcelain"], { cwd, timeout: 5000 });
+      if (!String(status.stdout || "").trim()) {
+        context.writeLine("工作区干净，无需提交。");
+        context.writeLine("边界      : 只读/本地 git 操作。");
+        context.writeLine("-----------------------------------------");
+        context.writeLine("");
+        return;
+      }
+      await execFileAsync("git", ["add", "-A"], { cwd, timeout: 10000 });
+      const res = await execFileAsync("git", ["commit", "-m", message], { cwd, timeout: 10000 });
+      context.writeLine("✅ 提交成功");
+      context.writeLine(String(res.stdout || res.stderr || "").trim() || "Committed.");
+    } catch (err: any) {
+      context.writeLine("❌ 提交失败: " + (err.message || String(err)));
+      context.writeLine("提示: 确保在 git repo 内，无冲突，message 有效。");
+    }
+    context.writeLine("边界      : 本地 git 操作；危险命令仍受 guard 保护（如果通过 bash 工具）。");
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },

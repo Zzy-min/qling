@@ -35,6 +35,7 @@ import { verifyCommand } from "./verify.js";
 import { SlashCommandContext, withDefaultWriters } from "./runtime.js";
 import { formatFocusedHelp } from "../help-topics.js";
 import {
+  commitCommand,
   copyCommand,
   diffCommand,
   initCommand,
@@ -62,6 +63,7 @@ export const COMMANDS: SlashCommand[] = [
   modelCommand,
   planCommand,
   diffCommand,
+  commitCommand,
   copyCommand,
   skillCommand,
   dashboardCommand,
