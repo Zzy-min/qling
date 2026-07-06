@@ -34,6 +34,8 @@ import { missionCommand } from "./mission.js";
 import { verifyCommand } from "./verify.js";
 import { SlashCommandContext, withDefaultWriters } from "./runtime.js";
 import { formatFocusedHelp } from "../help-topics.js";
+import { formatLocalGuidancePanel } from "../cli/guidance-panel.js";
+import { getLocalizedText } from "../i18n/index.js";
 import {
   commitCommand,
   copyCommand,
@@ -323,27 +325,28 @@ function findExactSlashCommandForArgumentHint(input: string): SlashCommandCatalo
 }
 
 export function formatUnknownSlashCommandMessage(cmdName: string): string {
+  const t = getLocalizedText();
   const suggestions = findSlashCommandSuggestions(cmdName);
   const normalizedInput = cmdName.replace(/^\/+/, "");
   if (!suggestions.length) {
-    return [
-      `❌ 未知指令: ${cmdName}。`,
-      "查看全部 : /help",
-      `普通输入 : ${normalizedInput}`,
-      "说明     : 这是本地纠错提示，不调用模型、不执行建议命令。",
-    ].join("\n");
+    return formatLocalGuidancePanel({
+      title: `❌ 未知指令: ${cmdName}。`,
+      reason: "当前输入不是已注册的 slash 命令。",
+      next: "查看全部: /help",
+      example: `普通输入: ${normalizedInput}`,
+      boundary: t.boundaries.slashCorrection,
+    });
   }
 
   const commands = suggestions.map((suggestion) => suggestion.command).join(", ");
   const primary = suggestions[0];
-  return [
-    `❌ 未知指令: ${cmdName}。`,
-    `你是不是想用: ${commands}`,
-    `可执行   : ${primary.command}`,
-    `查看用法 : /help ${primary.topic}`,
-    `普通输入 : ${normalizedInput}`,
-    "说明     : 这是本地纠错提示，不调用模型、不自动执行建议命令。",
-  ].join("\n");
+  return formatLocalGuidancePanel({
+    title: `❌ 未知指令: ${cmdName}。`,
+    reason: "输入看起来像 slash 命令，但没有精确命中命令目录。",
+    next: `你是不是想用: ${commands}；可执行: ${primary.command}`,
+    example: `查看用法: /help ${primary.topic}；普通输入: ${normalizedInput}`,
+    boundary: t.boundaries.slashCorrection,
+  });
 }
 
 export async function handleSlashCommand(

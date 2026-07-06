@@ -543,8 +543,10 @@ test("slash unknown command suggests nearest english command", async () => {
   assert.match(joined, /未知指令/);
   assert.match(joined, /\/exports/);
   assert.match(joined, /\/help exports/);
-  assert.match(joined, /可执行\s*: \/exports/);
-  assert.match(joined, /普通输入\s*: expors/);
+  assert.match(joined, /可执行: \/exports/);
+  assert.match(joined, /普通输入: expors/);
+  assert.match(joined, /本地执行: 是/);
+  assert.match(joined, /模型调用: 否/);
   assert.match(joined, /本地纠错/);
 });
 
@@ -557,8 +559,10 @@ test("slash unknown command suggests nearest chinese alias", async () => {
   assert.match(joined, /未知指令/);
   assert.match(joined, /\/导出列表/);
   assert.match(joined, /\/help 导出列表/);
-  assert.match(joined, /可执行\s*: \/导出列表/);
-  assert.match(joined, /普通输入\s*: 导出列/);
+  assert.match(joined, /可执行: \/导出列表/);
+  assert.match(joined, /普通输入: 导出列/);
+  assert.match(joined, /本地执行: 是/);
+  assert.match(joined, /模型调用: 否/);
 });
 
 test("slash unknown command falls back without weak suggestions", async () => {
@@ -569,7 +573,9 @@ test("slash unknown command falls back without weak suggestions", async () => {
   const joined = errors.join("\n");
   assert.match(joined, /未知指令/);
   assert.match(joined, /\/help/);
-  assert.match(joined, /普通输入\s*: zzzzzz/);
+  assert.match(joined, /普通输入: zzzzzz/);
+  assert.match(joined, /本地执行: 是/);
+  assert.match(joined, /模型调用: 否/);
   assert.match(joined, /不调用模型/);
   assert.doesNotMatch(joined, /你是不是想用/);
 });

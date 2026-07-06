@@ -8,6 +8,7 @@ import { stdin as input, stdout as output } from "process";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { getLocalizedText } from "../i18n/index.js";
 
 interface ProviderPreset {
   name: string;
@@ -30,13 +31,41 @@ const PRESETS: Record<string, ProviderPreset> = {
   "10": { name: "local", endpoint: "http://localhost:11434/v1", model: "llama3", keyHint: "Ollama (可留空)" },
 };
 
+export interface SetupEnvInput {
+  provider: string;
+  endpoint: string;
+  model: string;
+}
+
+export function buildSetupEnvLines(input: SetupEnvInput): string[] {
+  return [
+    `QLING_LLM_PROVIDER=${input.provider}`,
+    `QLING_LLM_ENDPOINT=${input.endpoint}`,
+    `QLING_LLM_MODEL=${input.model}`,
+  ];
+}
+
+export function formatSetupApiKeyInstructions(keyProvided: boolean): string[] {
+  const t = getLocalizedText();
+  const lines = [
+    "",
+    keyProvided ? t.setup.keyNotSaved : "API Key 未配置；需要调用模型前请先设置系统环境变量。",
+    "Windows PowerShell（用户级持久化）:",
+    `  ${t.setup.windowsEnvExample}`,
+    "当前 PowerShell 临时生效:",
+    "  $env:QLING_LLM_API_KEY='<your-key>'",
+    "说明: 不建议把 API key 写入项目 .env 或 ~/.qling/.env。",
+  ];
+  return lines;
+}
+
 export async function runSetup() {
   const rl = readline.createInterface({ input, output });
 
   console.log("\n=========================================");
-  console.log("轻灵 Qling - 快速配置");
+  console.log(getLocalizedText().setup.title);
   console.log("=========================================\n");
-  console.log("默认路径只配置 Provider / Model / API key；高级能力稍后可在 Advanced 中开启。");
+  console.log(getLocalizedText().setup.quickPath);
 
   console.log("\n请选择 LLM 提供商 (输入数字序号):");
   console.log("1. DeepSeek (推荐)");
@@ -70,14 +99,14 @@ export async function runSetup() {
 
   const preset = PRESETS[choice];
   const keyHint = preset?.keyHint ? ` (${preset.keyHint})` : "";
-  const apiKey = await rl.question(`请输入 API Key${keyHint}: `);
+  const apiKey = await rl.question(`${getLocalizedText().setup.keyPrompt}${keyHint}: `);
   const key = apiKey.trim();
 
   console.log("\n-----------------------------------------");
   console.log(`Provider : ${pName}`);
   console.log(`Endpoint : ${pEndpoint}`);
   console.log(`Model    : ${pModel}`);
-  console.log(`API Key  : ${key ? "********" : "(未配置)"}`);
+  console.log(`API Key  : ${key ? "未保存到 .env（请配置系统环境变量）" : "(未配置)"}`);
   console.log("-----------------------------------------");
 
   const confirm = await rl.question("保存为全局默认配置? (Y/n): ");
@@ -88,16 +117,11 @@ export async function runSetup() {
   }
 
   // 构造环境变量内容
-  const envLines = [
-    `QLING_LLM_PROVIDER=${pName}`,
-    `QLING_LLM_ENDPOINT=${pEndpoint}`,
-    `QLING_LLM_MODEL=${pModel}`,
-  ];
-  if (key) {
-    envLines.push(`QLING_LLM_API_KEY=${key}`);
-    envLines.push(`OPENAI_API_KEY=${key}`);
-    envLines.push(`DEEPSEEK_API_KEY=${key}`);
-  }
+  const envLines = buildSetupEnvLines({
+    provider: pName,
+    endpoint: pEndpoint,
+    model: pModel,
+  });
 
   const advanced = await rl.question("\n是否进入 Advanced 高级配置? (y/N): ");
   if (advanced.trim().toLowerCase() === "y") {
@@ -142,6 +166,9 @@ export async function runSetup() {
   await fs.writeFile(globalEnvPath, envLines.join("\n") + "\n", "utf-8");
 
   console.log(`\n配置已保存: ${globalEnvPath}`);
+  for (const line of formatSetupApiKeyInstructions(Boolean(key))) {
+    console.log(line);
+  }
   console.log("-----------------------------------------");
   console.log("下一步:");
   console.log("- `qling` 进入 TUI");

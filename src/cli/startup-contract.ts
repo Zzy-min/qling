@@ -1,5 +1,7 @@
 import type { CliGlobalOptions } from "../config.js";
 import { formatFocusedHelp } from "../help-topics.js";
+import { formatLocalGuidancePanel } from "./guidance-panel.js";
+import { getLocalizedText } from "../i18n/index.js";
 
 export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks";
 
@@ -148,29 +150,13 @@ function quoteTaskForRun(task: string): string {
 }
 
 function formatTopLevelCommandSuggestion(input: string, suggestion: TopLevelCommandSuggestion): string {
-  return formatCliGuidancePanel({
+  return formatLocalGuidancePanel({
     title: `未知命令: ${input}`,
     reason: "输入看起来像命令，但不是轻灵已注册的顶层命令。",
     next: `你是不是想用: qling ${suggestion.command}`,
     example: `qling help ${suggestion.helpTopic} 或 qling run ${quoteTaskForRun(input)}`,
-    boundary: "本地纠错提示，不调用模型、不执行建议命令。",
+    boundary: getLocalizedText().boundaries.localNoModel,
   });
-}
-
-function formatCliGuidancePanel(input: {
-  title: string;
-  reason: string;
-  next: string;
-  example: string;
-  boundary: string;
-}): string {
-  return [
-    input.title,
-    `原因: ${input.reason}`,
-    `下一步: ${input.next}`,
-    `示例: ${input.example}`,
-    `边界: ${input.boundary}`,
-  ].join("\n");
 }
 
 export interface CliResolutionOk {
@@ -196,7 +182,15 @@ export interface CliResolutionErr {
 export type CliResolution = CliResolutionOk | CliResolutionErr;
 
 export function formatCliError(code: string, message: string): string {
-  return `Error: [${code}] ${message}`;
+  return message.includes("\n原因:")
+    ? `Error: [${code}]\n${message}`
+    : `Error: [${code}]\n${formatLocalGuidancePanel({
+      title: message,
+      reason: "命令参数组合或取值不符合轻灵 CLI 约定。",
+      next: "运行 `qling help` 查看可用命令，或改用推荐的新手路径。",
+      example: "qling help",
+      boundary: getLocalizedText().boundaries.localValidation,
+    })}`;
 }
 
 export function parseCliArgs(args: string[]): CliResolution {
@@ -247,12 +241,12 @@ export function parseCliArgs(args: string[]): CliResolution {
         return {
           kind: "error",
           code: "CLI_MISSING_TASK",
-          message: formatCliGuidancePanel({
+          message: formatLocalGuidancePanel({
             title: "缺少任务内容",
             reason: "`--once` 后面需要一个任务字符串。",
             next: "改用推荐形式 `qling run \"任务\"`。",
             example: "qling run \"分析这个仓库\"",
-            boundary: "参数校验在本地完成，不调用模型。",
+            boundary: getLocalizedText().boundaries.localValidation,
           }),
           exitCode: 2,
         };
@@ -268,12 +262,12 @@ export function parseCliArgs(args: string[]): CliResolution {
         return {
           kind: "error",
           code: "CLI_MISSING_TASK",
-          message: formatCliGuidancePanel({
+          message: formatLocalGuidancePanel({
             title: "缺少任务内容",
             reason: "`--once` 后面需要一个非空任务字符串。",
             next: "改用推荐形式 `qling run \"任务\"`。",
             example: "qling run \"分析这个仓库\"",
-            boundary: "参数校验在本地完成，不调用模型。",
+            boundary: getLocalizedText().boundaries.localValidation,
           }),
           exitCode: 2,
         };
@@ -378,12 +372,12 @@ export function parseCliArgs(args: string[]): CliResolution {
       return {
         kind: "error",
         code: "CLI_MISSING_TASK",
-        message: formatCliGuidancePanel({
+        message: formatLocalGuidancePanel({
           title: "缺少任务内容",
           reason: "`run` 需要一个任务字符串。",
           next: "在命令后写清楚要执行的任务。",
           example: "qling run \"分析这个仓库\"",
-          boundary: "参数校验在本地完成，不调用模型。",
+          boundary: getLocalizedText().boundaries.localValidation,
         }),
         exitCode: 2,
       };
@@ -500,7 +494,7 @@ ${binName} - 通用 CLI Agent
 
 新手路径:
   ${binName} bootstrap                # 本机一键启动检查：目录、配置、诊断和下一步
-  ${binName} setup                    # 快速配置 Provider / Model / API key
+  ${binName} setup                    # 快速配置 Provider / Model / Endpoint（密钥放系统环境变量）
   ${binName} run "分析这个仓库"        # 单次执行，验证模型和工具链
   ${binName}                          # 进入 TUI，输入 / 打开命令面板
   ${binName} doctor                   # 本地诊断
@@ -514,7 +508,7 @@ ${binName} - 通用 CLI Agent
   ${binName} repl                     # 简易 REPL
   ${binName} run "你的任务"            # 单次执行（推荐）
   ${binName} bootstrap                # 本机一键启动检查
-  ${binName} setup                    # 快速配置 LLM 提供商
+  ${binName} setup                    # 快速配置 LLM 提供商（不保存 API key 到 .env）
   ${binName} help                     # 显示帮助
 
 管理命令 (v0.3):
@@ -592,6 +586,10 @@ ${binName} - 通用 CLI Agent
   ${binName} --tui, --repl, --once "task", "task"
 中文别名:
   ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 检查点 [name] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 记忆 | 使命 | 代理 | 日志 <id>
+
+本地边界:
+  help / doctor / privacy / config 只读本地状态；不会调用模型或联网。
+  API key 推荐配置到系统用户环境变量，例如 QLING_LLM_API_KEY；setup 不会写入 .env。
 
 模式冲突示例:
   ${binName} repl --once "x"          # Error: [CLI_INVALID_MODE_COMBINATION]

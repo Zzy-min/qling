@@ -7,6 +7,7 @@ import { sanitizeEndpoint } from "./config-report.js";
 import { buildLocalMcpReport } from "./mcp-report.js";
 import { guardConfigFromEnv, scanRuntimeDotEnvSecrets, type EnvSecretHit } from "./config.js";
 import { buildLocalHooksReport } from "./hooks-report.js";
+import { getLocalizedText } from "./i18n/index.js";
 
 export type DoctorStatus = "pass" | "warn" | "fail";
 
@@ -117,8 +118,11 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
   const byId = new Map(checks.map((check) => [check.id, check]));
 
   if (byId.get("config")?.status === "warn") {
+    const text = getLocalizedText();
     recommendations.push("- 新用户优先运行 `qling bootstrap` 完成本机初始化检查。");
-    recommendations.push("- 运行 `qling setup` 配置本地 Provider、模型和 API key。");
+    recommendations.push("- 运行 `qling setup` 配置本地 Provider / Model / Endpoint。");
+    recommendations.push(`- ${text.boundaries.setupSecret}`);
+    recommendations.push(`  ${text.setup.windowsEnvExample}`);
   }
 
   const stateDir = byId.get("state_dir");

@@ -4,7 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import * as readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
-import { scanDotEnvContent, scanRuntimeDotEnvSecrets } from "../config.js";
+import { scanRuntimeDotEnvSecrets } from "../config.js";
+import { getLocalizedText } from "../i18n/index.js";
 
 export type BootstrapBrowserMode = "auto" | "with" | "none";
 export type BootstrapProfile = "minimal" | "dev";
@@ -72,13 +73,19 @@ function hasApiKey(env: Record<string, string | undefined>): boolean {
 
 export function buildBootstrapReport(input: BootstrapReportInput): BootstrapReport {
   const env = input.env ?? process.env;
+  const text = getLocalizedText();
   const stateDir = input.stateDir ?? path.join(os.homedir(), ".qling");
   const apiKeyConfigured = hasApiKey(env);
   const nextSteps = [
-    apiKeyConfigured ? "运行 `qling` 进入 TUI。" : "运行 `qling setup` 配置 Provider、模型和 API key。",
+    apiKeyConfigured ? "运行 `qling` 进入 TUI。" : "运行 `qling setup` 配置 Provider / Model / Endpoint，再按提示把 API key 写入系统环境变量。",
     "运行 `qling doctor` 查看本地诊断。",
     "在 TUI 输入 `/` 打开命令面板，输入 `/privacy` 查看本地边界。",
   ];
+
+  if (!apiKeyConfigured) {
+    nextSteps.push(text.boundaries.setupSecret);
+    nextSteps.push(text.setup.windowsEnvExample);
+  }
 
   if (input.args.browser !== "with") {
     nextSteps.push("如需浏览器抓取能力，重新运行 `qling bootstrap --with-browser`。");
@@ -122,7 +129,7 @@ export function formatBootstrapReport(report: BootstrapReport): string[] {
     `Node      : v${report.nodeVersion}`,
     `npm       : ${report.npmVersion}`,
     `State     : ${report.stateDir}`,
-    `API key   : ${report.apiKeyConfigured ? "set(redacted)" : "missing"}`,
+    `API key   : ${report.apiKeyConfigured ? "system env set(redacted)" : "missing"}`,
     `Browser   : ${report.browserMode === "with" ? "install requested" : report.browserMode === "none" ? "skipped" : "optional"}`,
     `Advanced  : dashboard=${report.advancedDefaults.dashboard} semantic=${report.advancedDefaults.semanticMemory} discovery=${report.advancedDefaults.dynamicDiscovery}`,
     ...secretNote,
@@ -131,6 +138,7 @@ export function formatBootstrapReport(report: BootstrapReport): string[] {
     ...report.nextSteps.map((step) => `- ${step}`),
     "-----------------------------------------",
     "说明: bootstrap 只做本机初始化和诊断引导；不上传数据、不调用模型。",
+    `边界: ${getLocalizedText().boundaries.localNoModel}`,
     "",
   ];
 }
@@ -139,7 +147,7 @@ async function maybeRunSetup(args: BootstrapArgs, report: BootstrapReport, setup
   if (report.apiKeyConfigured || args.yes || !input.isTTY) return;
   const rl = readline.createInterface({ input, output });
   try {
-    const answer = await rl.question("检测到 API key 未配置。是否现在运行 qling setup? (Y/n): ");
+    const answer = await rl.question("检测到 API key 未配置。是否先运行 qling setup 配置 Provider/模型? (Y/n): ");
     if (answer.trim().toLowerCase() !== "n") {
       await setupRunner();
     }

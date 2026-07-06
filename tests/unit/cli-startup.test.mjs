@@ -316,6 +316,8 @@ test("cli: top-level english typo suggests local command without running task", 
   assert.match(result.message, /原因/);
   assert.match(result.message, /下一步/);
   assert.match(result.message, /示例/);
+  assert.match(result.message, /本地执行: 是/);
+  assert.match(result.message, /模型调用: 否/);
   assert.match(result.message, /qling exports/);
   assert.match(result.message, /qling help exports/);
   assert.match(result.message, /qling run "expors"/);
@@ -330,6 +332,8 @@ test("cli: top-level chinese typo suggests local alias without running task", ()
   assert.match(result.message, /导出列/);
   assert.match(result.message, /原因/);
   assert.match(result.message, /下一步/);
+  assert.match(result.message, /本地执行: 是/);
+  assert.match(result.message, /模型调用: 否/);
   assert.match(result.message, /qling 导出列表/);
   assert.match(result.message, /qling help 导出列表/);
   assert.match(result.message, /qling run "导出列"/);
@@ -374,6 +378,8 @@ test("cli: missing --once task returns CLI_MISSING_TASK with exit code 2", () =>
   assert.match(result.message, /原因/);
   assert.match(result.message, /下一步/);
   assert.match(result.message, /示例/);
+  assert.match(result.message, /本地执行: 是/);
+  assert.match(result.message, /模型调用: 否/);
 });
 
 test("cli: run without task returns CLI_MISSING_TASK", () => {
