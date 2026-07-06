@@ -308,7 +308,14 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       const maxCode = Math.max(10, width - 6);
       let codeLine = line;
       if (sw(line) > maxCode) {
-        codeLine = truncateVisible(line, maxCode - 1) + "…";
+        // local truncate using string-width
+        let col = 0, idx = 0;
+        for (const ch of Array.from(line)) {
+          const w = sw(ch);
+          if (col + w > maxCode - 1) break;
+          col += w; idx += ch.length;
+        }
+        codeLine = line.slice(0, idx) + "…";
       }
       resultLines.push("  " + S.s(codeLine));
       i++;
