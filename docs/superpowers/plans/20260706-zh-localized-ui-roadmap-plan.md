@@ -133,17 +133,18 @@
 - [x] P0 完成 + 门禁（已提交 84f005b）
 - [x] P1 完成 + 门禁（已提交 9465ea3）
 - [x] P2 完成 + 门禁
-- [x] P3 完成 + 门禁（完善中文 chunk 索引 + 搜索 + 引用展示；top-level handler；新增 knowledge.smoke 通过；模型推荐 + 边界说明）
+- [x] P3 完成 + 门禁（真实 semantic search 集成 via memoryStore.search + hybrid；中文 chunk 真实索引 + add/save；更多 unit/smoke 测试；top-level + slash 完善）
 
 - [ ] P4 完成 + 门禁
 - [ ] P4 完成 + 门禁
 - [ ] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
-- P3 完善: 真实中文 chunk (按句/段落) + 本地文件 index + memory 搜索 + 引用展示
-- top-level "knowledge" handler + slash 完善
-- 新增 knowledge.smoke.test (3/3 pass)
-- 门禁: build + tests + diff OK
-- 提交即将进行
+- P3 深化: 集成 memoryStore.search (semantic vector + keyword hybrid RAG)
+- 真实 chunk 索引 + memory.add + saveToDisk
+- 新增 unit tests for chunk/index + extended smoke
+- 门禁: build + 5 P3 tests pass + diff OK
+- 提交中
+
 
 

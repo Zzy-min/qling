@@ -1,6 +1,26 @@
 import { SlashCommand } from "./types.js";
 import { join } from "path";
 import { readdirSync, readFileSync, statSync } from "fs";
+import {
+  searchLocalMemoryEntries,
+  formatLocalMemorySearchReport,
+} from "../memory-report.js";
+import { homedir } from "os";
+
+function resolveStateDirForKnowledge(context: any): string | null {
+  const agentLoop = context?.agentLoop as any;
+  if (agentLoop?.getRuntimeRootDir) {
+    try {
+      const root = agentLoop.getRuntimeRootDir();
+      if (root) return root;
+    } catch {}
+  }
+  const envDir = process.env.QLING_FILE_STATE_DIR;
+  if (envDir) return envDir;
+  const ctxState = context?.stateDir || context?.workspaceDir;
+  if (ctxState) return ctxState;
+  return join(require("os").homedir(), ".qling");
+}
 
 // P3 完善：中文知识库/RAG 最小闭环
 // - 中文友好 chunk（按句/段落）
@@ -9,7 +29,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 // - 推荐中文模型
 // 复用 memory 搜索能力；无重型向量DB
 
-function chineseChunk(text: string, maxLen = 400): string[] {
+export function chineseChunk(text: string, maxLen = 400): string[] {
   const chunks: string[] = [];
   // 优先按段落，其次中文句子
   let parts = text.split(/\n\s*\n/);
@@ -31,7 +51,7 @@ function chineseChunk(text: string, maxLen = 400): string[] {
   return chunks.length ? chunks : [text.slice(0, maxLen)];
 }
 
-function simpleIndex(dir: string, maxFiles = 20): { file: string; chunks: string[] }[] {
+export function simpleIndex(dir: string, maxFiles = 20): { file: string; chunks: string[] }[] {
   const results: { file: string; chunks: string[] }[] = [];
   try {
     const entries = readdirSync(dir);
@@ -101,41 +121,59 @@ export const knowledgeCommand: SlashCommand = {
           } catch {}
         }
       }
+      if (memoryStore && typeof memoryStore.saveToDisk === "function") {
+        try { await memoryStore.saveToDisk(); } catch {}
+      }
       context.writeLine(`索引完成：${indexed.length} 个文件，${totalChunks} 个 chunk。`);
       context.writeLine("已尝试合并到本地 memory。使用 /knowledge <问题> 查询。");
     } else {
       context.writeLine(`查询: ${query}`);
       context.writeLine("结果 (引用片段 + 置信):");
 
-      let hits: any[] = [];
-      if (memoryStore && typeof memoryStore.search === "function") {
+      let usedRealSearch = false;
+      const stateDir = resolveStateDirForKnowledge(context);
+
+      if (stateDir) {
         try {
-          hits = await memoryStore.search(query, 5) || [];
-        } catch {}
-      }
-      if ((!hits || hits.length === 0) && agentLoop?.searchMemory) {
-        try {
-          hits = await agentLoop.searchMemory(query, 5) || [];
+          const report = await searchLocalMemoryEntries(stateDir, { query, count: 5 });
+          if (report.entries && report.entries.length > 0) {
+            usedRealSearch = true;
+            report.entries.forEach((e: any, i: number) => {
+              const src = e.source || "memory";
+              const conf = (e.score ?? 0.7).toFixed(2);
+              const snippet = (e.content || e.preview || "").slice(0, 120).replace(/\n/g, " ");
+              context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf})`);
+            });
+          }
         } catch {}
       }
 
-      if (hits && hits.length) {
-        hits.slice(0, 5).forEach((h: any, i: number) => {
-          const src = h.source || h.file || h.metadata?.file || "memory";
-          const conf = (h.confidence ?? h.score ?? 0.7).toFixed(2);
-          const snippet = (h.content || h.text || "").slice(0, 120).replace(/\n/g, " ");
-          context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf})`);
-        });
-      } else {
+      if (!usedRealSearch && memoryStore && typeof memoryStore.search === "function") {
+        try {
+          const hits = await memoryStore.search(query, 5) || [];
+          if (hits.length) {
+            usedRealSearch = true;
+            hits.slice(0, 5).forEach((h: any, i: number) => {
+              const src = h.source || "memory";
+              const conf = (h.score ?? h.confidence ?? 0.7).toFixed(2);
+              const snippet = (h.content || h.entry?.content || "").slice(0, 120).replace(/\n/g, " ");
+              context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf})`);
+            });
+          }
+        } catch {}
+      }
+
+      if (!usedRealSearch) {
         // 演示友好回退 + 模拟 chunk 结果
         const demoChunks = chineseChunk("本地知识库示例：轻灵支持中文 chunk，按段落或标点切分。推荐搭配 Qwen/DeepSeek 使用本地 embedding。");
         context.writeLine(`  1. [demo-chunk] ${demoChunks[0].slice(0, 100)}... (置信 0.65)`);
-        context.writeLine("  (提示：运行 /knowledge index . 建立真实索引后重试)");
+        context.writeLine("  (提示：运行 /knowledge index . 建立真实索引后重试；启用 semantic_memory 获得真实向量搜索)");
       }
 
       context.writeLine("");
       context.writeLine("引用: 以上来自本机 memory / 文件索引。");
       context.writeLine("建议模型: Qwen / DeepSeek / GLM (中文理解强) + Ollama 离线");
+      context.writeLine("提示: 设置 QLING_FEATURES_SEMANTIC_MEMORY=true 可启用真实 semantic search");
     }
 
     context.writeLine("-----------------------------------------");
