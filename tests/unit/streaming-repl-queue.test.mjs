@@ -98,7 +98,7 @@ test("streaming repl restores prompt after queued input settles with idle status
 
     assert.equal(ui.prompts.length, 1);
     assert.doesNotMatch(ui.prompts[0], /queue=/);
-    assert.match(ui.prompts[0], /model=test-model/);
+    assert.match(ui.prompts[0], /模型=test-model/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

@@ -18,7 +18,7 @@ test("permissions report formats default mode and explanations", () => {
   const text = lines.join("\n");
 
   assert.match(text, /本地权限状态/);
-  assert.match(text, /Default\s*: ask\(确认\)/);
+  assert.match(text, /Default\s*: 询问\(确认\)/);
   assert.match(text, /allow=自动放行/);
   assert.match(text, /ask=询问确认/);
   assert.match(text, /deny=默认拒绝/);
@@ -48,7 +48,7 @@ test("permissions report lists configured rules", () => {
   });
   const text = formatLocalPermissionsReport(report).join("\n");
 
-  assert.match(text, /Default\s*: deny\(拒绝\)/);
+  assert.match(text, /Default\s*: 拒绝/);
   assert.match(text, /Rules\s*: 2/);
   assert.match(text, /bash -> ask/);
   assert.match(text, /shell requires review/);
@@ -88,7 +88,7 @@ test("permissions explain shows matching rule and effect", () => {
   assert.equal(report.matchedRule, "bash");
   assert.match(text, /权限解释/);
   assert.match(text, /Tool\s*: bash/);
-  assert.match(text, /Decision\s*: ask\(确认\)/);
+  assert.match(text, /Decision\s*: 询问\(确认\)/);
   assert.match(text, /Matched\s*: bash/);
   assert.match(text, /shell requires review/);
   assert.match(text, /执行前要求确认/);

@@ -137,9 +137,10 @@
 
 - [x] P4 完成 + 门禁（/connect + top-level 完善；Telegram/Slack 实际测试逻辑；Feishu 等规划；doctor channel 检查增强；connect smoke 4/4 pass，token 场景/脱敏）
 
-- [ ] 最终回归 + 文档更新
+- [x] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
 - P4 完善: connect 命令真实 test (token 检查), doctor 增强, smoke 覆盖 wrong/missing token + 脱敏
-- 门禁: build + smoke + diff OK
-- 提交中
+- 最终修复: 同步本地化后的权限/状态线测试契约；清理 dashboard 尾随空格
+- 门禁: `npm run ci:check` 通过（619 unit + 67 smoke）；`npm audit --audit-level=high` 0 漏洞；旧名扫描无命中
+- 收尾记录: `docs/superpowers/reviews/20260706-zh-localized-ui-final-audit.md`

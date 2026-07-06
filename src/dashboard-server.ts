@@ -80,8 +80,8 @@ export class DashboardServer {
             try {
               const limit = Number(url.searchParams.get("limit")) || 10;
               // 简化：从 workflow 或 agent 获取会话列表
-              const sessions = (this.options.agentLoop as any).getRecentSessions?.(limit) || 
-                [{ id: "current", status: "active" }];
+              const sessions = (this.options.agentLoop as any).getRecentSessions?.(limit)
+                || [{ id: "current", status: "active" }];
               res.writeHead(200, { "Content-Type": "application/json" });
               res.end(JSON.stringify({ sessions }));
             } catch {

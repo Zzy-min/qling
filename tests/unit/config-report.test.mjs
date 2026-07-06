@@ -100,7 +100,7 @@ test("config report includes runtime permissions features and local boundary", (
   assert.match(text, /Workspace\s*: C:\/repo\/qling/);
   assert.match(text, /State dir\s*: C:\/state/);
   assert.match(text, /Cache dir\s*: C:\/state\/cache/);
-  assert.match(text, /Permissions\s*: ask\(确认\)/);
+  assert.match(text, /Permissions\s*: 询问\(确认\)/);
   assert.match(text, /Rules\s*: 1/);
   assert.match(text, /semantic_memory=on/);
   assert.match(text, /vision_tool=off/);
