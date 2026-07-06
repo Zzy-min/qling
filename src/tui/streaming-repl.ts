@@ -230,6 +230,8 @@ export class StreamingREPL {
         branch: snapshot.branch,
         workspace: this.agent.getWorkspaceDir(),
         ready: !this.inputQueue.isProcessing,
+        permissionMode: snapshot.permissionMode,
+        memoryStatus: "本地",  // 简单指示；未来可从 agent memory store 获取计数
       });
     } catch {
       this.ui.setStatusLine(null);

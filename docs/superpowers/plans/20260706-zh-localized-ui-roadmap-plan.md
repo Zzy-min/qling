@@ -141,6 +141,9 @@
 - 完善 setup i18n + advanced prompts 迁移
 - 增强 zh-cn.ts labels
 - 核心单元测试 (i18n/setup/cli-startup/slash/tui) 全绿 (150+)
-- build 成功
-- 继续硬编码扫描与 formatter 统一中
+- smoke 全绿 (58/58)
+- build + gates 通过
+- 已提交: 84f005b feat(i18n): P0 ...
+- 剩余 tui 变更待 P1 收敛
+- 继续 P1 TUI 界面升级
 

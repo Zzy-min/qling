@@ -1,4 +1,5 @@
 import { default as stringWidth } from "string-width";
+import { getLocalizedText } from "../i18n/index.js";
 
 export interface TopBarSnapshot {
   productName?: string;
@@ -98,7 +99,7 @@ export function formatTopBar(snapshot: TopBarSnapshot): string[] {
   const left = `${product} ${english} v${version}`;
   const workspace = `Workspace: ${workspaceName(snapshot.workspace)}`;
   const model = `Model: ${normalizeLabel(snapshot.model, "unknown")}`;
-  const ready = `${snapshot.ready === false ? "○" : "●"} ${snapshot.ready === false ? "Busy" : "Ready"}`;
+  const ready = `${snapshot.ready === false ? "○" : "●"} ${snapshot.ready === false ? "忙碌" : "就绪"}`;
   const tokens = `Tokens: ${formatTokenCount(snapshot.tokens)}`;
   const branch = `Git: ${normalizeLabel(snapshot.branch, "-")}`;
   const parts = [left, workspace, model, ready, tokens, branch];
@@ -135,20 +136,22 @@ function extractTarget(tool: string, command: string): string {
 }
 
 function toolAction(tool: string, command: string): string {
+  const t = getLocalizedText();
+  const tl = t.tui?.timeline || {};
   const normalized = tool.toLowerCase();
   if (normalized.includes("search") || normalized.includes("list") || /(^|\s)(ls|dir|find)(\s|$)/i.test(command)) {
-    return "读取目录";
+    return tl.readDir || "读取目录";
   }
   if (normalized.includes("read") || normalized.includes("fetch") || normalized.includes("file")) {
-    return "读取文件";
+    return tl.readFile || "读取文件";
   }
   if (normalized.includes("bash") || normalized.includes("shell") || normalized.includes("exec")) {
-    return "执行命令";
+    return tl.execCmd || "执行命令";
   }
   if (normalized.includes("write") || normalized.includes("edit")) {
-    return "写入文件";
+    return tl.writeFile || "写入文件";
   }
-  return tool || "工具调用";
+  return tl.toolCall || tool || "工具调用";
 }
 
 export function formatToolTimelineRow(event: ToolTimelineEvent): string {
@@ -178,11 +181,12 @@ export function formatResultBox(lines: string[], width: number): string[] {
 }
 
 export function formatInputFrame(options: InputFrameOptions): string[] {
+  const t = getLocalizedText();
   const safeWidth = normalizeWidth(options.width);
   const contentWidth = Math.max(20, safeWidth - 4);
   const value = options.value && options.value.length > 0
     ? options.value
-    : options.placeholder;
+    : (options.placeholder || "输入任务，或按 / 打开命令面板");
   const inputLine = `› ${value}`;
   return [
     "┌" + "─".repeat(contentWidth + 2) + "┐",
@@ -192,13 +196,42 @@ export function formatInputFrame(options: InputFrameOptions): string[] {
 }
 
 export function formatBottomHints(): string {
-  return "Enter 发送   Ctrl+N 换行   粘贴多行先编辑   Ctrl+C 清空/中断   /model 切换模型   /exit 退出";
+  const t = getLocalizedText();
+  return t.tui?.hints?.bottom || "Enter 发送   Ctrl+N 换行   粘贴多行先编辑   Ctrl+C 清空/中断   /model 切换模型   /exit 退出";
 }
 
-export function formatWelcomeGuide(width = 80): string[] {
-  const safeWidth = normalizeWidth(width);
-  return [
-    truncateVisible("3 步开始: 输入任务 → 按 / 打开命令面板 → /doctor 检查环境", safeWidth),
-    truncateVisible("常用入口 : /help 命令 · /privacy 边界 · /context 上下文 · Tab agents", safeWidth),
+export interface HomeSnapshot {
+  model?: string;
+  workspace?: string;
+  memoryStatus?: string;
+  permissionMode?: string;
+  recentSessions?: string[];
+  width?: number;
+}
+
+export function formatWelcomeGuide(width = 80, snapshot?: HomeSnapshot): string[] {
+  const t = getLocalizedText();
+  const safeWidth = normalizeWidth(width || snapshot?.width);
+  const home = t.tui?.home || {} as any;
+
+  const model = snapshot?.model || "unknown";
+  const ws = snapshot?.workspace ? workspaceName(snapshot.workspace) : "-";
+  const mem = snapshot?.memoryStatus || "本地";
+  const perm = snapshot?.permissionMode || "ask";
+
+  const lines: string[] = [
+    truncateVisible(`${home.title || "轻灵 · 本地工作台"}`, safeWidth),
+    truncateVisible(`${home.model || "模型"}: ${model}   ${home.workspace || "工作区"}: ${ws}`, safeWidth),
+    truncateVisible(`${home.memoryStatus || "记忆"}: ${mem}   ${home.permissionMode || "权限"}: ${perm}`, safeWidth),
   ];
+
+  if (snapshot?.recentSessions && snapshot.recentSessions.length > 0) {
+    const rec = snapshot.recentSessions.slice(0, 2).join(" | ");
+    lines.push(truncateVisible(`${home.recentSessions || "最近会话"}: ${rec}`, safeWidth));
+  }
+
+  lines.push(truncateVisible("3 步开始: 输入任务 → 按 / 打开命令面板 → /doctor 检查环境", safeWidth));
+  lines.push(truncateVisible(`常用入口 : /help · /privacy · /context · /doctor · ${home.recommended || "推荐命令"}`, safeWidth));
+
+  return lines;
 }

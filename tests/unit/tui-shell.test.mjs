@@ -8,6 +8,7 @@ import {
   formatRoleHeader,
   formatToolTimelineRow,
   formatTopBar,
+  formatWelcomeGuide,
 } from "../../dist/tui/shell.js";
 
 test("tui shell formats screenshot-style top bar", () => {
@@ -28,7 +29,7 @@ test("tui shell formats screenshot-style top bar", () => {
   assert.match(text, /轻灵 Qling v0\.5\.0/);
   assert.match(text, /Workspace: agent-cli/);
   assert.match(text, /Model: qling-agent-1\.0/);
-  assert.match(text, /Ready/);
+  assert.match(text, /就绪/);
   assert.match(text, /Tokens: 12\.4k/);
   assert.match(text, /Git: main/);
 });
@@ -76,4 +77,20 @@ test("tui shell formats result boxes and bottom input hints", () => {
   assert.match(hints, /Ctrl\+C/);
   assert.match(hints, /\/model 切换模型/);
   assert.match(hints, /\/exit 退出/);
+});
+
+test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
+  const lines = formatWelcomeGuide(80, {
+    model: "deepseek-chat",
+    workspace: "/proj/qling",
+    memoryStatus: "本地",
+    permissionMode: "ask",
+    recentSessions: ["sess-123"],
+  });
+  const text = lines.join("\n");
+  assert.match(text, /轻灵 · 本地工作台/);
+  assert.match(text, /模型: deepseek-chat/);
+  assert.match(text, /记忆状态: 本地/);
+  assert.match(text, /权限模式: ask/);
+  assert.match(text, /最近会话/);
 });

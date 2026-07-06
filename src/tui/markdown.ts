@@ -266,6 +266,8 @@ function renderInline(text: string): string {
   res = res.replace(/\*\*(.*?)\*\*/g, (_, p1) => BOLD(p1));
   // 替换内联代码 `code` -> S.s(code)
   res = res.replace(/`(.*?)`/g, (_, p1) => S.s(p1));
+  // 简单链接 [text](url) -> text (url dim)
+  res = res.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, p1, p2) => `${p1} ${S.d("(" + p2 + ")")}`);
   return res;
 }
 
@@ -303,7 +305,8 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
 
     // 2. 如果在代码块内部
     if (inCodeBlock) {
-      resultLines.push("  " + DIM(line));
+      const codeLine = line.length > width - 4 ? line.slice(0, width - 7) + "…" : line;
+      resultLines.push("  " + S.s(codeLine));
       i++;
       continue;
     }
@@ -371,7 +374,39 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       continue;
     }
 
-    // 7. 普通行
+    // 7. 引用块 >
+    const quoteMatch = line.match(/^(\s*)>\s?(.*)$/);
+    if (quoteMatch) {
+      const indent = quoteMatch[1] || "";
+      const content = quoteMatch[2] || "";
+      const prefix = indent + "  > ";
+      resultLines.push(...wrapVisibleText(content, width, prefix, prefix).map((l) => S.s(renderInline(l))));
+      i++;
+      continue;
+    }
+
+    // 8. 任务列表 - [ ] / - [x]
+    const taskMatch = line.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/);
+    if (taskMatch) {
+      const indent = taskMatch[1] || "";
+      const checked = taskMatch[2].trim().toLowerCase() === "x" ? "☑" : "☐";
+      const content = taskMatch[3] || "";
+      const firstPrefix = indent + `  ${checked} `;
+      const restPrefix = indent + "    ";
+      resultLines.push(...wrapVisibleText(content, width, firstPrefix, restPrefix).map(renderInline));
+      i++;
+      continue;
+    }
+
+    // 9. 水平分割线 ---
+    if (/^ {0,3}[-*_]{3,}\s*$/.test(line)) {
+      const hr = "─".repeat(Math.max(10, Math.min(60, width - 4)));
+      resultLines.push(DIM("  " + hr));
+      i++;
+      continue;
+    }
+
+    // 10. 普通行
     resultLines.push(...wrapVisibleText(line, width).map(renderInline));
     i++;
   }

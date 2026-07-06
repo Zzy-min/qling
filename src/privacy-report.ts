@@ -3,6 +3,7 @@ import { join } from "path";
 import type { SlashCommandContext } from "./commands/runtime.js";
 import { SessionRegistry } from "./session/session-registry.js";
 import { scanRuntimeDotEnvSecrets, type EnvSecretHit } from "./config.js";
+import { getLocalizedText } from "./i18n/index.js";
 
 export interface PrivacyReport {
   workspaceDir: string;
@@ -88,16 +89,17 @@ export function formatPrivacyReport(report: PrivacyReport): string[] {
     secretLines.push("   建议：轮换密钥 → 移至系统环境变量 → 删除 .env 中对应行 → 重新运行 /privacy 或 /doctor 确认。");
   }
 
+  const t = getLocalizedText();
   return [
     "",
-    "🔒 【本地数据留存】",
+    `🔒 【${t.privacy?.title || "本地数据留存"}】`,
     "-----------------------------------------",
-    `Workspace  : ${report.workspaceDir}`,
-    `State dir  : ${report.stateDir}`,
-    `Sessions   : ${report.sessionsDir}`,
-    `Cache dir  : ${report.cacheDir}`,
+    `${t.privacy?.workspaceDir || "Workspace"}  : ${report.workspaceDir}`,
+    `${t.privacy?.stateDir || "State dir"}  : ${report.stateDir}`,
+    `${t.privacy?.sessionsDir || "Sessions"}   : ${report.sessionsDir}`,
+    `${t.privacy?.cacheDir || "Cache dir"}  : ${report.cacheDir}`,
     `已存快照   : ${report.savedSessionCount}`,
-    `模型配置   : ${report.model}`,
+    `${t.labels.model || "模型配置"}   : ${report.model}`,
     ...secretLines,
     "-----------------------------------------",
     "本命令只读取本地状态，不上传诊断数据，也不扫描消息正文。",

@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { default as stringWidth } from "string-width";
-import { findSlashCompletion, formatSlashCommandPanel } from "../commands/index.js";
+import { findSlashCompletion, formatSlashCommandPanel, formatGroupedSlashPanel } from "../commands/index.js";
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
@@ -137,7 +137,7 @@ type DraftDisplaySource = "typed" | "pasted";
 export class StreamUI {
   private model: string;
   private tools: number;
-  private chromeStatus: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean } = {};
+  private chromeStatus: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean; permissionMode?: string; memoryStatus?: string } = {};
   private input = new InputBuffer();
   private running: boolean = false;
   private inputCallback: ((cmd: string) => Promise<void>) | null = null;
@@ -210,7 +210,7 @@ export class StreamUI {
     this.statusLineEnabled = enabled;
   }
 
-  setChromeStatus(status: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean }): void {
+  setChromeStatus(status: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean; permissionMode?: string; memoryStatus?: string }): void {
     this.chromeStatus = { ...this.chromeStatus, ...status };
   }
 
@@ -258,7 +258,15 @@ export class StreamUI {
     });
     process.stdout.write(S.p(lines[0]) + "\n");
     process.stdout.write(S.d(lines[1]) + "\n");
-    for (const line of formatWelcomeGuide(width)) {
+    const homeSnap = {
+      model: this.model,
+      workspace: this.chromeStatus.workspace,
+      memoryStatus: this.chromeStatus.memoryStatus || "本地",
+      permissionMode: this.chromeStatus.permissionMode || "ask",
+      recentSessions: [],
+      width,
+    };
+    for (const line of formatWelcomeGuide(width, homeSnap)) {
       process.stdout.write(DIM(line) + "\n");
     }
   }
@@ -552,7 +560,11 @@ export class StreamUI {
     if (matches.length > 0 && this.slashCompletionSelectedIndex >= matches.length) {
       this.slashCompletionSelectedIndex = 0;
     }
-    return formatSlashCommandPanel(this.input.value, this.slashCompletionSelectedIndex, process.stdout.columns || 80, 8);
+    const inputVal = this.input.value || "";
+    if (inputVal === "/" || inputVal === "") {
+      return formatGroupedSlashPanel(process.stdout.columns || 80);
+    }
+    return formatSlashCommandPanel(inputVal, this.slashCompletionSelectedIndex, process.stdout.columns || 80, 8);
   }
 
   private isSlashCompletionPrefix(value: string): boolean {
