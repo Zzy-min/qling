@@ -167,10 +167,23 @@ export function formatToolTimelineRow(event: ToolTimelineEvent): string {
   return truncateVisible(`${base}  ${duration}`, width);
 }
 
-export function formatResultBox(lines: string[], width: number): string[] {
+export function formatResultBox(lines: string[], width: number, options?: { compactLong?: boolean }): string[] {
   const safeWidth = normalizeWidth(width);
   const contentWidth = Math.max(20, safeWidth - 4);
-  const normalizedLines = lines.length > 0 ? lines : [""];
+  let normalizedLines = lines.length > 0 ? lines : [""];
+
+  const t = getLocalizedText();
+  const lo = t.tui?.longOutput || {} as any;
+
+  // P1: 长输出避免信息墙 (默认对 >8 行的结果启用紧凑模式)
+  const doCompact = options?.compactLong !== false && normalizedLines.length > 8;
+  if (doCompact) {
+    const head = normalizedLines.slice(0, 4);
+    const tail = normalizedLines.slice(-2);
+    const note = `${lo.collapsed || "... (长输出已折叠)"} (${normalizedLines.length} ${lo.lines || "行"})`;
+    normalizedLines = [...head, note, ...tail];
+  }
+
   const top = "┌" + "─".repeat(contentWidth + 2) + "┐";
   const body = normalizedLines.map((line) => {
     const text = truncateVisible(line, contentWidth);

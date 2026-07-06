@@ -303,9 +303,13 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       continue;
     }
 
-    // 2. 如果在代码块内部
+    // 2. 如果在代码块内部 (P1: 长行避免信息墙 + 宽字符)
     if (inCodeBlock) {
-      const codeLine = line.length > width - 4 ? line.slice(0, width - 7) + "…" : line;
+      const maxCode = Math.max(10, width - 6);
+      let codeLine = line;
+      if (sw(line) > maxCode) {
+        codeLine = truncateVisible(line, maxCode - 1) + "…";
+      }
       resultLines.push("  " + S.s(codeLine));
       i++;
       continue;

@@ -79,6 +79,31 @@ test("tui shell formats result boxes and bottom input hints", () => {
   assert.match(hints, /\/exit 退出/);
 });
 
+test("tui shell formats result box with P1 long-output compact", () => {
+  const longLines = Array.from({ length: 20 }, (_, i) => `line ${i}`);
+  const compact = formatResultBox(longLines, 80, { compactLong: true }).join("\n");
+  assert.match(compact, /长输出已折叠/);
+  assert.match(compact, /20/);
+  // 头部和尾部保留
+  assert.match(compact, /line 0/);
+  assert.match(compact, /line 19/);
+});
+
+test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
+  const home = formatWelcomeGuide(80, {
+    model: "deepseek-chat",
+    workspace: "/proj/qling",
+    memoryStatus: "跨会话",
+    permissionMode: "ask",
+    recentSessions: ["sess-abc123", "sess-def456"],
+  }).join("\n");
+
+  assert.match(home, /轻灵 · 本地工作台/);
+  assert.match(home, /模型.*deepseek-chat/);
+  assert.match(home, /记忆.*跨会话/);
+  assert.match(home, /最近会话.*sess-abc/);
+});
+
 test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
   const lines = formatWelcomeGuide(80, {
     model: "deepseek-chat",

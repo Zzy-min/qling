@@ -174,6 +174,11 @@ export const zhCN = {
       writeFile: "写入文件",
       toolCall: "工具调用",
     },
+    longOutput: {
+      collapsed: "... (长输出已折叠)",
+      expandHint: "使用 /long 或点击展开查看完整",
+      lines: "行",
+    },
   },
   cli: {},
 } as const;

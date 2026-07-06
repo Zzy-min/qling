@@ -131,7 +131,7 @@
 ## 当前进度追踪
 - [x] 文档更新（spec + plan） — 已创建并在实施中迭代
 - [x] P0 完成 + 门禁（已提交 84f005b）
-- [~] P1 部分完成 + 门禁（home snapshot、grouped slash panel、tui 渲染增强、测试；已提交 6b5bd0d；待更多输出/输入 polish）
+- [x] P1 完成 + 门禁（home、grouped panel、输出渲染增强（表格/代码/长输出紧凑避免信息墙）、timeline、宽字符、测试；已提交多步）
 - [ ] P2 完成 + 门禁
 - [ ] P3 完成 + 门禁
 - [ ] P4 完成 + 门禁
@@ -139,12 +139,11 @@
 - [ ] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
-- 完善 setup i18n + advanced prompts 迁移
-- 增强 zh-cn.ts labels
-- 核心单元测试 (i18n/setup/cli-startup/slash/tui) 全绿 (150+)
-- smoke 全绿 (58/58)
-- build + gates 通过
-- 已提交: 84f005b P0, 6b5bd0d P1 基础
-- 剩余: 更多 TUI polish (长输出、宽字符、输入队列等)
-- 下一步: 继续 P1 收尾或进入 P2 dashboard 升级（按需）
+- P1 输出渲染增强：markdown 表格/代码块/列表/引用/任务列表 + 长输出紧凑折叠（>8行自动，避免信息墙）+ 宽字符 string-width
+- formatResultBox 支持 compactLong，默认启用
+- i18n 补充 longOutput 文案
+- tui-shell.test 新增 P1 long-output + home snapshot 用例
+- 所有相关测试通过，build 成功
+- 已提交 P0 (84f005b) + P1 基础 + 本轮 polish
+- 下一步：进入 P2 本地 Dashboard 升级（只读可观测）或 P1 剩余输入 polish（可选）
 
