@@ -140,14 +140,9 @@
 - [ ] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
-- P1 输出渲染增强：markdown 表格/代码块/列表/引用/任务列表 + 长输出紧凑折叠（>8行自动，避免信息墙）+ 宽字符 string-width
-- formatResultBox 支持 compactLong，默认启用
-- i18n 补充 longOutput 文案
-- tui-shell.test 新增 P1 long-output + home snapshot 用例
-- 所有相关测试通过，build 成功，smoke OK，diff clean
-- 已提交:
-  - 84f005b P0
-  - 6b5bd0d P1 基础
-  - 9465ea3 P1 完成 - 输出渲染 + 长输出紧凑
-- P1 标记完成。下一步：P2 Dashboard（推荐）或 P3/P4。
+- P2 完善: 更多端点 (/api/sessions, /permissions, /doctor) + HTML panels + dashboard smoke 通过
+- 输入体验 polish: hints 队列提示
+- P3 起步: /knowledge + top-level "知识"/kb/rag；中文搜索引用占位 + 模型推荐
+- 提交 f31d911
+- P0/P1/P2 完成，P3 基础就绪。
 
