@@ -132,8 +132,9 @@
 - [x] 文档更新（spec + plan） — 已创建并在实施中迭代
 - [x] P0 完成 + 门禁（已提交 84f005b）
 - [x] P1 完成 + 门禁（已提交 9465ea3）
-- [~] P2 启动 + 门禁（自包含中文只读 Dashboard：状态/Missions/Metrics/权限 + 控制按钮；API 兼容；提交 cf4df66；待 smoke + 更多数据源）
-- [ ] P3 完成 + 门禁
+- [x] P2 完成 + 门禁（更多端点 /api/sessions/permissions/doctor；HTML 动态 panels；dashboard smoke 通过；输入体验小 polish）
+- [x] P3 起步 + 门禁（/knowledge + top-level 知识/kb/rag；基本中文搜索+引用占位 + 模型推荐；已注册）
+
 - [ ] P4 完成 + 门禁
 - [ ] P4 完成 + 门禁
 - [ ] 最终回归 + 文档更新

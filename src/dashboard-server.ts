@@ -7,6 +7,8 @@ import * as http from "http";
 import { MetricsCollector } from "./metrics/collector.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
 import { AgentLoop } from "./agent-loop.js";
+import { buildLocalPermissionsReport } from "./permissions-report.js";
+import { buildLocalStatusReport } from "./local-status-report.js";
 
 export interface DashboardOptions {
   port: number;
@@ -70,6 +72,53 @@ export class DashboardServer {
             const list = manager.listMissions();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(list));
+            return;
+          }
+
+          // P2 增强: sessions (只读)
+          if (url.pathname === "/api/sessions" && req.method === "GET") {
+            try {
+              const limit = Number(url.searchParams.get("limit")) || 10;
+              // 简化：从 workflow 或 agent 获取会话列表
+              const sessions = (this.options.agentLoop as any).getRecentSessions?.(limit) || 
+                [{ id: "current", status: "active" }];
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ sessions }));
+            } catch {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ sessions: [] }));
+            }
+            return;
+          }
+
+          // P2 增强: permissions (只读)
+          if (url.pathname === "/api/permissions" && req.method === "GET") {
+            try {
+              const config = (this.options.agentLoop as any).config || {};
+              const report = buildLocalPermissionsReport({
+                defaultMode: config.guard?.permissions?.default || "ask",
+                rules: config.guard?.permissions?.rules || [],
+                env: process.env,
+              });
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(report));
+            } catch {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ defaultMode: "ask", rules: [] }));
+            }
+            return;
+          }
+
+          // P2 增强: doctor 简要快照 (只读)
+          if (url.pathname === "/api/doctor" && req.method === "GET") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              status: "ok",
+              node: process.version,
+              dashboard: true,
+              features: { dashboard: true },
+              note: "使用 /doctor 命令获取完整本地诊断"
+            }));
             return;
           }
 
@@ -146,6 +195,16 @@ export class DashboardServer {
     </div>
 
     <div class="card">
+      <div class="section-title">会话 Sessions</div>
+      <div id="sessions-panel">加载中...</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Doctor 快照</div>
+      <div id="doctor-panel">加载中...</div>
+    </div>
+
+    <div class="card">
       <div class="section-title">最近指标 / 工具调用 (最近 20)</div>
       <div id="metrics-panel" class="log">加载中...</div>
     </div>
@@ -212,16 +271,41 @@ export class DashboardServer {
     }
 
     async function loadPerm() {
-      // 简化：从 status 或直接提示本地边界
-      const el = document.getElementById('perm-panel');
-      el.innerHTML = \`
-        <b>默认</b>: ask (确认)<br>
-        <span class="small">所有操作本地执行 · 权限可通过 /permissions 查看与配置</span>
-      \`;
+      try {
+        const p = await fetchJSON('api/permissions');
+        const el = document.getElementById('perm-panel');
+        el.innerHTML = \`
+          <b>默认</b>: \${p.defaultMode || 'ask'}<br>
+          <b>规则</b>: \${p.rules?.length || 0}<br>
+          <span class="small">本地权限边界</span>
+        \`;
+      } catch(e) {
+        const el = document.getElementById('perm-panel');
+        el.innerHTML = '权限信息获取失败';
+      }
+    }
+
+    async function loadSessions() {
+      try {
+        const s = await fetchJSON('api/sessions');
+        let el = document.getElementById('sessions-panel');
+        if (!el) return;
+        const list = s.sessions || [];
+        el.innerHTML = list.length ? list.slice(0,3).map((sess: any) => \`<div class="metric"><b>\${(sess.id||'sess').slice(0,12)}</b> \${sess.status||''}</div>\`).join('') : '<div class="small">无活跃会话</div>';
+      } catch(e){}
+    }
+
+    async function loadDoctor() {
+      try {
+        const d = await fetchJSON('api/doctor');
+        let el = document.getElementById('doctor-panel');
+        if (!el) return;
+        el.innerHTML = \`<b>状态</b>: \${d.status || 'ok'} <span class="pill ok">本地</span>\`;
+      } catch(e){}
     }
 
     async function refreshAll() {
-      await Promise.all([loadStatus(), loadMissions(), loadMetrics(), loadPerm()]);
+      await Promise.all([loadStatus(), loadMissions(), loadMetrics(), loadPerm(), loadSessions(), loadDoctor()]);
     }
 
     async function pauseMission() {
