@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import type { SlashCommandContext } from "./commands/runtime.js";
+import { getLocalizedText } from "./i18n/index.js";
 
 export interface StatusLineSnapshot {
   model: string;
@@ -75,13 +76,15 @@ export function resolveShortSessionId(sessionId: string): string {
 }
 
 export function formatPermissionMode(mode: string | null | undefined): string {
-  switch ((mode ?? "").toLowerCase()) {
+  const t = getLocalizedText();
+  const m = (mode ?? "").toLowerCase();
+  switch (m) {
     case "allow":
-      return "allow(自动)";
+      return "允许(自动)";
     case "ask":
-      return "ask(确认)";
+      return "询问(确认)";
     case "deny":
-      return "deny(拒绝)";
+      return "拒绝";
     default:
       return "-(未知)";
   }
@@ -133,25 +136,26 @@ function resolveTokenBudgetMax(agentLoop: any): number | null {
 }
 
 export function formatStatusLine(snapshot: StatusLineSnapshot): string {
-  const goal = snapshot.goalStatus || "none";
+  const t = getLocalizedText();
+  const goal = snapshot.goalStatus || "无";
   const branch = snapshot.branch || "-";
   const permission = formatPermissionMode(snapshot.permissionMode);
   const cost = formatCostEstimate(snapshot.tokens, snapshot.costPer1kTokens);
   const parts = [
-    `model=${snapshot.model || "unknown"}`,
-    `session=${resolveShortSessionId(snapshot.sessionId)}`,
-    `branch=${branch}`,
-    `perm=${permission}`,
-    `goal=${goal}`,
-    `tasks=${snapshot.activeTasks}`,
-    `tokens=${Number(snapshot.tokens ?? 0).toLocaleString()}`,
-    `toksrc=${normalizeTokenSource(snapshot.tokenSource)}`,
-    `ctx=${formatContextUsage(snapshot.tokens, snapshot.maxTokens)}`,
-    cost === "-" ? "cost=-" : `cost${cost}`,
+    `模型=${snapshot.model || "未知"}`,
+    `会话=${resolveShortSessionId(snapshot.sessionId)}`,
+    `分支=${branch}`,
+    `权限=${permission}`,
+    `目标=${goal}`,
+    `任务=${snapshot.activeTasks}`,
+    `令牌=${Number(snapshot.tokens ?? 0).toLocaleString()}`,
+    `来源=${normalizeTokenSource(snapshot.tokenSource)}`,
+    `上下文=${formatContextUsage(snapshot.tokens, snapshot.maxTokens)}`,
+    cost === "-" ? "成本=-" : `成本${cost}`,
   ];
   const queue = formatInputQueueStatus(snapshot.inputQueue);
   if (queue) {
-    parts.push(`queue=${queue}`);
+    parts.push(`队列=${queue}`);
   }
   return parts.join("  ");
 }

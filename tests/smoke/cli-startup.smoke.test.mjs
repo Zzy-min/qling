@@ -1057,11 +1057,11 @@ test("cli startup smoke: chinese statusline alias exits with code 0 and prints l
 
     assert.equal(result.status, 0);
     assert.match(result.stdout, /statusline/);
-    assert.match(result.stdout, /model=local-status/);
-    assert.match(result.stdout, /session=-/);
-    assert.match(result.stdout, /branch=main/);
-    assert.match(result.stdout, /ctx=0\/120,000\(0%\)/);
-    assert.match(result.stdout, /cost≈\$0\.0000/);
+    assert.match(result.stdout, /模型=local-status/);
+    assert.match(result.stdout, /会话=-/);
+    assert.match(result.stdout, /分支=main/);
+    assert.match(result.stdout, /上下文=0\/120,000\(0%\)/);
+    assert.match(result.stdout, /成本≈\$0\.0000/);
     assert.doesNotMatch(result.stdout, /SECRET_STATUSLINE_SESSION_BODY/);
     assert.doesNotMatch(result.stdout, /sk-statusline-smoke-secret/);
   } finally {
@@ -1124,7 +1124,7 @@ test("cli startup smoke: permissions exits with code 0 and prints local permissi
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /本地权限状态/);
-  assert.match(result.stdout, /Default\s*: ask\(确认\)/);
+  assert.match(result.stdout, /Default\s*:\s*询问\(确认\)/);
   assert.match(result.stdout, /QLING_PERMISSIONS_MODE=ask/);
   assert.match(result.stdout, /不修改配置/);
 });
@@ -1150,7 +1150,7 @@ test("cli startup smoke: permissions explain exits with code 0 and keeps secrets
     assert.equal(result.status, 0);
     assert.match(result.stdout, /权限解释/);
     assert.match(result.stdout, /Tool\s*: bash/);
-    assert.match(result.stdout, /Decision\s*: ask\(确认\)/);
+    assert.match(result.stdout, /Decision\s*:\s*询问\(确认\)/);
     assert.match(result.stdout, /Matched\s*: bash/);
     assert.match(result.stdout, /shell requires review/);
     assert.doesNotMatch(result.stdout, /SECRET_PERMISSIONS_EXPLAIN_SESSION_BODY/);

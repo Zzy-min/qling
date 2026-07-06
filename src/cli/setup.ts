@@ -49,36 +49,38 @@ export function formatSetupApiKeyInstructions(keyProvided: boolean): string[] {
   const t = getLocalizedText();
   const lines = [
     "",
-    keyProvided ? t.setup.keyNotSaved : "API Key 未配置；需要调用模型前请先设置系统环境变量。",
-    "Windows PowerShell（用户级持久化）:",
+    keyProvided ? t.setup.keyNotSaved : t.setup.keyNotConfigured,
+    t.setup.windowsPowershellPersistent,
     `  ${t.setup.windowsEnvExample}`,
-    "当前 PowerShell 临时生效:",
+    t.setup.windowsPowershellTemp,
     "  $env:QLING_LLM_API_KEY='<your-key>'",
-    "说明: 不建议把 API key 写入项目 .env 或 ~/.qling/.env。",
+    t.setup.keyEnvNote,
   ];
   return lines;
 }
 
 export async function runSetup() {
   const rl = readline.createInterface({ input, output });
+  const t = getLocalizedText();
 
   console.log("\n=========================================");
-  console.log(getLocalizedText().setup.title);
+  console.log(t.setup.title);
   console.log("=========================================\n");
-  console.log(getLocalizedText().setup.quickPath);
+  console.log(t.setup.quickPath);
 
-  console.log("\n请选择 LLM 提供商 (输入数字序号):");
-  console.log("1. DeepSeek (推荐)");
-  console.log("2. 阿里云百炼 (Qwen)");
-  console.log("3. 智谱清言 (GLM)");
-  console.log("4. 月之暗面 (Kimi)");
-  console.log("5. MiniMax (海螺)");
-  console.log("6. Xiaomi MiMo (按量计费)");
-  console.log("7. Xiaomi MiMo (Token Plan 订阅用户)");
-  console.log("8. 硅基流动 (SiliconFlow)");
-  console.log("9. OpenAI");
-  console.log("10. 本地部署 (Ollama)");
-  console.log("11. 自定义 (Custom)");
+  console.log("\n" + t.setup.chooseProvider);
+  const providerList = t.setup.providers;
+  console.log("1. " + providerList["1"]);
+  console.log("2. " + providerList["2"]);
+  console.log("3. " + providerList["3"]);
+  console.log("4. " + providerList["4"]);
+  console.log("5. " + providerList["5"]);
+  console.log("6. " + providerList["6"]);
+  console.log("7. " + providerList["7"]);
+  console.log("8. " + providerList["8"]);
+  console.log("9. " + providerList["9"]);
+  console.log("10. " + providerList["10"]);
+  console.log("11. " + providerList["11"]);
 
   const choice = (await rl.question("\n您的选择 [默认: 1]: ")).trim() || "1";
 
@@ -87,14 +89,16 @@ export async function runSetup() {
   let pModel = "";
 
   if (choice === "11" || !PRESETS[choice]) {
-    pName = (await rl.question("输入 Provider 名称: ")).trim() || "custom";
-    pEndpoint = (await rl.question("输入 API Base URL (例如 https://api.xxx.com/v1): ")).trim();
-    pModel = (await rl.question("输入默认 Model 名称: ")).trim();
+    pName = (await rl.question(t.setup.customPrompts.providerName)).trim() || "custom";
+    pEndpoint = (await rl.question(t.setup.customPrompts.endpoint)).trim();
+    pModel = (await rl.question(t.setup.customPrompts.model)).trim();
   } else {
     const preset = PRESETS[choice];
     pName = preset.name;
-    pEndpoint = (await rl.question(`配置 Endpoint URL [默认: ${preset.endpoint}]: `)).trim() || preset.endpoint;
-    pModel = (await rl.question(`配置 Model 名称 [默认: ${preset.model}]: `)).trim() || preset.model;
+    const epPrompt = (t.setup.configEndpointPrompt || "配置 Endpoint URL [默认: {endpoint}]: ").replace("{endpoint}", preset.endpoint);
+    const modelPrompt = (t.setup.configModelPrompt || "配置 Model 名称 [默认: {model}]: ").replace("{model}", preset.model);
+    pEndpoint = (await rl.question(epPrompt)).trim() || preset.endpoint;
+    pModel = (await rl.question(modelPrompt)).trim() || preset.model;
   }
 
   const preset = PRESETS[choice];
@@ -102,16 +106,16 @@ export async function runSetup() {
   const apiKey = await rl.question(`${getLocalizedText().setup.keyPrompt}${keyHint}: `);
   const key = apiKey.trim();
 
-  console.log("\n-----------------------------------------");
+  console.log("\n" + t.setup.summaryHeader);
   console.log(`Provider : ${pName}`);
   console.log(`Endpoint : ${pEndpoint}`);
   console.log(`Model    : ${pModel}`);
   console.log(`API Key  : ${key ? "未保存到 .env（请配置系统环境变量）" : "(未配置)"}`);
-  console.log("-----------------------------------------");
+  console.log(t.setup.summaryFooter);
 
-  const confirm = await rl.question("保存为全局默认配置? (Y/n): ");
+  const confirm = await rl.question(t.setup.confirmSave);
   if (confirm.trim().toLowerCase() === 'n') {
-    console.log("已取消配置。");
+    console.log(t.setup.canceled);
     rl.close();
     return;
   }
@@ -123,39 +127,39 @@ export async function runSetup() {
     model: pModel,
   });
 
-  const advanced = await rl.question("\n是否进入 Advanced 高级配置? (y/N): ");
+  const advanced = await rl.question("\n" + t.setup.advancedPrompt);
   if (advanced.trim().toLowerCase() === "y") {
-    const useForVision = await rl.question("是否将此 Provider 同时设为默认视觉分析 Provider? (y/N): ");
+    const useForVision = await rl.question(t.setup.advanced.vision);
     if (useForVision.trim().toLowerCase() === "y") {
       envLines.push(`QLING_VISION_PROVIDER=${pName}`);
       envLines.push(`QLING_VISION_MODEL=${pModel}`);
       envLines.push(`QLING_VISION_ENDPOINT=${pEndpoint}`);
     }
 
-    const enableDashboard = await rl.question("是否开启 Web 观测控制台 Dashboard? (y/N): ");
+    const enableDashboard = await rl.question(t.setup.advanced.dashboard);
     if (enableDashboard.trim().toLowerCase() === "y") {
       envLines.push("QLING_FEATURES_DASHBOARD=true");
       envLines.push("QLING_METRICS_ENABLED=true");
-      const port = await rl.question("  - 端口 [默认: 9999]: ");
+      const port = await rl.question(t.setup.advanced.dashboardPort);
       if (port.trim()) envLines.push(`QLING_DASHBOARD_PORT=${port.trim()}`);
     }
 
-    const enableSemantic = await rl.question("是否开启语义记忆? (y/N): ");
+    const enableSemantic = await rl.question(t.setup.advanced.semantic);
     if (enableSemantic.trim().toLowerCase() === "y") {
       envLines.push("QLING_FEATURES_SEMANTIC_MEMORY=true");
     }
 
-    const enableWorkflow = await rl.question("是否开启状态机编排与 Checkpoint? (y/N): ");
+    const enableWorkflow = await rl.question(t.setup.advanced.workflow);
     if (enableWorkflow.trim().toLowerCase() === "y") {
       envLines.push("QLING_FEATURES_WORKFLOW_RUNTIME=true");
     }
 
-    const enableSpecBoost = await rl.question("是否开启工具规范增强? (y/N): ");
+    const enableSpecBoost = await rl.question(t.setup.advanced.specBoost);
     if (enableSpecBoost.trim().toLowerCase() === "y") {
       envLines.push("QLING_FEATURES_TOOL_SPEC_BOOST=true");
     }
 
-    const enableDiscovery = await rl.question("是否开启动态技能发现? (y/N): ");
+    const enableDiscovery = await rl.question(t.setup.advanced.discovery);
     if (enableDiscovery.trim().toLowerCase() === "y") {
       envLines.push("QLING_FEATURES_DYNAMIC_DISCOVERY=true");
     }
@@ -165,17 +169,15 @@ export async function runSetup() {
   await fs.mkdir(path.dirname(globalEnvPath), { recursive: true });
   await fs.writeFile(globalEnvPath, envLines.join("\n") + "\n", "utf-8");
 
-  console.log(`\n配置已保存: ${globalEnvPath}`);
+  console.log(`\n${t.setup.savedTo}${globalEnvPath}`);
   for (const line of formatSetupApiKeyInstructions(Boolean(key))) {
     console.log(line);
   }
-  console.log("-----------------------------------------");
-  console.log("下一步:");
-  console.log("- `qling` 进入 TUI");
-  console.log("- `/help` 查看命令面板");
-  console.log("- `/doctor` 检查本地环境");
-  console.log("- `/privacy` 查看数据边界");
-  console.log("- `qling run \"分析这个仓库\"` 验证单次执行");
-  console.log("-----------------------------------------");
+  console.log(t.setup.summaryFooter);
+  console.log(t.setup.nextStepsHeader);
+  for (const s of t.setup.nextSteps) {
+    console.log(s);
+  }
+  console.log(t.setup.summaryFooter);
   rl.close();
 }

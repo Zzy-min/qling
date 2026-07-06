@@ -9,6 +9,8 @@ import { guardConfigFromEnv, scanRuntimeDotEnvSecrets, type EnvSecretHit } from 
 import { buildLocalHooksReport } from "./hooks-report.js";
 import { getLocalizedText } from "./i18n/index.js";
 
+const t = getLocalizedText();
+
 export type DoctorStatus = "pass" | "warn" | "fail";
 
 export interface DoctorCheck {
@@ -44,9 +46,10 @@ function summarize(checks: DoctorCheck[]): Record<DoctorStatus, number> {
 
 function checkLocalPath(id: string, label: string, path: string, exists: (path: string) => boolean): DoctorCheck {
   const resolved = resolve(path);
+  const t = getLocalizedText();
   return exists(resolved)
     ? { id, label, status: "pass", detail: resolved }
-    : { id, label, status: "warn", detail: `${resolved} 不存在；首次运行或迁移前可能需要初始化。` };
+    : { id, label, status: "warn", detail: `${resolved} ${t.doctor ? "不存在；首次运行或迁移前可能需要初始化。" : ""}` };
 }
 
 function isLoopbackUrl(raw: string): boolean {
@@ -276,18 +279,20 @@ function icon(status: DoctorStatus): string {
 }
 
 export function formatDoctorReport(report: DoctorReport): string[] {
+  const t = getLocalizedText();
+  const doctorTitle = t.doctor?.title || "Doctor - 本地环境诊断";
   const lines = [
     "",
-    "🩺 轻灵 Doctor（本地诊断）",
+    `🩺 ${t.product.name} ${doctorTitle}`,
     "-----------------------------------------",
-    `Summary: pass=${report.summary.pass} warn=${report.summary.warn} fail=${report.summary.fail}`,
+    `${t.doctor?.summary || "诊断摘要"}: pass=${report.summary.pass} warn=${report.summary.warn} fail=${report.summary.fail}`,
   ];
   for (const check of report.checks) {
     lines.push(`[${icon(check.status)}] ${check.label}: ${check.detail}`);
   }
   if (report.recommendations.length > 0) {
     lines.push("");
-    lines.push("后续步骤：");
+    lines.push(t.doctor?.recommendations || "建议");
     lines.push(...report.recommendations);
   }
   lines.push("-----------------------------------------");

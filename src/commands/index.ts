@@ -292,29 +292,90 @@ export function formatSlashCompletionHint(prefix: string, width = 80): string[] 
 }
 
 export function formatSlashCommandPanel(prefix: string, selectedIndex = 0, width = 80, limit = 8): string[] {
+  const t = getLocalizedText();
   const matches = findSlashCompletion(prefix, limit);
   const safeWidth = Math.max(30, Math.floor(Number(width) || 80));
   if (matches.length > 0) {
     const lines = matches.map((item, index) => {
       const marker = index === selectedIndex ? ">" : " ";
       const args = item.argumentHint ? ` ${item.argumentHint}` : "";
-      return truncatePanelLine(`${marker} ${item.name}${args}  [${item.category}]  ${item.description}`, safeWidth);
+      const cat = item.category || "local";
+      const cnCat = getChineseCategory(cat, t);
+      return truncatePanelLine(`${marker} ${item.name}${args}  [${cnCat}]  ${item.description}`, safeWidth);
     });
-    lines.push(truncatePanelLine("提示    : ↑/↓ 选择 · Tab 补全 · Enter 执行当前输入", safeWidth));
+    const panelHint = t.tui?.hints?.panel || "提示    : ↑/↓ 选择 · Tab 补全 · Enter 执行当前输入";
+    lines.push(truncatePanelLine(panelHint, safeWidth));
     return lines;
   }
 
   const hint = findExactSlashCommandForArgumentHint(prefix);
   if (!hint) return [];
   const arg = hint.argumentHint || hint.usage.replace(hint.name, "").trim();
+  const contHint = t.tui?.hints?.continueInput || "提示    : 继续输入参数 · Enter 执行当前输入";
   return [
     truncatePanelLine(`参数    : ${hint.name}${arg ? ` ${arg}` : ""}    ${hint.description}`, safeWidth),
-    truncatePanelLine("提示    : 继续输入参数 · Enter 执行当前输入", safeWidth),
+    truncatePanelLine(contHint, safeWidth),
   ];
 }
 
 function truncatePanelLine(line: string, width: number): string {
   return line.length > width ? line.slice(0, width - 1) + "…" : line;
+}
+
+function getChineseCategory(cat: string, t: any): string {
+  const cats = (t.tui?.slashCategories as Record<string, string>) || {};
+  const map: Record<string, string> = {
+    local: cats.common || "常用",
+    core: cats.common || "常用",
+    session: cats.context || "上下文",
+    git: cats.git || "Git",
+    memory: cats.memory || "记忆",
+    cloud: cats.connectors || "连接器",
+    skill: cats.advanced || "高级",
+  };
+  return cats[cat] || map[cat] || cat;
+}
+
+export function formatGroupedSlashPanel(width = 80): string[] {
+  const t = getLocalizedText();
+  const catalog = getSlashCommandCatalog();
+  const safeWidth = Math.max(30, Math.floor(Number(width) || 80));
+  const groups: Record<string, SlashCommandCatalogItem[]> = {};
+
+  for (const item of catalog) {
+    const cat = item.category || "local";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(item);
+  }
+
+  const order = ["local", "core", "session", "git", "memory", "cloud", "skill"];
+  const lines: string[] = [];
+  const panelHint = t.tui?.hints?.panel || "提示    : ↑/↓ 选择 · Tab 补全 · Enter 执行当前输入";
+  const merged: Record<string, SlashCommandCatalogItem[]> = {};
+
+  for (const key of order) {
+    const items = groups[key];
+    if (!items || items.length === 0) continue;
+    const cn = getChineseCategory(key, t);
+    if (!merged[cn]) merged[cn] = [];
+    merged[cn].push(...items);
+  }
+
+  lines.push(truncatePanelLine("轻灵命令面板 (按 / + Tab 过滤)", safeWidth));
+  lines.push(truncatePanelLine("─".repeat(Math.min(safeWidth, 60)), safeWidth));
+
+  for (const [cn, items] of Object.entries(merged)) {
+    lines.push(truncatePanelLine(`【${cn}】`, safeWidth));
+    for (const item of items.slice(0, 5)) {
+      const args = item.argumentHint ? ` ${item.argumentHint}` : "";
+      const desc = item.description.length > 30 ? item.description.slice(0, 28) + "…" : item.description;
+      lines.push(truncatePanelLine(`  ${item.name}${args}  ${desc}`, safeWidth));
+    }
+  }
+
+  lines.push(truncatePanelLine("─".repeat(Math.min(safeWidth, 60)), safeWidth));
+  lines.push(truncatePanelLine(panelHint, safeWidth));
+  return lines;
 }
 
 function findExactSlashCommandForArgumentHint(input: string): SlashCommandCatalogItem | null {

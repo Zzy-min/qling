@@ -351,6 +351,8 @@ test("cli: conflict returns CLI_INVALID_MODE_COMBINATION with exit code 2", () =
   assert.equal(result.kind, "error");
   assert.equal(result.code, "CLI_INVALID_MODE_COMBINATION");
   assert.equal(result.exitCode, 2);
+  // 使用统一 guidance formatter（含中文标签）
+  assert.match(result.message || "", /原因|模式冲突|下一步/);
 });
 
 test("cli: --continue and --resume cannot be combined", () => {
@@ -358,16 +360,19 @@ test("cli: --continue and --resume cannot be combined", () => {
   assert.equal(result.kind, "error");
   assert.equal(result.code, "CLI_INVALID_MODE_COMBINATION");
   assert.equal(result.exitCode, 2);
+  assert.match(result.message || "", /原因|模式冲突/);
 });
 
 test("cli: run mode cannot combine with --continue/--resume", () => {
   const continued = parseCliArgs(["run", "fix bug", "--continue"]);
   assert.equal(continued.kind, "error");
   assert.equal(continued.code, "CLI_INVALID_MODE_COMBINATION");
+  assert.match(continued.message || "", /原因|模式冲突/);
 
   const resumed = parseCliArgs(["run", "fix bug", "--resume", "session-123"]);
   assert.equal(resumed.kind, "error");
   assert.equal(resumed.code, "CLI_INVALID_MODE_COMBINATION");
+  assert.match(resumed.message || "", /原因|模式冲突/);
 });
 
 test("cli: missing --once task returns CLI_MISSING_TASK with exit code 2", () => {

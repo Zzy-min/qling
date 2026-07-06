@@ -26,16 +26,16 @@ test("statusline formatter includes local interaction state", () => {
     costPer1kTokens: 0.002,
   });
 
-  assert.match(line, /model=deepseek-chat/);
-  assert.match(line, /session=session_1/);
-  assert.match(line, /branch=main/);
-  assert.match(line, /perm=ask\(确认\)/);
-  assert.match(line, /goal=active/);
-  assert.match(line, /tasks=2/);
-  assert.match(line, /tokens=12,345/);
-  assert.match(line, /toksrc=provider/);
-  assert.match(line, /ctx=12,345\/120,000\(10%\)/);
-  assert.match(line, /cost≈\$0\.0247/);
+  assert.match(line, /模型=deepseek-chat/);
+  assert.match(line, /会话=session_1/);
+  assert.match(line, /分支=main/);
+  assert.match(line, /权限=询问\(确认\)/);
+  assert.match(line, /目标=active/);
+  assert.match(line, /任务=2/);
+  assert.match(line, /令牌=12,345/);
+  assert.match(line, /来源=provider/);
+  assert.match(line, /上下文=12,345\/120,000\(10%\)/);
+  assert.match(line, /成本≈\$0\.0247/);
 });
 
 test("statusline formatter degrades when optional fields are absent", () => {
@@ -49,16 +49,16 @@ test("statusline formatter degrades when optional fields are absent", () => {
     tokens: 0,
   });
 
-  assert.match(line, /model=unknown/);
-  assert.match(line, /session=-/);
-  assert.match(line, /branch=-/);
-  assert.match(line, /perm=-\(未知\)/);
-  assert.match(line, /goal=none/);
-  assert.match(line, /tasks=0/);
-  assert.match(line, /tokens=0/);
-  assert.match(line, /toksrc=unknown/);
-  assert.match(line, /ctx=0\/-/);
-  assert.match(line, /cost=-/);
+  assert.match(line, /模型=unknown/);
+  assert.match(line, /会话=-/);
+  assert.match(line, /分支=-/);
+  assert.match(line, /权限=-\(未知\)/);
+  assert.match(line, /目标=无/);
+  assert.match(line, /任务=0/);
+  assert.match(line, /令牌=0/);
+  assert.match(line, /来源=unknown/);
+  assert.match(line, /上下文=0\/-/);
+  assert.match(line, /成本=-/);
   assert.doesNotMatch(line, /queue=/);
 });
 
@@ -78,7 +78,7 @@ test("statusline formatter shows pending input queue without input bodies", () =
     },
   });
 
-  assert.match(line, /queue=2\/20/);
+  assert.match(line, /队列=2\/20/);
   assert.doesNotMatch(line, /private/i);
 });
 
@@ -98,7 +98,7 @@ test("statusline formatter shows active input processing when no input is pendin
     },
   });
 
-  assert.match(line, /queue=run\/20/);
+  assert.match(line, /队列=run\/20/);
 });
 
 test("statusline formatter omits idle input queue", () => {
@@ -175,8 +175,8 @@ test("statusline snapshot reads local cost estimate from env", async () => {
     const line = formatStatusLine(snapshot);
 
     assert.equal(snapshot.costPer1kTokens, 0.002);
-    assert.match(line, /ctx=12,000\/120,000\(10%\)/);
-    assert.match(line, /cost≈\$0\.0240/);
+    assert.match(line, /上下文=12,000\/120,000\(10%\)/);
+    assert.match(line, /成本≈\$0\.0240/);
   } finally {
     if (previous === undefined) delete process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS;
     else process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS = previous;
@@ -190,9 +190,9 @@ test("statusline short session id keeps compact prompt width", () => {
 });
 
 test("statusline permission mode formatter explains local tool behavior", () => {
-  assert.equal(formatPermissionMode("allow"), "allow(自动)");
-  assert.equal(formatPermissionMode("ask"), "ask(确认)");
-  assert.equal(formatPermissionMode("deny"), "deny(拒绝)");
+  assert.equal(formatPermissionMode("allow"), "允许(自动)");
+  assert.equal(formatPermissionMode("ask"), "询问(确认)");
+  assert.equal(formatPermissionMode("deny"), "拒绝");
   assert.equal(formatPermissionMode(null), "-(未知)");
   assert.equal(formatPermissionMode("custom"), "-(未知)");
 });
@@ -213,15 +213,15 @@ test("local statusline snapshot uses config model, permission mode, and git bran
     const line = formatStatusLine(snapshot);
 
     assert.equal(snapshot.branch, "main");
-    assert.match(line, /model=local-status-model/);
-    assert.match(line, /session=-/);
-    assert.match(line, /branch=main/);
-    assert.match(line, /perm=ask\(确认\)/);
-    assert.match(line, /goal=none/);
-    assert.match(line, /tasks=0/);
-    assert.match(line, /tokens=0/);
-    assert.match(line, /ctx=0\/120,000\(0%\)/);
-    assert.match(line, /cost≈\$0\.0000/);
+    assert.match(line, /模型=local-status-model/);
+    assert.match(line, /会话=-/);
+    assert.match(line, /分支=main/);
+    assert.match(line, /权限=询问\(确认\)/);
+    assert.match(line, /目标=无/);
+    assert.match(line, /任务=0/);
+    assert.match(line, /令牌=0/);
+    assert.match(line, /上下文=0\/120,000\(0%\)/);
+    assert.match(line, /成本≈\$0\.0000/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

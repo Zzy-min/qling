@@ -182,15 +182,17 @@ export interface CliResolutionErr {
 export type CliResolution = CliResolutionOk | CliResolutionErr;
 
 export function formatCliError(code: string, message: string): string {
-  return message.includes("\n原因:")
-    ? `Error: [${code}]\n${message}`
-    : `Error: [${code}]\n${formatLocalGuidancePanel({
-      title: message,
-      reason: "命令参数组合或取值不符合轻灵 CLI 约定。",
-      next: "运行 `qling help` 查看可用命令，或改用推荐的新手路径。",
-      example: "qling help",
-      boundary: getLocalizedText().boundaries.localValidation,
-    })}`;
+  const t = getLocalizedText();
+  if (message.includes("\n原因:") || message.includes(t.labels.reason + ":")) {
+    return `Error: [${code}]\n${message}`;
+  }
+  return `Error: [${code}]\n${formatLocalGuidancePanel({
+    title: message,
+    reason: "命令参数组合或取值不符合轻灵 CLI 约定。",
+    next: "运行 `qling help` 查看可用命令，或改用推荐的新手路径。",
+    example: "qling help",
+    boundary: t.boundaries.localValidation,
+  })}`;
 }
 
 export function parseCliArgs(args: string[]): CliResolution {
@@ -334,10 +336,17 @@ export function parseCliArgs(args: string[]): CliResolution {
   }
 
   if (global.continueSession && global.resumeSession) {
+    const t = getLocalizedText();
     return {
       kind: "error",
       code: "CLI_INVALID_MODE_COMBINATION",
-      message: "`--continue` and `--resume <session>` are mutually exclusive.",
+      message: formatLocalGuidancePanel({
+        title: t.errors.cli.invalidModeTitle,
+        reason: t.errors.cli.invalidModeReason,
+        next: t.errors.cli.invalidModeNext,
+        example: t.errors.cli.invalidModeExample,
+        boundary: t.boundaries.localValidation,
+      }),
       exitCode: 2,
     };
   }
@@ -349,21 +358,34 @@ export function parseCliArgs(args: string[]): CliResolution {
     (modeFromSubcommand ? 1 : 0) + (modeFromAliasChat ? 1 : 0) + (modeFromAliasRepl ? 1 : 0) + (hasOnce ? 1 : 0);
 
   if (explicitModeCount > 1) {
+    const t = getLocalizedText();
     return {
       kind: "error",
       code: "CLI_INVALID_MODE_COMBINATION",
-      message:
-        "modes are mutually exclusive. Use one of: run | chat | repl | --tui | --repl | --once \"task\" | \"task\"",
+      message: formatLocalGuidancePanel({
+        title: t.errors.cli.invalidModeTitle,
+        reason: t.errors.cli.invalidModeReason,
+        next: t.errors.cli.invalidModeNext,
+        example: t.errors.cli.invalidModeExample,
+        boundary: t.boundaries.localValidation,
+      }),
       exitCode: 2,
     };
   }
 
   if (modeFromSubcommand === "run") {
     if (global.continueSession || global.resumeSession) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`--continue/--resume` only work in interactive chat/repl modes.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: t.errors.cli.invalidModeReason,
+          next: t.errors.cli.invalidModeNext,
+          example: t.errors.cli.invalidModeExample,
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -387,10 +409,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (isManagementMode(modeFromSubcommand)) {
     if (global.continueSession || global.resumeSession) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`--continue/--resume` only work in interactive chat/repl modes.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: t.errors.cli.invalidModeReason,
+          next: t.errors.cli.invalidModeNext,
+          example: t.errors.cli.invalidModeExample,
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -399,10 +428,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (modeFromSubcommand === "chat") {
     if (hasPositional) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`chat` mode does not accept a one-shot task. Use `qling run \"task\"`.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: "`chat` 模式不接受单次任务字符串。",
+          next: "使用 `qling run \"task\"` 执行单次任务。",
+          example: "qling run \"分析这个仓库\"",
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -411,10 +447,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (modeFromSubcommand === "repl") {
     if (hasPositional) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`repl` mode does not accept a one-shot task. Use `qling run \"task\"`.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: "`repl` 模式不接受单次任务字符串。",
+          next: "使用 `qling run \"task\"` 执行单次任务。",
+          example: "qling run \"分析这个仓库\"",
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -423,10 +466,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (modeFromAliasChat) {
     if (hasPositional) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`--tui` mode does not accept a one-shot task. Use `qling run \"task\"`.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: "`--tui` 模式不接受单次任务字符串。",
+          next: "使用 `qling run \"task\"` 执行单次任务。",
+          example: "qling run \"分析这个仓库\"",
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -435,10 +485,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (modeFromAliasRepl) {
     if (hasPositional) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`--repl` mode does not accept a one-shot task. Use `qling run \"task\"`.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: "`--repl` 模式不接受单次任务字符串。",
+          next: "使用 `qling run \"task\"` 执行单次任务。",
+          example: "qling run \"分析这个仓库\"",
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -447,10 +504,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (hasOnce) {
     if (global.continueSession || global.resumeSession) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`--continue/--resume` only work in interactive chat/repl modes.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: t.errors.cli.invalidModeReason,
+          next: t.errors.cli.invalidModeNext,
+          example: t.errors.cli.invalidModeExample,
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -459,10 +523,17 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (hasPositional) {
     if (global.continueSession || global.resumeSession) {
+      const t = getLocalizedText();
       return {
         kind: "error",
         code: "CLI_INVALID_MODE_COMBINATION",
-        message: "`--continue/--resume` only work in interactive chat/repl modes.",
+        message: formatLocalGuidancePanel({
+          title: t.errors.cli.invalidModeTitle,
+          reason: t.errors.cli.invalidModeReason,
+          next: t.errors.cli.invalidModeNext,
+          example: t.errors.cli.invalidModeExample,
+          boundary: t.boundaries.localValidation,
+        }),
         exitCode: 2,
       };
     }
@@ -694,11 +765,20 @@ function parseValueOption(
 }
 
 function invalidOption(name: string, value: string): ValueOptionResult {
+  const t = getLocalizedText();
+  const displayValue = value || "(empty)";
+  const guidance = formatLocalGuidancePanel({
+    title: t.errors.cli.invalidOptionTitle,
+    reason: `${t.errors.cli.invalidOptionReason} (${name}=${displayValue})`,
+    next: "检查选项值是否正确，使用 `qling help` 查看用法。",
+    example: `${name}=<有效值>`,
+    boundary: t.boundaries.localValidation,
+  });
   return {
     consumeNext: false,
     error: {
       code: "CLI_INVALID_OPTION_VALUE",
-      message: `invalid value for ${name}: ${value || "(empty)"}`,
+      message: guidance,
     },
   };
 }

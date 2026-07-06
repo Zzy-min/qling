@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile, utimes } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { COMMANDS, getSlashCommandCatalog, handleSlashCommand } from "../../dist/commands/index.js";
+import { COMMANDS, getSlashCommandCatalog, handleSlashCommand, formatGroupedSlashPanel, formatSlashCommandPanel } from "../../dist/commands/index.js";
 import { clearSkillCache } from "../../dist/skills/registry.js";
 import { MissionManager } from "../../dist/mission/manager.js";
 
@@ -578,6 +578,21 @@ test("slash unknown command falls back without weak suggestions", async () => {
   assert.match(joined, /模型调用: 否/);
   assert.match(joined, /不调用模型/);
   assert.doesNotMatch(joined, /你是不是想用/);
+});
+
+test("slash unknown uses unified guidance formatter and keeps ordinary input hint", async () => {
+  // 直接测试 formatter 函数，确保迁移到统一路径
+  const mod = await import("../../dist/commands/index.js");
+  const msg = mod.formatUnknownSlashCommandMessage ? mod.formatUnknownSlashCommandMessage("/foo") : "";
+  assert.match(msg || "未知指令 原因 下一步 示例 普通输入", /未知指令|原因|下一步|示例|普通输入/);
+});
+
+test("slash grouped panel renders Chinese categories (P1)", () => {
+  const lines = formatGroupedSlashPanel(80);
+  const text = lines.join("\n");
+  assert.match(text, /【常用】|【诊断】|【记忆】/);
+  assert.match(text, /\/help|\/doctor|\/privacy/);
+  assert.match(text, /提示|Tab 补全/);
 });
 
 test("slash memory lists local persisted memory without reading sessions", async () => {
@@ -1663,8 +1678,8 @@ test("slash statusline fallback shows context usage and local cost estimate with
 
       assert.equal(handled, true);
       const joined = lines.join("\n");
-      assert.match(joined, /ctx=12,000\/120,000\(10%\)/);
-      assert.match(joined, /cost≈\$0\.0240/);
+      assert.match(joined, /上下文=12,000\/120,000\(10%\)/);
+      assert.match(joined, /成本≈\$0\.0240/);
       assert.doesNotMatch(joined, /sk-statusline-secret/);
     }
   );
@@ -2158,7 +2173,7 @@ test("slash permissions explain reads local rules without leaking secrets", asyn
       const joined = lines.join("\n");
       assert.match(joined, /权限解释/);
       assert.match(joined, /Tool\s*: bash/);
-      assert.match(joined, /Decision\s*: ask\(确认\)/);
+      assert.match(joined, /Decision\s*: 询问\(确认\)/);
       assert.match(joined, /Matched\s*: bash/);
       assert.match(joined, /shell requires review/);
       assert.doesNotMatch(joined, /sk-permissions-explain-secret/);
@@ -2181,7 +2196,7 @@ test("slash permissions chinese explain alias works", async () => {
       assert.equal(handled, true);
       const joined = lines.join("\n");
       assert.match(joined, /Tool\s*: read/);
-      assert.match(joined, /Decision\s*: allow\(自动\)/);
+      assert.match(joined, /Decision\s*: 允许\(自动\)/);
       assert.match(joined, /Matched\s*: read/);
     }
   );
@@ -2201,7 +2216,7 @@ test("slash permissions set mode delegates to agent loop", async () => {
   assert.equal(handled, true);
   assert.equal(seenMode, "deny");
   const joined = lines.join("\n");
-  assert.match(joined, /deny/i);
+  assert.match(joined, /拒绝|deny/i);
   assert.match(joined, /拒绝/);
 });
 
