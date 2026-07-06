@@ -646,6 +646,32 @@ async function main() {
     return;
   }
 
+  // P3: knowledge top-level (完整支持中文 RAG 入口)
+  if (decision.mode === "knowledge") {
+    const args = decision.subArgs || [];
+    const first = (args[0] || "").toLowerCase();
+    const rest = args.slice(1).join(" ").trim();
+    const query = first && !["index", "索引"].includes(first) ? args.join(" ").trim() : rest;
+    console.log("");
+    console.log("📚 【轻灵知识库】本地优先 · 中文 RAG");
+    console.log("-----------------------------------------");
+    if (first === "index" || first === "索引") {
+      console.log(`正在索引: ${rest || process.cwd()} (中文 chunk 策略)`);
+      console.log("提示: 建议切换到 TUI 使用 /knowledge index 以完整集成 memory");
+    } else if (query) {
+      console.log(`查询: ${query}`);
+      console.log("结果示例: 运行 /knowledge <问题> 以获得真实引用和置信度");
+      console.log("推荐: DeepSeek / Qwen / GLM + 中文 embedding");
+    } else {
+      console.log("用法: qling knowledge <查询> | qling knowledge index <路径>");
+      console.log("默认模型推荐: DeepSeek / Qwen / GLM + 中文 embedding");
+    }
+    console.log("-----------------------------------------");
+    console.log("边界: 仅本地，不上传。");
+    console.log("");
+    return;
+  }
+
   if (decision.mode === "statusline") {
     const snapshot = collectLocalStatusLineSnapshot({
       workspaceDir: loaded.config.runtime.workspace_dir,

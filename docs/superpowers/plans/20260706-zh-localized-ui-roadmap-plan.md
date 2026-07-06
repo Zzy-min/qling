@@ -132,17 +132,18 @@
 - [x] 文档更新（spec + plan） — 已创建并在实施中迭代
 - [x] P0 完成 + 门禁（已提交 84f005b）
 - [x] P1 完成 + 门禁（已提交 9465ea3）
-- [x] P2 完成 + 门禁（更多端点 /api/sessions/permissions/doctor；HTML 动态 panels；dashboard smoke 通过；输入体验小 polish）
-- [x] P3 起步 + 门禁（/knowledge + top-level 知识/kb/rag；基本中文搜索+引用占位 + 模型推荐；已注册）
+- [x] P2 完成 + 门禁
+- [x] P3 完成 + 门禁（完善中文 chunk 索引 + 搜索 + 引用展示；top-level handler；新增 knowledge.smoke 通过；模型推荐 + 边界说明）
 
 - [ ] P4 完成 + 门禁
 - [ ] P4 完成 + 门禁
 - [ ] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
-- P2 完善: 更多端点 (/api/sessions, /permissions, /doctor) + HTML panels + dashboard smoke 通过
-- 输入体验 polish: hints 队列提示
-- P3 起步: /knowledge + top-level "知识"/kb/rag；中文搜索引用占位 + 模型推荐
-- 提交 f31d911
-- P0/P1/P2 完成，P3 基础就绪。
+- P3 完善: 真实中文 chunk (按句/段落) + 本地文件 index + memory 搜索 + 引用展示
+- top-level "knowledge" handler + slash 完善
+- 新增 knowledge.smoke.test (3/3 pass)
+- 门禁: build + tests + diff OK
+- 提交即将进行
+
 
