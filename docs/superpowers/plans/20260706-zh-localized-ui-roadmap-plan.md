@@ -130,8 +130,9 @@
 
 ## 当前进度追踪
 - [x] 文档更新（spec + plan） — 已创建并在实施中迭代
-- [x] P0 完成 + 门禁（i18n 覆盖核心 + formatter 统一 + setup 密钥安全 + 硬编码迁移部分 + 单元/相关smoke 全绿，build 通过）
-- [ ] P1 完成 + 门禁
+- [x] P0 完成 + 门禁（已提交 84f005b）
+- [~] P1 部分完成 + 门禁（home snapshot、grouped slash panel、tui 渲染增强、测试；已提交 6b5bd0d；待更多输出/输入 polish）
+- [ ] P2 完成 + 门禁
 - [ ] P2 完成 + 门禁
 - [ ] P3 完成 + 门禁
 - [ ] P4 完成 + 门禁
@@ -143,7 +144,7 @@
 - 核心单元测试 (i18n/setup/cli-startup/slash/tui) 全绿 (150+)
 - smoke 全绿 (58/58)
 - build + gates 通过
-- 已提交: 84f005b feat(i18n): P0 ...
-- 剩余 tui 变更待 P1 收敛
-- 继续 P1 TUI 界面升级
+- 已提交: 84f005b P0, 6b5bd0d P1 基础
+- 剩余: 更多 TUI polish (长输出、宽字符、输入队列等)
+- 下一步: 继续 P1 收尾或进入 P2 dashboard 升级（按需）
 
