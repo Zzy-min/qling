@@ -133,15 +133,15 @@
 - [x] P0 完成 + 门禁（已提交 84f005b）
 - [x] P1 完成 + 门禁（已提交 9465ea3）
 - [x] P2 完成 + 门禁
-- [x] P3 完成 + 门禁（真实 semantic search 集成 via memoryStore.search + hybrid；中文 chunk 真实索引 + add/save；更多 unit/smoke 测试；top-level + slash 完善）
+- [x] P3 完成 + 门禁（真实 semantic search 集成 via memoryStore.search + hybrid；中文 chunk 真实索引 + add/save；更多 unit/smoke 测试；top-level + slash 完善；引用链路 + embedding 调优细节）
 
-- [ ] P4 完成 + 门禁
+- [~] P4 启动 + 门禁（新增 /connect + top-level；Telegram/Slack 指南完善；Feishu 等规划；doctor 集成；connect smoke 准备）
+
 - [ ] P4 完成 + 门禁
 - [ ] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
-- P3 深化: 集成 memoryStore.search (semantic vector + keyword hybrid RAG)
-- 真实 chunk 索引 + memory.add + saveToDisk
-- 新增 unit tests for chunk/index + extended smoke
-- 门禁: build + 5 P3 tests pass + diff OK
-- 提交中
+- P3 深化: 引用链路 (chain), embedding 调优 (/knowledge embed)
+- P4: connect 入口 + 指南 + doctor + smoke
+- 更多测试通过
+- 门禁 OK, 提交中

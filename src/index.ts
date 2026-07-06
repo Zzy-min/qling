@@ -672,6 +672,25 @@ async function main() {
     return;
   }
 
+  if (decision.mode === "connect") {
+    const [platform, action] = decision.subArgs || [];
+    console.log("");
+    console.log("🔗 【轻灵连接器】国内平台引导 (top-level P4)");
+    console.log("-----------------------------------------");
+    if (platform) {
+      console.log(`平台: ${platform}`);
+      console.log("使用 /connect " + platform + " guide 获取完整中文向导");
+      console.log("测试连通: /connect " + platform + " test");
+      console.log("doctor: qling doctor (会检查 channel 配置)");
+    } else {
+      console.log("可用: telegram, slack, feishu, dingtalk, wechat");
+      console.log("示例: qling connect feishu guide");
+    }
+    console.log("敏感处理: 绝不写入 .env, 复用 scanner + doctor");
+    console.log("-----------------------------------------");
+    return;
+  }
+
   if (decision.mode === "statusline") {
     const snapshot = collectLocalStatusLineSnapshot({
       workspaceDir: loaded.config.runtime.workspace_dir,

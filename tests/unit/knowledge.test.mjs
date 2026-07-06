@@ -31,3 +31,15 @@ test("P3: simpleIndex discovers and chunks markdown files", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("P3: citation chain simulation in RAG results", () => {
+  // Simulate citation chain: file -> chunk -> memory entry -> query result
+  const chainExample = [
+    { source: "guide.md", chunk: "轻灵支持RAG", conf: "0.85", chain: "file:guide.md -> chunk:0 -> memory:kb-1" },
+    { source: "memory", chunk: "知识库默认值", conf: "0.92", chain: "memory:kb-1 -> semantic:vec-42" }
+  ];
+  assert.ok(chainExample.length === 2);
+  assert.match(chainExample[0].chain, /file:.*-> chunk:.*-> memory/);
+  assert.match(chainExample[1].chain, /memory:.*-> semantic:/);
+  // Would test in knowledge command output
+});

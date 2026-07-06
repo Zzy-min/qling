@@ -3,10 +3,10 @@ import { formatFocusedHelp } from "../help-topics.js";
 import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 
-export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge";
+export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect";
 
-const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge"];
+const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "启动": "bootstrap",
@@ -37,6 +37,9 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "知识库": "knowledge",
   "kb": "knowledge",
   "rag": "knowledge",
+  "连接": "connect",
+  "connect": "connect",
+  "连接器": "connect",
 };
 
 interface TopLevelCommandSuggestion {

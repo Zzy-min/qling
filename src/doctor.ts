@@ -149,6 +149,17 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
     recommendations.push("  运行 `qling doctor` 再次确认。");
   }
 
+  // P4: channel connectors
+  const hasTelegram = !!process.env.QLING_CHANNEL_TELEGRAM_TOKEN;
+  const hasSlack = !!process.env.QLING_CHANNEL_SLACK_BOT_TOKEN;
+  if (hasTelegram || hasSlack) {
+    recommendations.push("- 检测到 Telegram/Slack 配置。使用 /connect <平台> test 验证连通性。");
+    recommendations.push("  常见失败: token 权限、chat ID 错误、网络。运行 doctor 再查。");
+  }
+  if (!hasTelegram && !hasSlack) {
+    recommendations.push("- 未配置国内 IM 连接器。使用 /connect feishu guide 等获取准备向导。");
+  }
+
   return recommendations;
 }
 

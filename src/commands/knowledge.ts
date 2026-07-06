@@ -106,6 +106,16 @@ export const knowledgeCommand: SlashCommand = {
     const agentLoop = (context as any).agentLoop as any;
     const memoryStore = agentLoop?.getMemoryStore?.();
 
+    if (sub === "embed" || sub === "embedding" || sub === "调优") {
+      context.writeLine("Embedding 调优 (P3 RAG 细节):");
+      context.writeLine(`当前推荐模型: ${process.env.QLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small"}`);
+      context.writeLine("可用调优: 设置 QLING_MEMORY_SEMANTIC_MODEL=你的模型");
+      context.writeLine("维度: dimensions 可在 EmbeddingClient 配置");
+      context.writeLine("测试: /knowledge embed test <文本>");
+      context.writeLine("边界: 需要 API key 和支持 embeddings 的 endpoint");
+      return;
+    }
+
     if (sub === "index" || sub === "索引") {
       const target = query || process.cwd();
       context.writeLine(`正在索引: ${target} （中文 chunk 策略：按句/段落，max~400字）`);
@@ -142,7 +152,8 @@ export const knowledgeCommand: SlashCommand = {
               const src = e.source || "memory";
               const conf = (e.score ?? 0.7).toFixed(2);
               const snippet = (e.content || e.preview || "").slice(0, 120).replace(/\n/g, " ");
-              context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf})`);
+              const chain = e.metadata?.chain || e.source || src;
+              context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf}) 链路: ${chain}`);
             });
           }
         } catch {}
@@ -157,7 +168,8 @@ export const knowledgeCommand: SlashCommand = {
               const src = h.source || "memory";
               const conf = (h.score ?? h.confidence ?? 0.7).toFixed(2);
               const snippet = (h.content || h.entry?.content || "").slice(0, 120).replace(/\n/g, " ");
-              context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf})`);
+              const chain = h.metadata?.chain || h.source || src;
+              context.writeLine(`  ${i + 1}. [${src}] ${snippet}... (置信 ${conf}) 链路: ${chain}`);
             });
           }
         } catch {}
