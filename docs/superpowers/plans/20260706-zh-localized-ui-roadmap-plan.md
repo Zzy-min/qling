@@ -143,7 +143,10 @@
 - formatResultBox 支持 compactLong，默认启用
 - i18n 补充 longOutput 文案
 - tui-shell.test 新增 P1 long-output + home snapshot 用例
-- 所有相关测试通过，build 成功
-- 已提交 P0 (84f005b) + P1 基础 + 本轮 polish
-- 下一步：进入 P2 本地 Dashboard 升级（只读可观测）或 P1 剩余输入 polish（可选）
+- 所有相关测试通过，build 成功，smoke OK，diff clean
+- 已提交:
+  - 84f005b P0
+  - 6b5bd0d P1 基础
+  - 9465ea3 P1 完成 - 输出渲染 + 长输出紧凑
+- P1 标记完成。下一步：P2 Dashboard（推荐）或 P3/P4。
 
