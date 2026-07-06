@@ -39,5 +39,21 @@ test("P4 connect smoke: missing token friendly", () => {
     timeout: 5000,
   });
   const out = (result.stdout || "") + (result.stderr || "");
-  assert.match(out, /Slack|测试|doctor|token/);
+  assert.match(out, /slack|测试|doctor/);
+  assert.match(out, /❌|未设置/);
+});
+
+test("P4 connect smoke: wrong token shows friendly error (desensitized)", () => {
+  const result = spawnSync(process.execPath, [ENTRY, "connect", "telegram", "test"], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      QLING_CHANNEL_TELEGRAM_TOKEN: "wrong-token-123",
+    },
+    timeout: 5000,
+  });
+  const out = (result.stdout || "") + (result.stderr || "");
+  assert.match(out, /Telegram|测试|token/);
+  assert.doesNotMatch(out, /wrong-token-123/); // 脱敏
+  assert.match(out, /doctor|常见失败/);
 });

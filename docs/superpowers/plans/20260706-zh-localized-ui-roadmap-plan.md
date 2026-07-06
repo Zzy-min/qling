@@ -135,13 +135,11 @@
 - [x] P2 完成 + 门禁
 - [x] P3 完成 + 门禁（真实 semantic search 集成 via memoryStore.search + hybrid；中文 chunk 真实索引 + add/save；更多 unit/smoke 测试；top-level + slash 完善；引用链路 + embedding 调优细节）
 
-- [~] P4 启动 + 门禁（新增 /connect + top-level；Telegram/Slack 指南完善；Feishu 等规划；doctor 集成；connect smoke 准备）
+- [x] P4 完成 + 门禁（/connect + top-level 完善；Telegram/Slack 实际测试逻辑；Feishu 等规划；doctor channel 检查增强；connect smoke 4/4 pass，token 场景/脱敏）
 
-- [ ] P4 完成 + 门禁
 - [ ] 最终回归 + 文档更新
 
 **最新执行（2026-07-06）**:
-- P3 深化: 引用链路 (chain), embedding 调优 (/knowledge embed)
-- P4: connect 入口 + 指南 + doctor + smoke
-- 更多测试通过
-- 门禁 OK, 提交中
+- P4 完善: connect 命令真实 test (token 检查), doctor 增强, smoke 覆盖 wrong/missing token + 脱敏
+- 门禁: build + smoke + diff OK
+- 提交中

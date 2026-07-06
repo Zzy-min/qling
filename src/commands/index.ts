@@ -27,6 +27,7 @@ import { repomapCommand } from "./repomap.js";
 import { dreamCommand } from "./dream.js";
 import { distillCommand } from "./distill.js";
 import { knowledgeCommand } from "./knowledge.js";
+import { connectCommand } from "./connect.js";
 import { storageCommand } from "./storage.js";
 import { mcpCommand } from "./mcp.js";
 import { hooksCommand } from "./hooks.js";
@@ -86,6 +87,7 @@ export const COMMANDS: SlashCommand[] = [
   memoryCommand,
   repomapCommand,
   knowledgeCommand,
+  connectCommand,
   verifyCommand,
   dreamCommand,
   distillCommand,

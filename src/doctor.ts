@@ -149,16 +149,27 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
     recommendations.push("  运行 `qling doctor` 再次确认。");
   }
 
-  // P4: channel connectors
+  // P4: channel connectors (完善 Telegram/Slack，规划其他)
   const hasTelegram = !!process.env.QLING_CHANNEL_TELEGRAM_TOKEN;
   const hasSlack = !!process.env.QLING_CHANNEL_SLACK_BOT_TOKEN;
-  if (hasTelegram || hasSlack) {
-    recommendations.push("- 检测到 Telegram/Slack 配置。使用 /connect <平台> test 验证连通性。");
-    recommendations.push("  常见失败: token 权限、chat ID 错误、网络。运行 doctor 再查。");
+  const hasFeishu = !!process.env.QLING_CHANNEL_FEISHU_APP_ID;
+  if (hasTelegram) {
+    checks.push({ id: "channel_telegram", label: "channel:telegram", status: "pass", detail: "Telegram token 已设置" });
+    recommendations.push("- Telegram 已配置。使用 /connect telegram test 或 doctor 验证。");
   }
-  if (!hasTelegram && !hasSlack) {
-    recommendations.push("- 未配置国内 IM 连接器。使用 /connect feishu guide 等获取准备向导。");
+  if (hasSlack) {
+    checks.push({ id: "channel_slack", label: "channel:slack", status: "pass", detail: "Slack bot token 已设置" });
+    recommendations.push("- Slack 已配置。使用 /connect slack test 验证。");
   }
+  if (hasTelegram || hasSlack || hasFeishu) {
+    recommendations.push("  常见失败: token 无效/权限不足/网络。运行 /connect <平台> guide 获取向导。");
+  }
+  if (!hasTelegram && !hasSlack && !hasFeishu) {
+    recommendations.push("- 未配置国内 IM 连接器。使用 /connect telegram guide 等获取中文准备向导。");
+    recommendations.push("  优先完善 Telegram/Slack，Feishu/DingTalk/WeChat 规划中。");
+  }
+  // 敏感检查已在 secrets 中
+  recommendations.push("- 敏感 token: 绝不写入 .env，复用 scanner + doctor 警告。");
 
   return recommendations;
 }
@@ -268,6 +279,19 @@ export async function buildDoctorReport(
     secretsCheck,
     buildMcpCheck(env),
     buildHooksCheck(env),
+    // P4 connectors
+    {
+      id: "channel_telegram",
+      label: "channel:telegram",
+      status: !!env.QLING_CHANNEL_TELEGRAM_TOKEN ? "pass" : "warn",
+      detail: env.QLING_CHANNEL_TELEGRAM_TOKEN ? "token 已设置" : "未设置 QLING_CHANNEL_TELEGRAM_TOKEN",
+    },
+    {
+      id: "channel_slack",
+      label: "channel:slack",
+      status: !!env.QLING_CHANNEL_SLACK_BOT_TOKEN ? "pass" : "warn",
+      detail: env.QLING_CHANNEL_SLACK_BOT_TOKEN ? "bot token 已设置" : "未设置 Slack token",
+    },
     {
       id: "daemon",
       label: "qlingd",

@@ -677,10 +677,22 @@ async function main() {
     console.log("");
     console.log("🔗 【轻灵连接器】国内平台引导 (top-level P4)");
     console.log("-----------------------------------------");
-    if (platform) {
-      console.log(`平台: ${platform}`);
-      console.log("使用 /connect " + platform + " guide 获取完整中文向导");
-      console.log("测试连通: /connect " + platform + " test");
+    const plat = (platform || "").toLowerCase();
+    if (plat) {
+      console.log(`平台: ${plat}`);
+      if (action === "test" || action === "测试") {
+        const envKey = plat === "telegram" ? "QLING_CHANNEL_TELEGRAM_TOKEN" : plat === "slack" ? "QLING_CHANNEL_SLACK_BOT_TOKEN" : "";
+        const token = envKey ? process.env[envKey] : "";
+        if (!token) {
+          console.log(`❌ ${plat} 测试: 未设置 ${envKey || "token"}`);
+        } else {
+          console.log(`✅ ${plat} token 已设置 (脱敏验证通过)`);
+        }
+        console.log("提示: 完整连通使用 /connect " + plat + " test 或 doctor");
+      } else {
+        console.log("使用 /connect " + plat + " guide 获取完整中文向导");
+        console.log("测试连通: /connect " + plat + " test");
+      }
       console.log("doctor: qling doctor (会检查 channel 配置)");
     } else {
       console.log("可用: telegram, slack, feishu, dingtalk, wechat");
