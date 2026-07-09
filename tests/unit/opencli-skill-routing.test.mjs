@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import { getSkillDirs, runSkill } from "../../dist/tools/skill.js";
 import { listSkills, parseFrontmatter, clearSkillCache } from "../../dist/skills/registry.js";
-import { buildRestrictionsSection } from "../../dist/pipeline/sections.js";
+import {
+  buildRestrictionsSection,
+  buildWorkflowSection,
+  buildToneSection,
+} from "../../dist/pipeline/sections.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const opencliSkillPath = join(repoRoot, "skills", "opencli", "SKILL.md");
@@ -64,4 +68,20 @@ test("restrictions section routes social platforms to opencli skill", () => {
   assert.match(section.content, /opencli douyin/);
   assert.match(section.content, /url_fetch/);
   assert.match(section.content, /TikTok|tiktok/i);
+  assert.match(section.content, /关联分析|外部工具/);
+  assert.match(section.content, /实事求是|失败/);
+});
+
+test("workflow section encodes three task execution rules", () => {
+  const section = buildWorkflowSection();
+  assert.match(section.content, /任务执行三条基本规则/);
+  assert.match(section.content, /关联分析|工具是否匹配/);
+  assert.match(section.content, /正确流程|可复现/);
+  assert.match(section.content, /未完成|失败|实事求是|禁止把挑战页/);
+});
+
+test("tone section requires honest success and failure reporting", () => {
+  const section = buildToneSection();
+  assert.match(section.content, /正确流程/);
+  assert.match(section.content, /失败|不粉饰/);
 });

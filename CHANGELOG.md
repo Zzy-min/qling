@@ -2,6 +2,13 @@
 
 ## v1.0.0 (2026-07-09)
 
+### Agent 任务执行基本规则
+
+- 常驻 system prompt（Workflow / Restrictions / Tone）固化三条规则：
+  1. 调用外部工具前先做工具与任务的关联分析  
+  2. 成功后总结正确可复现流程  
+  3. 单流程失败或未准确执行时实事求是承认  
+
 ### Agent 路由（opencli）
 
 - **内置 skill `opencli`**：教模型用 `bash` + `opencli <site> … -f json` 获取平台数据；明确抖音≠TikTok、禁止 `url_fetch` 强反爬站。
