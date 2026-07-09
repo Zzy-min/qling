@@ -2,6 +2,13 @@
 
 ## v1.0.0 (2026-07-09)
 
+### 发布收尾（发布就绪补丁）
+
+- **跨平台 CI**：`write-sandbox` 单测改用 `path.resolve`/`tmpdir`，去掉硬编码 `C:\\` 路径。
+- **`qling --version` / `-V` / `version`**：本地打印 `qling/<semver>`，不加载配置、不要求 API key。
+- **版本单一来源**：`src/package-version.ts` 统一供 TUI、system prompt、daemon `/health`、help 使用。
+- **干净构建**：`npm run clean` 删除 `dist/`；`build`/`prepack` 先 clean 再 `tsc`，避免陈旧产物进入 npm pack。
+
 ### 稳定工作台契约
 
 - **版本语义**：进入 `1.0.0`。表示本地优先的中文 AI Agent CLI 工作台核心契约可用且稳定，而非追平全部开源标杆的功能总量。

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+// 跨平台路径：禁止硬编码 C:\\... Windows 路径
 
 import {
   checkSensitiveWriteTarget,
@@ -62,25 +63,28 @@ test("resolveWriteSandboxMode defaults to workspace", () => {
 });
 
 test("isPathAllowedForWrite workspace mode blocks outside paths", () => {
+  const workspaceDir = resolve(tmpdir(), "qling-ws-proj");
+  const fileStateDir = resolve(tmpdir(), "qling-state-outside");
   const roots = {
-    workspaceDir: "C:\\repo\\proj",
-    fileCacheDir: "C:\\repo\\proj\\.cache",
-    fileStateDir: "C:\\Users\\me\\.qling",
+    workspaceDir,
+    fileCacheDir: join(workspaceDir, ".cache"),
+    fileStateDir,
   };
-  assert.equal(isPathAllowedForWrite("C:\\repo\\proj\\a.ts", roots, "workspace"), true);
-  assert.equal(isPathAllowedForWrite("C:\\Users\\me\\.qling\\x", roots, "workspace"), false);
-  assert.equal(isPathAllowedForWrite("C:\\Users\\me\\.qling\\x", roots, "roots"), true);
+  assert.equal(isPathAllowedForWrite(join(workspaceDir, "a.ts"), roots, "workspace"), true);
+  assert.equal(isPathAllowedForWrite(join(fileStateDir, "x"), roots, "workspace"), false);
+  assert.equal(isPathAllowedForWrite(join(fileStateDir, "x"), roots, "roots"), true);
 });
 
 test("checkSensitiveWriteTarget blocks .env and allows override", () => {
-  const hit = checkSensitiveWriteTarget("C:\\repo\\.env", {});
+  const envPath = join(tmpdir(), "repo", ".env");
+  const hit = checkSensitiveWriteTarget(envPath, {});
   assert.equal(hit?.blocked, true);
   assert.equal(hit?.code, "WRITE_SENSITIVE_PATH");
 
-  const ok = checkSensitiveWriteTarget("C:\\repo\\.env", { QLING_ALLOW_SENSITIVE_WRITE: "1" });
+  const ok = checkSensitiveWriteTarget(envPath, { QLING_ALLOW_SENSITIVE_WRITE: "1" });
   assert.equal(ok, null);
 
-  const pem = checkSensitiveWriteTarget("/tmp/cert.pem", {});
+  const pem = checkSensitiveWriteTarget(join(tmpdir(), "cert.pem"), {});
   assert.equal(pem?.blocked, true);
 });
 
@@ -172,12 +176,15 @@ test("resolveNetworkGuardMode and deny mode", async () => {
 });
 
 test("getRuntimeRootsFromEnv still resolves dirs", () => {
+  const ws = resolve(tmpdir(), "qling-env-ws");
+  const state = resolve(tmpdir(), "qling-env-state");
+  const cache = resolve(tmpdir(), "qling-env-cache");
   const roots = getRuntimeRootsFromEnv({
-    QLING_WORKSPACE_DIR: "C:\\w",
-    QLING_FILE_STATE_DIR: "C:\\s",
-    QLING_FILE_CACHE_DIR: "C:\\c",
+    QLING_WORKSPACE_DIR: ws,
+    QLING_FILE_STATE_DIR: state,
+    QLING_FILE_CACHE_DIR: cache,
   });
-  assert.ok(roots.workspaceDir);
-  assert.ok(roots.fileStateDir);
-  assert.ok(roots.fileCacheDir);
+  assert.equal(roots.workspaceDir, resolve(ws));
+  assert.equal(roots.fileStateDir, resolve(state));
+  assert.equal(roots.fileCacheDir, resolve(cache));
 });

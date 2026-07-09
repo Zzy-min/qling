@@ -366,6 +366,13 @@ async function main() {
     process.exit(0);
   }
 
+  if (decision.mode === "version") {
+    // 与 parseCliArgs 同源；不加载配置、不要求 API key
+    const { buildVersionText } = await import("./cli/startup-contract.js");
+    console.log(buildVersionText("qling"));
+    process.exit(0);
+  }
+
   // v0.4 / Phase 1.4 Onboarding（仅交互模式；非 TTY 跳过）
   if (decision.mode === "chat" || decision.mode === "repl") {
     const needSetup = !(

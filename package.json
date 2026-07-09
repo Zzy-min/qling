@@ -64,7 +64,8 @@
     "url": "https://github.com/Zzy-min/qling/issues"
   },
   "scripts": {
-    "build": "tsc",
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "npm run clean && tsc",
     "start": "node dist/index.js",
     "tui": "node dist/index.js chat",
     "repl": "node dist/index.js repl",

@@ -5,6 +5,7 @@
 import { PromptSection, PromptSectionRegistry, AgentConfig } from "../types.js";
 import type { SkillMeta } from "../skills/types.js";
 import { buildToolSpecBoostPrompt } from "./example-generator.js";
+import { getPackageVersion } from "../package-version.js";
 
 // --- 默认 Section IDs ---
 export const SECTION_IDS = {
@@ -250,7 +251,7 @@ export function buildDefaultRegistry(
 ): PromptSectionRegistry {
   const registry = new PromptSectionRegistry();
 
-  registry.register(buildIntroSection("轻灵", "0.5.0"));
+  registry.register(buildIntroSection("轻灵", getPackageVersion()));
   registry.register(buildToolsSection(tools));
   registry.register(buildWorkflowSection());
   registry.register(buildRestrictionsSection());

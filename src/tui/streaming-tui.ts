@@ -16,9 +16,6 @@
 // ============================================================
 
 import * as readline from "readline";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { default as stringWidth } from "string-width";
 import { findSlashCompletion, formatSlashCommandPanel, formatGroupedSlashPanel } from "../commands/index.js";
 import { InputBuffer } from "./input-buffer.js";
@@ -34,6 +31,7 @@ import {
   truncateVisible,
 } from "./shell.js";
 import { formatMarkdownForTerminal } from "./markdown.js";
+import { getPackageVersion } from "../package-version.js";
 
 // ── ANSI 颜色工具 ───────────────────────────────────────
 
@@ -67,16 +65,6 @@ const S = {
 
 const DIM = (s: string): string => `\x1b[2m${s}\x1b[0m`;
 const BOLD = (s: string): string => `\x1b[1m${s}\x1b[0m`;
-
-function resolvePackageVersion(): string {
-  try {
-    const packagePath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
-    const parsed = JSON.parse(readFileSync(packagePath, "utf8"));
-    return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
 
 // ── 显示宽度工具 ────────────────────────────────────────
 
@@ -265,7 +253,7 @@ export class StreamUI {
     const lines = formatTopBar({
       productName: "轻灵",
       englishName: "Qling",
-      version: resolvePackageVersion(),
+      version: getPackageVersion(),
       model: this.model,
       workspace: this.chromeStatus.workspace ?? process.cwd(),
       tokens: this.chromeStatus.tokens ?? 0,

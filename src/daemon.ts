@@ -15,6 +15,7 @@ import { SessionScheduler } from "./session/session-scheduler.js";
 import { SessionGoalController } from "./session/goal-controller.js";
 import { SessionGoalManager } from "./session/session-goal-manager.js";
 import { DurableSessionSupervisor } from "./session/durable-session-supervisor.js";
+import { formatDaemonVersion } from "./package-version.js";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME_DIR, ".qling");
@@ -215,7 +216,7 @@ async function main() {
       if (url.pathname === "/health") {
         res.end(JSON.stringify({
           status: "ok",
-          version: "0.5.0-daemon",
+          version: formatDaemonVersion(),
           pid: process.pid,
           uptimeMs: Date.now() - startedAt,
           missions: manager.listMissions().length,

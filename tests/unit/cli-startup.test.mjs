@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import { parseCliArgs, buildHelpText } from "../../dist/cli/startup-contract.js";
+import { parseCliArgs, buildHelpText, buildVersionText } from "../../dist/cli/startup-contract.js";
+import { getPackageVersion } from "../../dist/package-version.js";
 
 test("package metadata exposes qling as the official CLI binary", async () => {
   const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf-8"));
@@ -11,6 +12,34 @@ test("package metadata exposes qling as the official CLI binary", async () => {
   assert.deepEqual(pkg.bin, {
     qling: "./dist/index.js",
   });
+});
+
+test("cli: --version and -V route to version mode without requiring API key", () => {
+  for (const args of [["--version"], ["-V"], ["-v"], ["version"]]) {
+    const result = parseCliArgs(args);
+    assert.equal(result.kind, "ok", args.join(" "));
+    assert.equal(result.mode, "version", args.join(" "));
+  }
+});
+
+test("cli: --help still wins over --version", () => {
+  const result = parseCliArgs(["--version", "--help"]);
+  assert.equal(result.kind, "ok");
+  assert.equal(result.mode, "help");
+});
+
+test("cli: version text matches package.json", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf-8"));
+  assert.equal(getPackageVersion(), pkg.version);
+  assert.equal(buildVersionText("qling"), `qling/${pkg.version}`);
+});
+
+test("cli: help text no longer advertises stale v0.3/v0.5 section labels", () => {
+  const help = buildHelpText("qling");
+  assert.match(help, /--version/);
+  assert.doesNotMatch(help, /管理命令 \(v0\.3\)/);
+  assert.doesNotMatch(help, /使命管理 \(v0\.5/);
+  assert.match(help, new RegExp(`qling ${getPackageVersion()}`));
 });
 
 test("cli: no args defaults to chat (TUI)", () => {

@@ -2,13 +2,15 @@ import type { CliGlobalOptions } from "../config.js";
 import { formatFocusedHelp } from "../help-topics.js";
 import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
+import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect";
 
-const KNOWN_MODES: CliMode[] = ["help", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
+  "版本": "version",
   "启动": "bootstrap",
   "初始化": "bootstrap",
   "诊断": "doctor",
@@ -77,6 +79,15 @@ function isManagementMode(mode: CliMode | null | undefined): boolean {
 
 function isHelpFlag(arg: string): boolean {
   return arg === "--help" || arg === "-h";
+}
+
+function isVersionFlag(arg: string): boolean {
+  return arg === "--version" || arg === "-V" || arg === "-v";
+}
+
+/** 打印给 stdout 的版本行（qling/1.0.0） */
+export function buildVersionText(binName = "qling"): string {
+  return formatCliVersion(binName);
 }
 
 function resolveHelpTopicArgs(mode: CliMode | null, positional: string[]): string[] {
@@ -209,6 +220,7 @@ export function parseCliArgs(args: string[]): CliResolution {
   const subArgs: string[] = [];
 
   let hasHelp = false;
+  let hasVersion = false;
   let modeFromSubcommand: CliMode | null = null;
   let modeFromAliasChat = false;
   let modeFromAliasRepl = false;
@@ -219,6 +231,11 @@ export function parseCliArgs(args: string[]): CliResolution {
 
     if (isHelpFlag(arg)) {
       hasHelp = true;
+      continue;
+    }
+
+    if (isVersionFlag(arg)) {
+      hasVersion = true;
       continue;
     }
 
@@ -334,8 +351,13 @@ export function parseCliArgs(args: string[]): CliResolution {
     positional.push(arg);
   }
 
+  // --version / -V 优先于普通任务，但不覆盖 --help
   if (hasHelp) {
     return { kind: "ok", mode: "help", subArgs: resolveHelpTopicArgs(modeFromSubcommand, positional), global, warnings };
+  }
+
+  if (hasVersion || modeFromSubcommand === "version") {
+    return { kind: "ok", mode: "version", subArgs: [], global, warnings };
   }
 
   if (modeFromSubcommand && modeFromSubcommand !== "help" && isManagementMode(modeFromSubcommand) && subArgs.some(isHelpFlag)) {
@@ -567,8 +589,9 @@ export function buildHelpText(binName = "qling", topic?: string): string {
     return formatFocusedHelp(topic, { surface: "cli", binName }).join("\n");
   }
 
+  const version = getPackageVersion();
   return `
-${binName} - 通用 CLI Agent
+${binName} ${version} - 本地优先 AI Agent CLI 工作台
 
 新手路径:
   ${binName} bootstrap                # 本机一键启动检查：目录、配置、诊断和下一步
@@ -587,9 +610,10 @@ ${binName} - 通用 CLI Agent
   ${binName} run "你的任务"            # 单次执行（推荐）
   ${binName} bootstrap                # 本机一键启动检查
   ${binName} setup                    # 快速配置 LLM 提供商（不保存 API key 到 .env）
+  ${binName} --version                # 打印版本（亦支持 -V / version）
   ${binName} help                     # 显示帮助
 
-管理命令 (v0.3):
+管理命令:
   ${binName} daemon start             # 启动后台守护进程
   ${binName} daemon status            # 查看守护进程状态
   ${binName} daemon stop              # 停止后台守护进程
@@ -630,7 +654,7 @@ ${binName} - 通用 CLI Agent
   ${binName} dashboard start [--port] # 启动本地白盒化观测控制台
   ${binName} discovery sync           # 同步动态插件与技能
 
-使命管理 (v0.5 M2):
+使命管理:
   ${binName} mission start "任务"      # 开启一个后台使命
   ${binName} mission list             # 列出当前所有使命
   ${binName} mission show <id>        # 查看特定使命详情
@@ -646,6 +670,7 @@ ${binName} - 通用 CLI Agent
   ${binName} 使命 列表                # mission list 的中文别名
   ${binName} 使命 终止 <id>           # mission cancel 的中文别名
   ${binName} --help                   # 显示帮助
+  ${binName} --version                # 显示版本
 
 全局参数:
   --config <path>                     # 指定配置文件（json/yaml）
@@ -657,6 +682,7 @@ ${binName} - 通用 CLI Agent
   --file-state-dir <path>             # 指定 file state 根
   --inspect-prompt                    # 落盘 prompt 调试信息
   --inspect-request                   # 落盘 request 调试信息
+  --version, -V                       # 打印版本并退出
   --log-format <text|json>            # 日志格式
   --log-level <debug|info|warn|error> # 日志级别
 

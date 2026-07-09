@@ -50,4 +50,9 @@ export {
 } from "./eval/runner.js";
 export { buildEvalSmokeTasks } from "./eval/tasks.js";
 export { ALL_TOOLS, buildToolRegistry, dispatch } from "./tools/index.js";
+export {
+  getPackageVersion,
+  formatCliVersion,
+  formatDaemonVersion,
+} from "./package-version.js";
 export type { AgentConfig, Message, ToolDefinition, ToolResult } from "./types.js";
