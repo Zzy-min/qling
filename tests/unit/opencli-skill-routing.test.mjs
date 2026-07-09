@@ -25,6 +25,8 @@ test("opencli skill file exists with routing-rich frontmatter", () => {
   assert.ok(meta.tags.some((t) => /douyin|opencli/i.test(t)));
   assert.match(raw, /opencli douyin/);
   assert.match(raw, /TikTok|tiktok/);
+  assert.match(raw, /xiaohongshu/);
+  assert.match(raw, /xsec_token/);
   assert.match(raw, /-f json/);
   assert.doesNotMatch(raw, /仅支持 TikTok，不支持抖音/);
 });
@@ -66,6 +68,7 @@ test("restrictions section routes social platforms to opencli skill", () => {
   const section = buildRestrictionsSection();
   assert.match(section.content, /skill name="opencli"/);
   assert.match(section.content, /opencli douyin/);
+  assert.match(section.content, /xiaohongshu|xsec_token/);
   assert.match(section.content, /url_fetch/);
   assert.match(section.content, /TikTok|tiktok/i);
   assert.match(section.content, /关联分析|外部工具/);

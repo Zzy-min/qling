@@ -2,6 +2,11 @@
 
 ## v1.0.0 (2026-07-09)
 
+### opencli 小红书路由补强
+
+- skill `opencli` 增加小红书专节：`note`/`comments` 必须使用含 `xsec_token` 的完整 URL（禁止裸 note-id）。
+- Restrictions 同步提示 xiaohongshu 正确传参。
+
 ### Agent 任务执行基本规则
 
 - 常驻 system prompt（Workflow / Restrictions / Tone）固化三条规则：

@@ -120,8 +120,9 @@ export function buildRestrictionsSection(): PromptSection {
 - 抖音、小红书、微博、B站、TikTok、推特/X 等：先 skill name="opencli"，再用 bash 执行 opencli <站点> … -f json
 - 禁止用 url_fetch / 裸 curl 抓取上述强反爬站点（会返回 _$jsvmprt、acrawler 挑战页，不是业务数据）
 - 抖音 ≠ TikTok：douyin.com 必须 opencli douyin；禁止用 opencli tiktok 操作抖音
+- 小红书：用 opencli xiaohongshu；note/comments/download 必须传 search/feed 返回的「含 xsec_token 的完整 URL」，禁止只传裸 note-id
 - 不确定子命令时：opencli list -f json 或 opencli <site> --help；需登录时先 opencli <site> whoami / login
-- browser_fetch 适合文档站，不保证能过抖音风控；平台结构化数据优先 opencli 站点适配器
+- browser_fetch 适合文档站，不保证能过抖音/小红书风控；平台结构化数据优先 opencli 站点适配器
 
 【安全限制】
 - 危险命令（rm -rf /、格式化磁盘等）会被自动拒绝

@@ -65,7 +65,7 @@ opencli <site> whoami -f json
 |----------------|----------|----------|
 | 抖音 / douyin.com | `opencli douyin` | `opencli tiktok`、`url_fetch` |
 | TikTok 国际 | `opencli tiktok` | `opencli douyin` |
-| 小红书 | `opencli xiaohongshu` | 裸抓 HTML |
+| 小红书 / xhslink / rednote | **优先** `opencli xiaohongshu`（也有 `opencli rednote` 英文别名） | `url_fetch`、只传裸 note-id |
 | 微博 | `opencli weibo` | 裸抓 HTML |
 | B 站 | `opencli bilibili`（以 list 为准） | 裸抓 HTML |
 | 推特 / X | `opencli twitter` | 裸抓 HTML |
@@ -99,6 +99,63 @@ opencli douyin profile -f json
 
 写操作（delete/publish/update/draft）**先征得用户确认**。
 
+## 4b. 小红书（xiaohongshu）— 高频失败点
+
+### 本机前置
+
+```bash
+opencli doctor
+opencli xiaohongshu whoami -f json   # logged_in 应为 true
+# 未登录：
+opencli xiaohongshu login
+```
+
+### 正确命令（优先 xiaohongshu，不要用 url_fetch）
+
+```bash
+# 搜索笔记（返回 title/author/likes/url；url 通常已带 xsec_token）
+opencli xiaohongshu search "关键词" --limit 10 -f json
+
+# 首页 Feed
+opencli xiaohongshu feed --limit 10 -f json
+
+# 笔记正文 + 点赞收藏评论（必须传「完整签名 URL」）
+opencli xiaohongshu note "<完整笔记URL含xsec_token>" -f json
+
+# 评论（同样要求完整签名 URL）
+opencli xiaohongshu comments "<完整笔记URL含xsec_token>" --limit 20 -f json
+
+# 用户主页笔记
+opencli xiaohongshu user "<userId或主页URL>" --limit 15 -f json
+
+# 下载媒体（完整 URL 或 xhslink 短链）
+opencli xiaohongshu download "<完整笔记URL或xhslink>" --output ./xiaohongshu-downloads -f json
+```
+
+创作者中心（需创作者登录态）：`creator-profile` `creator-stats` `creator-notes` `creator-note-detail` `creator-notes-summary`。
+
+### ⚠️ 关键：note / comments 不能只传 note-id
+
+官方参数说明：`note-id` 实为 **Full Xiaohongshu note URL with xsec_token**。
+
+| 传参 | 结果 |
+|------|------|
+| 仅 `6a3b66c5…` 裸 id | ❌ 失败：`requires a full signed URL` / exitCode 2 |
+| `https://www.xiaohongshu.com/explore/<id>?xsec_token=...` | ✅ |
+| 从 `search` / `feed` / `user` 结果里复制的 `url` 字段 | ✅（优先用这个） |
+
+**正确流程：**
+
+1. `search` 或 `feed` 拿列表  
+2. 从结果 JSON 取 `url`（含 `xsec_token`）  
+3. 再 `note` / `comments` / `download` 用该完整 url  
+
+禁止：跳过 search、手编 explore 链接且不带 token；禁止 `url_fetch` 打开小红书页。
+
+### 别名
+
+- `opencli rednote …` 与小红书同源英文适配器（feed/search/note/comments 等），**优先统一用 `xiaohongshu`**，避免混用导致参数习惯不一致。
+
 ## 5. 通用 browser 会话（高级）
 
 形态：`opencli browser <session> <command> …`
@@ -123,6 +180,7 @@ opencli browser mysess eval "document.title"
 |--------|------|
 | `url_fetch` 打开 douyin/xhs 分享链 | 返回挑战页 JS，无结构化数据 |
 | `opencli tiktok` 处理 douyin.com | 错误站点 |
+| 小红书 `note`/`comments` 只传裸 note-id | opencli 要求带 `xsec_token` 的完整 URL |
 | 未 `list`/`--help` 就编造命令 | 易失败 |
 | 把挑战页 HTML 当成功数据总结 | 误导用户 |
 | 未确认就 `delete`/`publish` | 写操作风险 |
