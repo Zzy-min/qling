@@ -222,6 +222,32 @@ export function formatResultBox(lines: string[], width: number, options?: { comp
   return [top, ...body, bottom];
 }
 
+export interface ResultHighlightOptions {
+  /** 框标题，默认「结果」 */
+  header?: string;
+  /** 正文行（可含 ANSI，不做右侧强制对齐以免破坏着色） */
+  lines: string[];
+  width?: number;
+}
+
+/**
+ * 任务最终结果高亮框（纯函数，便于单测）。
+ * 不折叠长内容；边框左侧强调，正文原样输出。
+ */
+export function formatResultHighlight(options: ResultHighlightOptions): string[] {
+  const safeWidth = normalizeWidth(options.width);
+  const contentWidth = Math.max(20, safeWidth - 4);
+  const header = normalizeLabel(options.header, "结果");
+  const title = ` ${header} `;
+  const titleW = visibleWidth(title);
+  const dashAfter = Math.max(2, contentWidth + 2 - 1 - titleW);
+  const top = `┌─${title}${"─".repeat(dashAfter)}┐`;
+  const bodyLines = options.lines.length > 0 ? options.lines : [""];
+  const body = bodyLines.map((line) => `│ ${line}`);
+  const bottom = "└" + "─".repeat(contentWidth + 2) + "┘";
+  return [top, ...body, bottom];
+}
+
 export function formatInputFrame(options: InputFrameOptions): string[] {
   const t = getLocalizedText();
   const safeWidth = normalizeWidth(options.width);

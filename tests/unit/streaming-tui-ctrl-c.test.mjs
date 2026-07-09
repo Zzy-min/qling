@@ -266,12 +266,10 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     const outputStr = getOutput();
     assert.match(outputStr, /› draft prompt/);
     assert.match(outputStr, /│/);
-    assert.match(getOutput(), /Enter 发送/);
-    assert.match(getOutput(), /Ctrl\+C/);
-    assert.match(getOutput(), /statusline/i);
+    // 输入框上方不再堆叠快捷键提示与 statusline（去噪）
+    assert.doesNotMatch(getOutput(), /Enter 发送/);
+    assert.doesNotMatch(getOutput(), /model=test session=session-1/);
     assert.doesNotMatch(getOutput(), /\/model 切换模型/);
-    // Phase 1.3: statusline 在输入栏上方真正打印
-    assert.match(getOutput(), /model=test session=session-1/);
     assert.match(getOutput(), /draft prompt/);
   });
 });
@@ -287,8 +285,9 @@ test("stream ui prompt renders inside input frame without duplicate bare prompt"
     assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
     assert.match(output, /└─+┘/);
     assert.doesNotMatch(output, /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
-    assert.match(output, /statusline/i);
-    assert.match(output, /model=test session=session-1/);
+    // 输入框上方不再打印 statusline / 快捷键提示
+    assert.doesNotMatch(output, /model=test session=session-1/);
+    assert.doesNotMatch(output, /Enter 发送/);
     assert.doesNotMatch(output, /\/exit 退出/);
   });
 });
@@ -357,11 +356,15 @@ test("stream ui showPrompt renders one input frame top border", async () => {
     ui.setStatusLine("model=test session=session-1");
     ui.showPrompt();
 
-    const topBorderLines = stripAnsi(getOutput())
+    const plain = stripAnsi(getOutput());
+    const topBorderLines = plain
       .split("\n")
       .filter((line) => line.startsWith("┌"));
 
     assert.equal(topBorderLines.length, 1, `expected one input top border, got ${topBorderLines.length}`);
+    // 输入框上方不再输出 statusline / 快捷键黑灰提示
+    assert.doesNotMatch(plain, /model=test session=session-1/);
+    assert.doesNotMatch(plain, /Enter 发送/);
   });
 });
 
@@ -377,6 +380,7 @@ test("stream ui renders user, assistant, executing timeline, and completion bloc
     ui.appendDone(120);
 
     const output = getOutput();
+    const plain = stripAnsi(output);
     assert.match(output, /You/);
     assert.match(output, /帮我分析这个项目结构/);
     assert.match(output, /轻灵/);
@@ -384,7 +388,10 @@ test("stream ui renders user, assistant, executing timeline, and completion bloc
     assert.match(output, /读取文件/);
     assert.match(output, /package\.json/);
     assert.match(output, /89ms/);
-    assert.match(output, /分析完成/);
+    assert.match(plain, /结果/);
+    assert.match(plain, /模块化结构/);
+    assert.match(plain, /┌─\s*结果/);
+    assert.match(plain, /任务完成/);
   });
 });
 

@@ -21,9 +21,9 @@ import { findSlashCompletion, formatSlashCommandPanel, formatGroupedSlashPanel }
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
-  formatBottomHints,
   formatWelcomeGuide,
   formatRoleHeader,
+  formatResultHighlight,
   formatToolOutputCard,
   formatToolTimelineRow,
   formatTopBar,
@@ -281,13 +281,12 @@ export class StreamUI {
 
   // ── 底部输入栏 ────────────────────────────────────
 
+  /**
+   * 输入框上方不再堆叠 statusline / 快捷键黑灰提示（去噪）。
+   * 详情仍可通过 /statusline、/shortcuts 与顶栏查看。
+   */
   private printPromptHint(): void {
-    const chunks: string[] = [];
-    if (this.statusLineEnabled && this.statusLine) {
-      chunks.push(DIM(this.statusLine) + "\n");
-    }
-    chunks.push(DIM(formatBottomHints()) + "\n");
-    process.stdout.write(chunks.join(""));
+    // intentionally empty — keep input chrome minimal
   }
 
   private printInputBar(): void {
@@ -1159,11 +1158,23 @@ export class StreamUI {
   }
 
   appendFinal(text: string): void {
-    process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
     const width = process.stdout.columns || 100;
-    const lines = formatMarkdownForTerminal(text, { width });
-    for (const line of lines) {
-      process.stdout.write(line + "\n");
+    const mdWidth = Math.max(40, width - 4);
+    const mdLines = formatMarkdownForTerminal(text, { width: mdWidth });
+    process.stdout.write("\n" + S.p(BOLD(formatRoleHeader("assistant"))) + "  " + S.g(BOLD("结果")) + "\n");
+    const box = formatResultHighlight({
+      header: "结果",
+      lines: mdLines,
+      width,
+    });
+    for (let i = 0; i < box.length; i++) {
+      const line = box[i];
+      // 顶/底边框与左侧竖线用强调色，正文行保留 Markdown 原色
+      if (i === 0 || i === box.length - 1) {
+        process.stdout.write(S.g(BOLD(line)) + "\n");
+      } else {
+        process.stdout.write(S.g("│") + line.slice(1) + "\n");
+      }
     }
   }
 
@@ -1177,6 +1188,6 @@ export class StreamUI {
 
   appendDone(durationMs: number): void {
     const dur = fmtDur(durationMs);
-    process.stdout.write("\n" + S.g("☑ 分析完成") + " " + DIM(dur));
+    process.stdout.write("\n" + S.g(BOLD("☑ 任务完成")) + "  " + S.p(dur) + "\n");
   }
 }

@@ -5,6 +5,7 @@ import {
   formatBottomHints,
   formatInputFrame,
   formatResultBox,
+  formatResultHighlight,
   formatRoleHeader,
   formatToolOutputCard,
   formatToolTimelineRow,
@@ -88,11 +89,21 @@ test("tui shell formats result boxes and bottom input hints", () => {
   const box = formatResultBox([".", "├── src/", "└── README.md"], 80).join("\n");
   const input = formatInputFrame({ placeholder: "输入任务，或按 / 打开命令面板", width: 80 }).join("\n");
   const hints = formatBottomHints();
+  const highlight = formatResultHighlight({
+    header: "结果",
+    lines: ["项目采用模块化结构。", "可直接进入下一任务。"],
+    width: 80,
+  }).join("\n");
 
   assert.match(box, /┌/);
   assert.match(box, /src\//);
   assert.match(input, /› 输入任务，或按 \/ 打开命令面板/);
   assert.match(input, /└/);
+  assert.match(highlight, /结果/);
+  assert.match(highlight, /模块化结构/);
+  assert.match(highlight, /┌─/);
+  assert.match(highlight, /└/);
+  // formatBottomHints 仍供帮助文案使用，不再强制画在输入框上方
   assert.match(hints, /Enter 发送/);
   assert.match(hints, /命令|命令面板/);
   assert.match(hints, /Ctrl\+C/);
