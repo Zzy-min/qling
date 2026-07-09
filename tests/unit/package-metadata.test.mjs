@@ -9,10 +9,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 test("package.json has npm publish metadata for Phase 1.4", async () => {
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
-  assert.equal(pkg.name, "qling");
+  assert.equal(pkg.name, "@qlingzzy/qling");
   assert.equal(pkg.version, "1.0.0");
   assert.equal(pkg.license, "MIT");
-  assert.equal(pkg.bin?.qling, "./dist/index.js");
+  assert.ok(pkg.bin?.qling === "dist/index.js" || pkg.bin?.qling === "./dist/index.js");
+  assert.equal(pkg.publishConfig?.access, "public");
   assert.ok(pkg.engines?.node);
   assert.match(String(pkg.engines.node), /18/);
   assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.includes("agent"));

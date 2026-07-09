@@ -8,10 +8,8 @@ import { getPackageVersion } from "../../dist/package-version.js";
 test("package metadata exposes qling as the official CLI binary", async () => {
   const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf-8"));
 
-  assert.equal(pkg.name, "qling");
-  assert.deepEqual(pkg.bin, {
-    qling: "./dist/index.js",
-  });
+  assert.equal(pkg.name, "@qlingzzy/qling");
+  assert.ok(pkg.bin?.qling === "dist/index.js" || pkg.bin?.qling === "./dist/index.js");
 });
 
 test("cli: --version and -V route to version mode without requiring API key", () => {

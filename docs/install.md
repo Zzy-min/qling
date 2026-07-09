@@ -36,15 +36,16 @@ qling --help
 
 ## 方式 B：npm 全局安装
 
-**发布到 npm 后**可使用：
+包名因 npm 相似度策略使用作用域 **`@qlingzzy/qling`**（安装后命令仍是 `qling`）：
 
 ```bash
-npm install -g qling
+npm install -g @qlingzzy/qling
+qling --version
 qling bootstrap
 qling setup
 ```
 
-从 GitHub 直接装（无需等 npm 发布）：
+从 GitHub 直接装：
 
 ```bash
 npm install -g github:Zzy-min/qling

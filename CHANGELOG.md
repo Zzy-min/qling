@@ -8,6 +8,7 @@
 - **`qling --version` / `-V` / `version`**：本地打印 `qling/<semver>`，不加载配置、不要求 API key。
 - **版本单一来源**：`src/package-version.ts` 统一供 TUI、system prompt、daemon `/health`、help 使用。
 - **干净构建**：`npm run clean` 删除 `dist/`；`build`/`prepack` 先 clean 再 `tsc`，避免陈旧产物进入 npm pack。
+- **npm 包名**：因官方相似度策略改为 `@qlingzzy/qling`（`bin` 仍为 `qling`）；不可用无作用域名 `qling`。
 
 ### 稳定工作台契约
 
@@ -70,7 +71,7 @@
 - **eval:smoke**：本地无 LLM 评测集（`npm run eval:smoke`），覆盖沙箱/网络/预设/Plan Mode 等。
 - **Skills**：`skills/templates/SKILL.md` + `skills/examples/repo-triage`；`docs/skills.md`。
 - **MCP**：`qling mcp presets|list|add|remove`；本机 store `~/.qling/mcp-servers.json`。
-- **SDK**：`import { AgentLoop } from "qling"`（`src/sdk.ts` + package `exports`）；`docs/sdk.md`。
+- **SDK**：`import { AgentLoop } from "@qlingzzy/qling"`（`src/sdk.ts` + package `exports`）；`docs/sdk.md`。
 
 ## v0.5.0 (2026-05-07)
 

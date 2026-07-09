@@ -12,6 +12,6 @@ These files are **drafts** for future distribution. They are **not** published t
 
 1. `git clone` + `npm run bootstrap` + `npm link`  
 2. Or `npm install -g github:Zzy-min/qling`  
-3. After npm publish: `npm install -g qling`
+3. After npm publish: `npm install -g @qlingzzy/qling` (CLI remains `qling`)
 
 See [docs/install.md](../docs/install.md).

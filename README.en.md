@@ -45,10 +45,11 @@ npm link
 qling
 ```
 
-### After npm publish
+### From npm
 
 ```bash
-npm install -g qling
+npm install -g @qlingzzy/qling
+# CLI binary is still: qling
 qling bootstrap
 qling setup
 ```
