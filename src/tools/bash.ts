@@ -17,7 +17,7 @@ const MAX_OUTPUT_BYTES = 1024 * 1024; // 1MB per stream
 export const bashTool: ToolDefinition = {
   name: "bash",
   description:
-    "Execute shell commands on Linux/Windows (git, npm, file operations, CLI tools). Returns stdout/stderr. Hook intercepts dangerous operations (rm -rf, disk format, etc.).",
+    "Execute shell commands (git, npm, opencli, file ops). For Douyin/Xiaohongshu/Weibo/etc. run opencli after skill name=opencli; prefer opencli … -f json. Not for raw fetch of anti-bot pages.",
   longDescription: `执行 shell 命令的万能工具。**Linux**: 通过 /bin/sh 执行。**Windows**: 通过 cmd.exe 执行（而非 PowerShell）。
 **重要 - Windows 用户**：Windows 上请使用标准的 cmd.exe 命令（dir, type, copy, del 等），不要使用 PowerShell 独有语法（Invoke-WebRequest 等）。cmd.exe 不支持 PowerShell cmdlet。
 **Linux 用户**：通过 /bin/sh 执行标准 POSIX 命令。
@@ -25,15 +25,17 @@ export const bashTool: ToolDefinition = {
 **使用场景**:
 - git 操作（git add, git commit, git push）
 - npm/node 命令（npm install, node scripts）
+- **opencli**（本机已安装时）：opencli list / opencli douyin search … -f json（先 skill name="opencli"）
 - 文件操作（ls, cp, mv, mkdir）
 - 进程管理（ps, kill, pgrep）
-- 网络工具（curl, wget, ping）
+- 网络工具（curl, wget, ping）— 强反爬社交站不要用 curl 硬抓
 - 编译构建（make, gcc, cargo）
 
 **注意事项**:
 - rm -rf 等危险操作会被 Hook 拦截并要求确认
 - Windows 下需要通过 cmd.exe /c 执行
-- 长时间运行的命令建议设置 timeout`,
+- 长时间运行的命令建议设置 timeout
+- opencli 写操作（delete/publish）须用户确认`,
   parameters: {
     type: "object",
     properties: {

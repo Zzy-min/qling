@@ -6,23 +6,45 @@
 
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
-import { resolve, join } from "path";
+import { homedir } from "os";
+import { resolve, join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { toolError, toolSuccess } from "./error-utils.js";
 import { listSkills, searchSkills, parseSkillFile } from "../skills/registry.js";
+
+/** 包根目录（dist/tools/skill.js → 仓库或 npm 包根，含 skills/） */
+export function getPackageRootForSkills(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dist/tools → ../.. = package root
+  return resolve(here, "..", "..");
+}
 
 // Skill 查找路径
 // 支持两种格式：
 //   name="foo"        → 搜索 skills/foo.md
 //   name="@scope/foo" → 搜索 skills/scopes/scope/foo.md
 export function getSkillDirs(): string[] {
-  const dirs = [
-    resolve(process.cwd(), "skills"),
-    resolve(process.cwd(), ".qling/skills"),
-  ];
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  const add = (p: string) => {
+    const abs = resolve(p);
+    if (seen.has(abs)) return;
+    seen.add(abs);
+    dirs.push(abs);
+  };
+
+  // 1) 随包发布的 skills（全局 npm 安装仍可用）
+  add(join(getPackageRootForSkills(), "skills"));
+  // 2) 用户全局
+  add(join(homedir(), ".qling", "skills"));
+  // 3) 当前工作区
+  add(resolve(process.cwd(), "skills"));
+  add(resolve(process.cwd(), ".qling", "skills"));
+  // 4) 可选 Hermes 兼容路径
   const hermesHome = process.env.HERMES_HOME;
   if (hermesHome && hermesHome.trim()) {
-    dirs.push(join(hermesHome.trim(), "skills"));
+    add(join(hermesHome.trim(), "skills"));
   }
   return dirs;
 }
@@ -61,26 +83,26 @@ function resolveSkillPath(name: string): string | null {
 export const skillTool: ToolDefinition = {
   name: "skill",
   description:
-    "Dynamically load a skill/knowledge file (.md). Use when encountering unfamiliar tools, APIs, or frameworks. Use 'list' to discover available skills, 'search query=X' to find skills, or 'name=X' to load one.",
+    "Load a skill knowledge file. Use for unfamiliar tools/APIs and ALWAYS before opencli/social platforms (Douyin, Xiaohongshu, Weibo, Bilibili, TikTok, Twitter). Actions: list | search query= | name=opencli.",
   longDescription: `动态加载技能/知识文件（SKILL.md），内容通过 tool_result 注入上下文。
 
 **核心原则**: "用到什么知识，临时加载什么知识，不塞 system prompt"
 
 **三种操作**:
 - skill list — 列出所有可用技能
-- skill search query="docker" — 搜索技能
-- skill name="docker" — 加载技能内容
+- skill search query="opencli" — 搜索技能
+- skill name="opencli" — 加载 opencli 调用手册（抖音/小红书等）
 
 **查找路径**:
-- skills/{name}.md
-- skills/{category}/{name}.md
+- 包内 skills/（npm 全局安装可用）
+- ~/.qling/skills/
+- 工作区 skills/ 与 .qling/skills/
 - @scope/name → scopes/{scope}/{name}.md
 
 **使用场景**:
+- 抖音/小红书/微博/B站/TikTok/推特 → skill(name="opencli") 再用 bash 跑 opencli
 - 调用 docker 但不熟悉命令 → skill(name="docker")
-- 调用 Kubernetes API → skill(name="k8s-debug")
 - 不确定有哪些技能 → skill list
-- 搜索特定领域技能 → skill search query="api"
 
 **返回内容**:
 - 文件的 markdown body（不含 frontmatter）

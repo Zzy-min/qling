@@ -1,10 +1,14 @@
 # Skills 约定
 
-轻灵通过 Markdown skill 扩展领域知识。扫描路径：
+轻灵通过 Markdown skill 扩展领域知识。扫描路径（去重，优先靠前）：
 
-- 仓库 `skills/`
-- 本机 `~/.qling/skills/`
-- 项目 `.qling/skills/`（若存在）
+1. **包内** `skills/`（随 `@qlingzzy/qling` 安装，全局可用）
+2. 本机 `~/.qling/skills/`
+3. 当前工作区 `skills/`
+4. 项目 `.qling/skills/`（若存在）
+5. 可选 `HERMES_HOME/skills`
+
+内置：`opencli`（平台数据必读）、`qling`、`examples/repo-triage`。
 
 ## 文件约定
 

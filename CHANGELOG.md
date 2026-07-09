@@ -2,6 +2,12 @@
 
 ## v1.0.0 (2026-07-09)
 
+### Agent 路由（opencli）
+
+- **内置 skill `opencli`**：教模型用 `bash` + `opencli <site> … -f json` 获取平台数据；明确抖音≠TikTok、禁止 `url_fetch` 强反爬站。
+- **system prompt 短路由**：Restrictions 中写入网页/社交平台调用规则。
+- **skill 扫描路径**：包内 `skills/` + `~/.qling/skills/` + 工作区 skills，全局安装后仍能加载内置 skill。
+
 ### Token 与预算
 
 - **官方 usage 计数**：会话 token 仅累加模型 API 返回的 `prompt_tokens` / `completion_tokens` / `total_tokens`（及 Anthropic/Ollama 等价字段）；不再用字符×4 估算账单。

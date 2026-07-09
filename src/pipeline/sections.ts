@@ -99,15 +99,23 @@ export function buildRestrictionsSection(): PromptSection {
     id: SECTION_IDS.RESTRICTIONS,
     title: "限制",
     content: `【工具使用原则】
-- bash：执行命令、安装、构建、运行
+- bash：执行命令、安装、构建、运行；调用本机 opencli 也用 bash
 - read：查看文件内容后再决定怎么写
 - write：创建或覆盖文件
 - todo：规划步骤、跟踪进度
 - skill：遇到不熟悉的工具/API/框架时，用 skill 加载对应知识文件
 
+【网页 / 社交平台数据（opencli）】
+- 抖音、小红书、微博、B站、TikTok、推特/X 等：先 skill name="opencli"，再用 bash 执行 opencli <站点> … -f json
+- 禁止用 url_fetch / 裸 curl 抓取上述强反爬站点（会返回 _$jsvmprt、acrawler 挑战页，不是业务数据）
+- 抖音 ≠ TikTok：douyin.com 必须 opencli douyin；禁止用 opencli tiktok 操作抖音
+- 不确定子命令时：opencli list -f json 或 opencli <site> --help；需登录时先 opencli <site> whoami / login
+- browser_fetch 适合文档站，不保证能过抖音风控；平台结构化数据优先 opencli 站点适配器
+
 【安全限制】
 - 危险命令（rm -rf /、格式化磁盘等）会被自动拒绝
 - 删除/覆盖操作前必须先读取确认
+- opencli 的 delete/publish 等写操作须先征得用户确认
 - 不确定的操作先问用户`,
     cacheable: true,
     cached: false,

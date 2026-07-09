@@ -14,15 +14,21 @@ node dist/index.js repl             # 简易 REPL
 ```
 
 ## 工具列表
-- **bash**: 执行 Shell 命令（支持 timeout、cwd 参数）
+- **bash**: 执行 Shell 命令（支持 timeout、cwd 参数）；调用本机 **opencli** 也走 bash
 - **read**: 读取文件（path, offset, limit）
 - **write**: 写入文件（path, content）— 注意：覆盖写入，非追加
 - **search**: 搜索文件内容或文件名（pattern, file_glob, context, limit）
 - **planner**: 生成任务执行计划（goal）
-- **skill**: 动态加载知识文件（支持 @scope、多路径解析）
+- **skill**: 动态加载知识文件；平台数据前先 `skill name="opencli"`
 - **todo**: 任务管理（action: list/add/done/cancel/remove/clear）
-- **url_fetch**: 受 Guard 约束的结构化网络请求（url, format）
+- **url_fetch**: 受 Guard 约束的结构化网络请求；**不要**用来抓抖音等强反爬站
+- **browser_fetch**: JS 渲染文档页；不保证过抖音风控
 - **subtask**: 隔离子任务执行（独立上下文，共享记忆，深度=1）
+
+## opencli（本机 CLI Hub）
+- 先 `skill name="opencli"` 读手册，再 `bash` 执行命令
+- 抖音：`opencli douyin … -f json`（禁止 `opencli tiktok` 操作抖音）
+- 发现：`opencli list -f json` / `opencli <site> --help` / `opencli doctor`
 
 ## CLI 模式
 - `run <task>` — 一次性执行任务后退出
