@@ -11,6 +11,7 @@ import {
   formatToolTimelineRow,
   formatTopBar,
   formatWelcomeGuide,
+  visibleWidth,
 } from "../../dist/tui/shell.js";
 
 test("tui shell formats screenshot-style top bar", () => {
@@ -89,11 +90,12 @@ test("tui shell formats result boxes and bottom input hints", () => {
   const box = formatResultBox([".", "├── src/", "└── README.md"], 80).join("\n");
   const input = formatInputFrame({ placeholder: "输入任务，或按 / 打开命令面板", width: 80 }).join("\n");
   const hints = formatBottomHints();
-  const highlight = formatResultHighlight({
+  const highlightLines = formatResultHighlight({
     header: "结果",
-    lines: ["项目采用模块化结构。", "可直接进入下一任务。"],
+    lines: ["项目采用模块化结构。", "可直接进入下一任务。", "\x1b[32m短ANSI行\x1b[0m"],
     width: 80,
-  }).join("\n");
+  });
+  const highlight = highlightLines.join("\n");
 
   assert.match(box, /┌/);
   assert.match(box, /src\//);
@@ -103,6 +105,13 @@ test("tui shell formats result boxes and bottom input hints", () => {
   assert.match(highlight, /模块化结构/);
   assert.match(highlight, /┌─/);
   assert.match(highlight, /└/);
+  // 左右边框完整闭合，且各行可见宽度一致（右侧不再缺边）
+  const frameW = visibleWidth(highlightLines[0]);
+  for (const line of highlightLines) {
+    assert.equal(visibleWidth(line), frameW, `frame width mismatch: ${line}`);
+    assert.match(line, /[│┌└]/);
+    assert.match(line, /[│┐┘]$/);
+  }
   // formatBottomHints 仍供帮助文案使用，不再强制画在输入框上方
   assert.match(hints, /Enter 发送/);
   assert.match(hints, /命令|命令面板/);

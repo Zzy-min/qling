@@ -1169,11 +1169,14 @@ export class StreamUI {
     });
     for (let i = 0; i < box.length; i++) {
       const line = box[i];
-      // 顶/底边框与左侧竖线用强调色，正文行保留 Markdown 原色
+      // 顶/底与左右边框用强调色；正文保留 Markdown 原色
       if (i === 0 || i === box.length - 1) {
         process.stdout.write(S.g(BOLD(line)) + "\n");
+      } else if (line.startsWith("│ ") && line.endsWith(" │")) {
+        const mid = line.slice(2, line.length - 2);
+        process.stdout.write(S.g("│ ") + mid + S.g(" │") + "\n");
       } else {
-        process.stdout.write(S.g("│") + line.slice(1) + "\n");
+        process.stdout.write(S.g(line) + "\n");
       }
     }
   }

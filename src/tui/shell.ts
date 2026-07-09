@@ -225,26 +225,41 @@ export function formatResultBox(lines: string[], width: number, options?: { comp
 export interface ResultHighlightOptions {
   /** 框标题，默认「结果」 */
   header?: string;
-  /** 正文行（可含 ANSI，不做右侧强制对齐以免破坏着色） */
+  /** 正文行（可含 ANSI）；超宽时截断以保证右侧边框对齐 */
   lines: string[];
   width?: number;
 }
 
 /**
+ * 将可见宽度限制在 maxWidth 内。
+ * 含 ANSI 且超宽时去掉颜色再截断，保证右框能稳定闭合对齐。
+ */
+function fitVisible(value: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  if (visibleWidth(value) <= maxWidth) return value;
+  return truncateVisible(stripAnsi(value), maxWidth);
+}
+
+/**
  * 任务最终结果高亮框（纯函数，便于单测）。
- * 不折叠长内容；边框左侧强调，正文原样输出。
+ * 顶/底/左右边框完整闭合，各行可见宽度一致。
  */
 export function formatResultHighlight(options: ResultHighlightOptions): string[] {
   const safeWidth = normalizeWidth(options.width);
   const contentWidth = Math.max(20, safeWidth - 4);
+  const frameInner = contentWidth + 2; // 左右各 1 空格 + 正文区
   const header = normalizeLabel(options.header, "结果");
   const title = ` ${header} `;
   const titleW = visibleWidth(title);
-  const dashAfter = Math.max(2, contentWidth + 2 - 1 - titleW);
+  // ┌─ + title + dashes + ┐  总可见宽 = contentWidth + 4
+  const dashAfter = Math.max(1, frameInner - 1 - titleW);
   const top = `┌─${title}${"─".repeat(dashAfter)}┐`;
   const bodyLines = options.lines.length > 0 ? options.lines : [""];
-  const body = bodyLines.map((line) => `│ ${line}`);
-  const bottom = "└" + "─".repeat(contentWidth + 2) + "┘";
+  const body = bodyLines.map((line) => {
+    const text = fitVisible(line, contentWidth);
+    return `│ ${padVisible(text, contentWidth)} │`;
+  });
+  const bottom = "└" + "─".repeat(frameInner) + "┘";
   return [top, ...body, bottom];
 }
 
