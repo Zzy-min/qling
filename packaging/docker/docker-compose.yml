@@ -1,0 +1,28 @@
+# DRAFT compose for optional sandbox runs
+# Usage:
+#   export QLING_LLM_API_KEY=...
+#   docker compose -f packaging/docker/docker-compose.yml run --rm qling doctor
+services:
+  qling:
+    build:
+      context: ../..
+      dockerfile: packaging/docker/Dockerfile
+    image: qling:1.0.0
+    working_dir: /workspace
+    volumes:
+      - ${QLING_HOST_WORKSPACE:-.}:/workspace
+      - qling-state:/qling-state
+    environment:
+      QLING_LLM_API_KEY: ${QLING_LLM_API_KEY:-}
+      QLING_LLM_PROVIDER: ${QLING_LLM_PROVIDER:-deepseek}
+      QLING_LLM_ENDPOINT: ${QLING_LLM_ENDPOINT:-https://api.deepseek.com}
+      QLING_LLM_MODEL: ${QLING_LLM_MODEL:-deepseek-chat}
+      QLING_WORKSPACE_DIR: /workspace
+      QLING_WRITE_SANDBOX: workspace
+      QLING_GUARD_NETWORK_MODE: ${QLING_GUARD_NETWORK_MODE:-strict}
+      QLING_FILE_STATE_DIR: /qling-state
+    stdin_open: true
+    tty: true
+
+volumes:
+  qling-state:

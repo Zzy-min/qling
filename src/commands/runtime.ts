@@ -45,6 +45,12 @@ export interface SlashCommandContext {
     setEnabled: (enabled: boolean) => void;
     getLine: () => Promise<string>;
   };
+  /** 长工具输出折叠：与 Ctrl+O 同源 */
+  toolOutput?: {
+    expanded: boolean;
+    setExpanded: (expanded: boolean) => void;
+    toggle: () => boolean;
+  };
   setImmediatePrompt?: (prompt: string) => void;
   onModelChanged?: (model: string) => void | Promise<void>;
   writeClipboard?: (text: string) => Promise<void>;
@@ -65,6 +71,7 @@ export function withDefaultWriters(
     switchSession: context.switchSession,
     daemonSessionApi: context.daemonSessionApi,
     statusLine: context.statusLine,
+    toolOutput: context.toolOutput,
     setImmediatePrompt: context.setImmediatePrompt,
     onModelChanged: context.onModelChanged,
     writeClipboard: context.writeClipboard,

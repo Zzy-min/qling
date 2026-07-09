@@ -5,17 +5,15 @@ import { promisify } from "util";
 import { join } from "path";
 
 import { SlashCommand } from "./types.js";
+import {
+  formatPresetTableLines,
+  getProviderPreset,
+  resolveModelCandidates,
+} from "../providers/presets.js";
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_MODELS = [
-  "deepseek-chat",
-  "qwen-plus",
-  "glm-4",
-  "moonshot-v1-8k",
-  "gpt-4o",
-  "llama3",
-];
+const DEFAULT_MODELS = resolveModelCandidates();
 
 function workspaceOf(context: any): string {
   return context.workspaceDir || context.agentLoop?.getWorkspaceDir?.() || process.cwd();
@@ -89,35 +87,130 @@ export const usageCommand: SlashCommand = {
 
 export const modelCommand: SlashCommand = {
   name: "/model",
-  description: "查看或切换当前会话模型",
-  usage: "/model [model]",
+  description: "查看或切换当前会话模型 / Provider 预设",
+  usage: "/model [list|use <preset>|model]",
   category: "session",
-  argumentHint: "[model]",
+  argumentHint: "[list|use <preset>|<model>]",
   availability: "local",
   claudeCompatibleName: "/model",
   execute: async (args, context) => {
-    const current = typeof (context.agentLoop as any).getModel === "function"
-      ? (context.agentLoop as any).getModel()
-      : process.env.QLING_LLM_MODEL || "unknown";
-    const next = args.join(" ").trim();
+    const loop = context.agentLoop as any;
+    const currentModel =
+      typeof loop.getModel === "function"
+        ? loop.getModel()
+        : process.env.QLING_LLM_MODEL || "unknown";
+    const currentProvider =
+      typeof loop.getProvider === "function"
+        ? loop.getProvider()
+        : process.env.QLING_LLM_PROVIDER || "unknown";
+    const currentEndpoint =
+      typeof loop.getEndpoint === "function"
+        ? loop.getEndpoint()
+        : process.env.QLING_LLM_ENDPOINT || "unknown";
+
+    const sub = (args[0] ?? "").trim().toLowerCase();
+    const rest = args.slice(1).join(" ").trim();
 
     context.writeLine("");
-    context.writeLine("🤖 【模型】");
+    context.writeLine("🤖 【模型 / Provider】");
     context.writeLine("-----------------------------------------");
-    if (!next) {
-      context.writeLine(`当前模型 : ${current}`);
-      context.writeLine(`候选     : ${DEFAULT_MODELS.join(", ")}`);
-      context.writeLine("用法     : /model <model>");
-      context.writeLine("边界     : 不写配置文件；带参数时只切换当前进程会话。");
-    } else if (typeof (context.agentLoop as any).setModel !== "function") {
-      context.writeError("❌ 当前 AgentLoop 不支持 session 级模型切换。");
-    } else {
-      (context.agentLoop as any).setModel(next);
-      process.env.QLING_LLM_MODEL = next;
-      await context.onModelChanged?.(next);
-      context.writeLine(`已切换   : ${current} -> ${next}`);
-      context.writeLine("范围     : 仅当前会话/当前进程，不写入默认配置。");
+
+    if (!sub) {
+      context.writeLine(`Provider  : ${currentProvider}`);
+      context.writeLine(`Endpoint  : ${currentEndpoint}`);
+      context.writeLine(`Model     : ${currentModel}`);
+      context.writeLine(`候选模型  : ${DEFAULT_MODELS.join(", ")}`);
+      context.writeLine("用法      : /model list");
+      context.writeLine("          : /model use <preset|序号>");
+      context.writeLine("          : /model <model>");
+      context.writeLine("边界      : 默认只影响当前进程；不写 ~/.qling/.env。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+      return;
     }
+
+    if (sub === "list" || sub === "ls" || sub === "presets") {
+      context.writeLine("可用 Provider 预设:");
+      for (const line of formatPresetTableLines()) {
+        context.writeLine(line);
+      }
+      context.writeLine("");
+      context.writeLine("切换整包: /model use ollama");
+      context.writeLine("只改模型: /model deepseek-chat");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+      return;
+    }
+
+    if (sub === "use" || sub === "preset") {
+      const presetKey = rest || args[1] || "";
+      if (!presetKey) {
+        context.writeError("❌ 用法: /model use <preset|序号>，例如 /model use ollama");
+        context.writeLine("-----------------------------------------");
+        context.writeLine("");
+        return;
+      }
+      const preset = getProviderPreset(presetKey);
+      if (!preset) {
+        context.writeError(`❌ 未找到预设 '${presetKey}'。运行 /model list 查看。`);
+        context.writeLine("-----------------------------------------");
+        context.writeLine("");
+        return;
+      }
+      if (typeof loop.applyLlmSession === "function") {
+        loop.applyLlmSession({
+          provider: preset.provider,
+          endpoint: preset.endpoint,
+          model: preset.model,
+          apiKey: preset.requiresApiKey ? undefined : "",
+        });
+      } else if (typeof loop.setModel === "function") {
+        loop.setModel(preset.model);
+        process.env.QLING_LLM_PROVIDER = preset.provider;
+        process.env.QLING_LLM_ENDPOINT = preset.endpoint;
+        process.env.QLING_LLM_MODEL = preset.model;
+      } else {
+        context.writeError("❌ 当前 AgentLoop 不支持 session 级模型切换。");
+        context.writeLine("-----------------------------------------");
+        context.writeLine("");
+        return;
+      }
+      await context.onModelChanged?.(preset.model);
+      context.writeLine(`已应用预设: ${preset.id} (${preset.displayName})`);
+      context.writeLine(`Provider  : ${currentProvider} -> ${preset.provider}`);
+      context.writeLine(`Endpoint  : ${currentEndpoint} -> ${preset.endpoint}`);
+      context.writeLine(`Model     : ${currentModel} -> ${preset.model}`);
+      context.writeLine(
+        preset.requiresApiKey
+          ? "密钥      : 仍使用当前进程已有 API key（不写盘）。"
+          : "密钥      : 本地预设，无需 API key。"
+      );
+      context.writeLine("范围      : 仅当前会话/当前进程，不写入默认配置。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+      return;
+    }
+
+    // 兼容：/model <modelName> 仅切换 model
+    const nextModel = args.join(" ").trim();
+    if (typeof loop.setModel !== "function" && typeof loop.applyLlmSession !== "function") {
+      context.writeError("❌ 当前 AgentLoop 不支持 session 级模型切换。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+      return;
+    }
+    if (typeof loop.applyLlmSession === "function") {
+      loop.applyLlmSession({ model: nextModel });
+    } else {
+      loop.setModel(nextModel);
+      process.env.QLING_LLM_MODEL = nextModel;
+    }
+    await context.onModelChanged?.(nextModel);
+    context.writeLine(`已切换模型: ${currentModel} -> ${nextModel}`);
+    context.writeLine(`Provider  : ${currentProvider}（未改）`);
+    context.writeLine(`Endpoint  : ${currentEndpoint}（未改）`);
+    context.writeLine("范围      : 仅当前会话/当前进程，不写入默认配置。");
+    context.writeLine("提示      : 换供应商请用 /model use <preset>");
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },
@@ -125,30 +218,148 @@ export const modelCommand: SlashCommand = {
 
 export const planCommand: SlashCommand = {
   name: "/plan",
-  description: "把下一步请求转为普通会话计划草稿",
-  usage: "/plan [description]",
+  description: "Plan Mode：只读规划（禁 write/patch/bash 等）或排队计划 prompt",
+  usage: "/plan [on|off|status|description]",
   category: "session",
-  argumentHint: "[description]",
+  argumentHint: "[on|off|status|description]",
   availability: "local",
   claudeCompatibleName: "/plan",
   execute: async (args, context) => {
-    const description = args.join(" ").trim() || "请基于当前上下文先给出实施计划，不要直接修改文件。";
+    const loop = context.agentLoop as {
+      isPlanMode?: () => boolean;
+      setPlanMode?: (enabled: boolean) => void;
+      getSessionMode?: () => string;
+    };
+    const sub = (args[0] ?? "").trim().toLowerCase();
+    const hasPlanApi =
+      typeof loop.isPlanMode === "function" && typeof loop.setPlanMode === "function";
+
+    const writeStatus = (mode: string) => {
+      context.writeLine("");
+      context.writeLine("🧭 【Plan Mode】");
+      context.writeLine("-----------------------------------------");
+      context.writeLine(`当前模式  : ${mode}`);
+      context.writeLine("说明      : plan=只读规划（禁 write/patch/bash/subtask/browser_fetch）");
+      context.writeLine("          : agent=正常工具权限");
+      context.writeLine("用法      : /plan on | /plan off | /plan status");
+      context.writeLine("          : /plan <任务描述>  → 进入 plan 并排队计划 prompt");
+      context.writeLine("边界      : 仅当前进程；不写配置文件。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+    };
+
+    if (!sub || sub === "status") {
+      const mode = hasPlanApi
+        ? loop.isPlanMode!()
+          ? "plan"
+          : "agent"
+        : process.env.QLING_PLAN_MODE === "1"
+          ? "plan"
+          : "agent";
+      writeStatus(mode);
+      return;
+    }
+
+    if (sub === "on" || sub === "enable" || sub === "enter") {
+      if (!hasPlanApi) {
+        context.writeError("❌ 当前 AgentLoop 不支持 Plan Mode。");
+        return;
+      }
+      loop.setPlanMode!(true);
+      writeStatus("plan");
+      context.writeLine("✅ 已进入 Plan Mode。写工具将被拒绝，直到 /plan off。");
+      context.writeLine("");
+      return;
+    }
+
+    if (sub === "off" || sub === "disable" || sub === "exit" || sub === "agent") {
+      if (!hasPlanApi) {
+        context.writeError("❌ 当前 AgentLoop 不支持 Plan Mode。");
+        return;
+      }
+      loop.setPlanMode!(false);
+      writeStatus("agent");
+      context.writeLine("✅ 已退出 Plan Mode，恢复正常工具权限。");
+      context.writeLine("");
+      return;
+    }
+
+    // /plan <description> → 进入 plan mode + 排队计划 prompt
+    const description = args.join(" ").trim();
+    if (hasPlanApi) {
+      loop.setPlanMode!(true);
+    }
     const prompt = [
-      "请先给出计划，再等待用户确认或继续指令。",
-      "这是轻灵普通会话计划请求，不进入 Codex Plan Mode。",
+      "你正处于轻灵 Plan Mode（只读规划）。",
+      "约束：不要调用 write/patch/bash/subtask/browser_fetch；只做阅读、搜索与计划输出。",
+      "请先给出分步实施计划，标出风险与验证方式，再等待用户确认。",
+      "用户确认后可用 /plan off 退出 Plan Mode 再实施。",
       "",
       `任务: ${description}`,
     ].join("\n");
+
     if (!context.setImmediatePrompt) {
-      context.writeError("❌ 当前会话不支持排队计划 prompt。");
+      context.writeLine("");
+      context.writeLine("🧭 已进入 Plan Mode（当前会话不支持排队 prompt）");
+      context.writeLine("-----------------------------------------");
+      context.writeLine(`任务     : ${description}`);
+      context.writeLine("边界     : 写工具已禁用；请直接输入规划请求。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
       return;
     }
+
     context.setImmediatePrompt(prompt);
     context.writeLine("");
-    context.writeLine("🧭 已创建普通会话计划请求");
+    context.writeLine("🧭 已进入 Plan Mode 并排队计划请求");
     context.writeLine("-----------------------------------------");
     context.writeLine(`任务     : ${description}`);
-    context.writeLine("边界     : 将作为下一条普通 prompt 执行；不改变系统 Plan Mode。");
+    context.writeLine("边界     : 写工具禁用；计划作为下一条 prompt 执行。");
+    context.writeLine("退出     : /plan off");
+    context.writeLine("-----------------------------------------");
+    context.writeLine("");
+  },
+};
+
+export const expandCommand: SlashCommand = {
+  name: "/expand",
+  aliases: ["/展开", "/折叠"],
+  description: "切换长工具输出默认展开/折叠（与 Ctrl+O 同源）",
+  usage: "/expand [on|off|status]",
+  category: "session",
+  argumentHint: "[on|off|status]",
+  availability: "local",
+  execute: async (args, context) => {
+    const sub = (args[0] ?? "toggle").toLowerCase();
+    const toolOutput = context.toolOutput;
+
+    context.writeLine("");
+    context.writeLine("📄 【工具输出折叠】");
+    context.writeLine("-----------------------------------------");
+
+    if (!toolOutput) {
+      context.writeLine("状态      : 当前会话未挂载 TUI 工具输出控制。");
+      context.writeLine("替代      : 在交互 TUI 中使用 Ctrl+O。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+      return;
+    }
+
+    if (sub === "status" || sub === "状态") {
+      context.writeLine(`当前      : ${toolOutput.expanded ? "展开" : "折叠"}`);
+    } else if (sub === "on" || sub === "expand" || sub === "展开") {
+      toolOutput.setExpanded(true);
+      context.writeLine("已切换    : 展开后续长工具输出");
+    } else if (sub === "off" || sub === "collapse" || sub === "折叠") {
+      toolOutput.setExpanded(false);
+      context.writeLine("已切换    : 折叠后续长工具输出");
+    } else {
+      const next = toolOutput.toggle();
+      context.writeLine(`已切换    : ${next ? "展开" : "折叠"}后续长工具输出`);
+    }
+
+    context.writeLine("快捷键    : Ctrl+O");
+    context.writeLine("边界      : 仅影响后续工具输出；不重绘历史块。");
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },

@@ -8,6 +8,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
     "types": ["node"],
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true

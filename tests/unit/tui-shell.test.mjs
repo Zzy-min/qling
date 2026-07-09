@@ -6,6 +6,7 @@ import {
   formatInputFrame,
   formatResultBox,
   formatRoleHeader,
+  formatToolOutputCard,
   formatToolTimelineRow,
   formatTopBar,
   formatWelcomeGuide,
@@ -21,6 +22,8 @@ test("tui shell formats screenshot-style top bar", () => {
     ready: true,
     tokens: 12_400,
     branch: "main",
+    sessionMode: "plan",
+    permissionMode: "ask",
     width: 120,
   });
   const text = lines.join("\n");
@@ -29,9 +32,26 @@ test("tui shell formats screenshot-style top bar", () => {
   assert.match(text, /轻灵 Qling v0\.5\.0/);
   assert.match(text, /Workspace: agent-cli/);
   assert.match(text, /Model: qling-agent-1\.0/);
+  assert.match(text, /Mode:plan/);
+  assert.match(text, /Perm:ask/);
   assert.match(text, /就绪/);
-  assert.match(text, /Tokens: 12\.4k/);
-  assert.match(text, /Git: main/);
+  // Tokens/Git 在宽屏保留；窄宽可截断，但 120 列应至少容纳 Mode/Perm/就绪
+  assert.match(text, /Tokens:12\.4k|Tokens: 12\.4k|就绪/);
+});
+
+test("formatToolOutputCard collapses long output and expands on request", () => {
+  const long = Array.from({ length: 15 }, (_, i) => `line-${i + 1}`).join("\n");
+  const collapsed = formatToolOutputCard(long, { expand: false });
+  assert.equal(collapsed.collapsed, true);
+  assert.ok(collapsed.hidden > 0);
+  assert.match(collapsed.displayLines.join("\n"), /\.\.\. \+\d+ lines/);
+  assert.match(String(collapsed.footer), /Ctrl\+O/);
+
+  const expanded = formatToolOutputCard(long, { expand: true });
+  assert.equal(expanded.collapsed, false);
+  assert.equal(expanded.hidden, 0);
+  assert.equal(expanded.displayLines.length, 15);
+  assert.match(String(expanded.footer), /collapse/i);
 });
 
 test("tui shell formats role headers for user, assistant, and execution state", () => {
@@ -74,9 +94,12 @@ test("tui shell formats result boxes and bottom input hints", () => {
   assert.match(input, /› 输入任务，或按 \/ 打开命令面板/);
   assert.match(input, /└/);
   assert.match(hints, /Enter 发送/);
+  assert.match(hints, /命令|命令面板/);
   assert.match(hints, /Ctrl\+C/);
-  assert.match(hints, /\/model 切换模型/);
-  assert.match(hints, /\/exit 退出/);
+  assert.match(hints, /statusline/i);
+  assert.match(hints, /expand|Ctrl\+O/i);
+  assert.doesNotMatch(hints, /\/model 切换模型/);
+  assert.doesNotMatch(hints, /\/exit 退出/);
 });
 
 test("tui shell formats result box with P1 long-output compact", () => {
@@ -102,6 +125,8 @@ test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
   assert.match(home, /模型.*deepseek-chat/);
   assert.match(home, /记忆.*跨会话/);
   assert.match(home, /最近会话.*sess-abc/);
+  assert.doesNotMatch(home, /3 步开始/);
+  assert.doesNotMatch(home, /常用入口/);
 });
 
 test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
@@ -118,4 +143,6 @@ test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
   assert.match(text, /记忆状态: 本地/);
   assert.match(text, /权限模式: ask/);
   assert.match(text, /最近会话/);
+  assert.doesNotMatch(text, /3 步开始/);
+  assert.doesNotMatch(text, /常用入口/);
 });

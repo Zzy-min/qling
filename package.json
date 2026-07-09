@@ -1,10 +1,67 @@
 {
   "name": "qling",
-  "version": "0.5.0",
-  "description": "轻灵 Qling - 本地优先的中文 AI Agent CLI 工作台",
+  "version": "1.0.0",
+  "description": "轻灵 Qling - 本地优先的中文 AI Agent CLI 工作台 / Local-first Chinese AI Agent CLI workbench",
   "type": "module",
+  "main": "./dist/sdk.js",
+  "types": "./dist/sdk.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/sdk.d.ts",
+      "import": "./dist/sdk.js",
+      "default": "./dist/sdk.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "qling": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "scripts",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "package.json",
+    "docs/sdk.md",
+    "docs/skills.md",
+    "docs/install.md",
+    "docs/docker.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "keywords": [
+    "qling",
+    "agent",
+    "cli",
+    "tui",
+    "ai",
+    "llm",
+    "coding-agent",
+    "local-first",
+    "chinese",
+    "mcp",
+    "terminal",
+    "deepseek",
+    "openai-compatible"
+  ],
+  "author": "Zzy-min",
+  "license": "MIT",
+  "homepage": "https://github.com/Zzy-min/qling#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zzy-min/qling.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Zzy-min/qling/issues"
   },
   "scripts": {
     "build": "tsc",
@@ -19,7 +76,8 @@
     "dev": "tsc --watch",
     "test": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\"",
     "test:smoke": "npm run build && node --test \"tests/smoke/**/*.test.mjs\"",
-    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\""
+    "eval:smoke": "npm run build && node scripts/eval-smoke.mjs",
+    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs"
   },
   "dependencies": {
     "axios": "^1.7.0",

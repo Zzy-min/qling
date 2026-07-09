@@ -27,6 +27,7 @@ import {
   formatBottomHints,
   formatWelcomeGuide,
   formatRoleHeader,
+  formatToolOutputCard,
   formatToolTimelineRow,
   formatTopBar,
   padVisible,
@@ -94,19 +95,6 @@ function trunc(s: string, maxW: number): string {
   return s.slice(0, i) + "…";
 }
 
-// ── 行折叠 ─────────────────────────────────────────────
-
-interface CollapsedLines {
-  top: string[];
-  bottom: string[];
-  hidden: number;
-}
-
-function collapseLines(lines: string[], maxTop: number, maxBottom: number): CollapsedLines {
-  if (lines.length <= maxTop + maxBottom) return { top: lines, bottom: [], hidden: 0 };
-  return { top: lines.slice(0, maxTop), bottom: lines.slice(-maxBottom), hidden: lines.length - maxTop - maxBottom };
-}
-
 // ── Duration 格式化 ─────────────────────────────────────
 
 function fmtDur(ms: number): string {
@@ -137,7 +125,15 @@ type DraftDisplaySource = "typed" | "pasted";
 export class StreamUI {
   private model: string;
   private tools: number;
-  private chromeStatus: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean; permissionMode?: string; memoryStatus?: string } = {};
+  private chromeStatus: {
+    tokens?: number;
+    branch?: string | null;
+    workspace?: string;
+    ready?: boolean;
+    permissionMode?: string;
+    sessionMode?: string;
+    memoryStatus?: string;
+  } = {};
   private input = new InputBuffer();
   private running: boolean = false;
   private inputCallback: ((cmd: string) => Promise<void>) | null = null;
@@ -210,13 +206,34 @@ export class StreamUI {
     this.statusLineEnabled = enabled;
   }
 
-  setChromeStatus(status: { tokens?: number; branch?: string | null; workspace?: string; ready?: boolean; permissionMode?: string; memoryStatus?: string }): void {
+  setChromeStatus(status: {
+    tokens?: number;
+    branch?: string | null;
+    workspace?: string;
+    ready?: boolean;
+    permissionMode?: string;
+    sessionMode?: string;
+    memoryStatus?: string;
+  }): void {
     this.chromeStatus = { ...this.chromeStatus, ...status };
   }
 
   setModel(model: string): void {
     const next = String(model ?? "").trim();
     if (next) this.model = next;
+  }
+
+  isExpandLongToolOutput(): boolean {
+    return this.expandLongToolOutput;
+  }
+
+  setExpandLongToolOutput(expanded: boolean): void {
+    this.expandLongToolOutput = Boolean(expanded);
+  }
+
+  toggleExpandLongToolOutput(): boolean {
+    this.expandLongToolOutput = !this.expandLongToolOutput;
+    return this.expandLongToolOutput;
   }
 
   setHistory(entries: string[]): void {
@@ -254,10 +271,12 @@ export class StreamUI {
       tokens: this.chromeStatus.tokens ?? 0,
       branch: this.chromeStatus.branch ?? "-",
       ready: this.chromeStatus.ready ?? true,
+      sessionMode: this.chromeStatus.sessionMode ?? "agent",
+      permissionMode: this.chromeStatus.permissionMode ?? "ask",
       width,
     });
-    process.stdout.write(S.p(lines[0]) + "\n");
-    process.stdout.write(S.d(lines[1]) + "\n");
+    // 批量写入减少闪烁
+    const chunks: string[] = [S.p(lines[0]) + "\n", S.d(lines[1]) + "\n"];
     const homeSnap = {
       model: this.model,
       workspace: this.chromeStatus.workspace,
@@ -267,18 +286,24 @@ export class StreamUI {
       width,
     };
     for (const line of formatWelcomeGuide(width, homeSnap)) {
-      process.stdout.write(DIM(line) + "\n");
+      chunks.push(DIM(line) + "\n");
     }
+    process.stdout.write(chunks.join(""));
   }
 
   // ── 底部输入栏 ────────────────────────────────────
 
-  private printInputBar(): void {
-    const w = process.stdout.columns || 80;
+  private printPromptHint(): void {
+    const chunks: string[] = [];
     if (this.statusLineEnabled && this.statusLine) {
-      process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
+      chunks.push(DIM(this.statusLine) + "\n");
     }
-    process.stdout.write(DIM(formatBottomHints()) + "\n");
+    chunks.push(DIM(formatBottomHints()) + "\n");
+    process.stdout.write(chunks.join(""));
+  }
+
+  private printInputBar(): void {
+    this.printPromptHint();
     this.writeInputValue(true);
     this.syncCursor();
   }
@@ -517,7 +542,8 @@ export class StreamUI {
     const topBorder = this.formatInputFrameBorder("┌", "┐", topLabel, frameWidth);
     const bottomBorder = this.formatInputFrameBorder("└", "┘", bottomLabel, frameWidth);
 
-    process.stdout.write(S.p(topBorder));
+    // 批量拼串后一次写出，降低 Windows 终端重绘闪烁
+    const chunks: string[] = [S.p(topBorder)];
 
     for (let i = 0; i < visibleLines.length; i++) {
       const absoluteRow = this.inputStartRow + i;
@@ -525,23 +551,25 @@ export class StreamUI {
       const textLine = visibleLines[i] ?? "";
       const contentText = textLine;
       const rendered = truncateVisible(prefix + contentText, contentWidth);
-      process.stdout.write("\n" + S.p("│ " + padVisible(rendered, contentWidth) + " │"));
+      chunks.push("\n" + S.p("│ " + padVisible(rendered, contentWidth) + " │"));
     }
 
-    process.stdout.write("\n" + S.p(bottomBorder));
+    chunks.push("\n" + S.p(bottomBorder));
 
     let extraHint = "";
     if (compactDraft) {
       extraHint = S.y("多行草稿：Enter 发送全部内容");
     }
     if (extraHint) {
-      process.stdout.write("\n" + extraHint);
+      chunks.push("\n" + extraHint);
     }
 
     const hints = this.formatCurrentSlashCompletionHints();
     for (const hint of hints) {
-      process.stdout.write("\n" + DIM(hint));
+      chunks.push("\n" + DIM(hint));
     }
+
+    process.stdout.write(chunks.join(""));
 
     this.lastInputContentLineCount = 1 + visibleLines.length + 1;
     this.lastInputHintLineCount = hints.length + (extraHint ? 1 : 0);
@@ -603,14 +631,15 @@ export class StreamUI {
   showPrompt(): void {
     if (!this.running) return;
     this.inputStartRow = 0;
-    const w = process.stdout.columns || 80;
     process.stdout.write("\n");
-    if (this.statusLineEnabled && this.statusLine) {
-      process.stdout.write(DIM(trunc(this.statusLine, Math.max(20, w))) + "\n");
-    }
-    process.stdout.write(DIM(formatBottomHints()) + "\n");
+    this.printPromptHint();
     this.writeInputValue(true);
     this.syncCursor();
+  }
+
+  /** 测试与 slash 复用：当前是否默认展开长工具输出 */
+  getExpandLongToolOutput(): boolean {
+    return this.expandLongToolOutput;
   }
 
   // ── 键盘输入处理 ─────────────────────────────────
@@ -943,8 +972,8 @@ export class StreamUI {
   }
 
   private handleCtrlO(): void {
-    this.expandLongToolOutput = !this.expandLongToolOutput;
-    const state = this.expandLongToolOutput ? "展开后续工具输出" : "折叠后续工具输出";
+    const expanded = this.toggleExpandLongToolOutput();
+    const state = expanded ? "展开后续工具输出" : "折叠后续工具输出";
     this.appendFeedbackAndRedraw(S.s("长输出：") + DIM(state), !this.input.value);
   }
 
@@ -1049,31 +1078,22 @@ export class StreamUI {
     process.stdout.write("\n" + color(row));
   }
 
-  private printToolOutput(output: string, status: "success" | "error"): void {
-    const lines = output.split("\n");
-    const isLong = lines.length > 12;
-    if (isLong && this.expandLongToolOutput) {
-      for (const line of lines) {
-        process.stdout.write("  " + DIM(line) + "\n");
-      }
-      const expandedMsg = "... " + lines.length + " lines total  " + S.d("(Ctrl+O to collapse future long output)");
-      process.stdout.write("  " + DIM(expandedMsg) + "\n");
-      return;
+  private printToolOutput(output: string, _status: "success" | "error"): void {
+    const card = formatToolOutputCard(output, {
+      expand: this.expandLongToolOutput,
+      maxTop: 8,
+      maxBottom: 2,
+      longThreshold: 12,
+    });
+    const chunks: string[] = [];
+    for (const line of card.displayLines) {
+      chunks.push("  " + DIM(line) + "\n");
     }
-    const collapsed = collapseLines(lines, 8, 2);
-    for (const line of collapsed.top) {
-      process.stdout.write("  " + DIM(line) + "\n");
+    if (card.footer) {
+      chunks.push("  " + DIM(card.footer) + "\n");
     }
-    if (collapsed.hidden > 0) {
-      const hiddenMsg = "... +" + collapsed.hidden + " lines";
-      process.stdout.write("  " + DIM(hiddenMsg) + "\n");
-      for (const line of collapsed.bottom) {
-        process.stdout.write("  " + DIM(line) + "\n");
-      }
-    }
-    if (isLong) {
-      const totalMsg = "... " + lines.length + " lines total  " + S.d("(Ctrl+O to expand)");
-      process.stdout.write("  " + DIM(totalMsg) + "\n");
+    if (chunks.length > 0) {
+      process.stdout.write(chunks.join(""));
     }
   }
 

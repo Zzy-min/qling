@@ -2,7 +2,12 @@ import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
-import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+import {
+  checkSensitiveWriteTarget,
+  getRuntimeRootsFromEnv,
+  isPathAllowedForWrite,
+  resolveToolPath,
+} from "../runtime-paths.js";
 
 const MAX_WRITE_BYTES = 256 * 1024; // 256KB
 
@@ -105,11 +110,6 @@ export async function runWrite(args: {
   if (!inputPath) {
     return toolError("WRITE_INVALID_PATH", "path is required");
   }
-  const roots = getRuntimeRootsFromEnv();
-  const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
-  if (!isWithinAllowedRoots(resolvedPath, roots)) {
-    return toolError("WRITE_OUTSIDE_ALLOWED_ROOT", `${resolvedPath} is outside allowed roots`);
-  }
 
   const content = String(args.content ?? "");
   const byteLength = Buffer.byteLength(content, "utf-8");
@@ -118,6 +118,20 @@ export async function runWrite(args: {
       "WRITE_CONTENT_TOO_LARGE",
       `content exceeds ${MAX_WRITE_BYTES} bytes (current: ${byteLength})`
     );
+  }
+
+  const roots = getRuntimeRootsFromEnv();
+  const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
+  if (!isPathAllowedForWrite(resolvedPath, roots)) {
+    return toolError(
+      "WRITE_OUTSIDE_ALLOWED_ROOT",
+      `${resolvedPath} is outside write sandbox (default: workspace only; set QLING_WRITE_SANDBOX=roots|off to relax)`
+    );
+  }
+
+  const sensitive = checkSensitiveWriteTarget(resolvedPath);
+  if (sensitive?.blocked) {
+    return toolError(sensitive.code, sensitive.reason, { category: "permission" });
   }
 
   const danger = isDangerousPath(resolvedPath);

@@ -46,12 +46,48 @@ export function redactText(text: string, guard: GuardConfig): string {
   return out;
 }
 
-export async function checkUrlFetchPolicy(url: URL, guard: GuardConfig): Promise<GuardDecision> {
+export type NetworkGuardMode = "strict" | "open" | "deny";
+
+export function resolveNetworkGuardMode(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): NetworkGuardMode {
+  const raw = String(env.QLING_GUARD_NETWORK_MODE ?? "strict").trim().toLowerCase();
+  if (raw === "deny" || raw === "deny_all" || raw === "off" || raw === "none" || raw === "block") {
+    return "deny";
+  }
+  if (raw === "open" || raw === "permissive" || raw === "http") return "open";
+  return "strict";
+}
+
+export async function checkUrlFetchPolicy(
+  url: URL,
+  guard: GuardConfig,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<GuardDecision> {
   if (!guard.enabled) return { allowed: true };
+
+  const mode = resolveNetworkGuardMode(env);
+  if (mode === "deny") {
+    return {
+      allowed: false,
+      category: "network",
+      reason: "network mode=deny: all outbound fetches blocked (QLING_GUARD_NETWORK_MODE)",
+    };
+  }
+
   const policy = guard.network.url_fetch;
   const href = url.toString();
 
-  if (!policy.allowed_url_prefixes.some((prefix) => href.startsWith(prefix))) {
+  if (mode === "open") {
+    // 允许 http/https，仍受私网策略约束；忽略自定义前缀收紧
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return {
+        allowed: false,
+        category: "network",
+        reason: `unsupported protocol in open mode: ${url.protocol}`,
+      };
+    }
+  } else if (!policy.allowed_url_prefixes.some((prefix) => href.startsWith(prefix))) {
     return {
       allowed: false,
       category: "network",

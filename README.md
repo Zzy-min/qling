@@ -2,7 +2,9 @@
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#环境要求)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.0-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)](CHANGELOG.md)
+
+[English](README.en.md) · [安装指南](docs/install.md) · [CHANGELOG](CHANGELOG.md)
 
 轻灵（qling）是一个本地优先的 AI Agent CLI。它把会话、上下文、工具执行、skill、任务、权限、诊断、后台使命、观测台和恢复能力收拢到一个可审计、可中断、可继续的命令行界面里——不是 Claude Code 的复制品，而是一个面向中文开发者和本机工作流的终端控制台。
 
@@ -27,6 +29,8 @@
 
 ## 快速开始
 
+完整安装路径（Windows Scoop/winget 草案、卸载、原生模块注意）：见 **[docs/install.md](docs/install.md)**。
+
 ### 环境要求
 
 - Node.js ≥ 18
@@ -47,20 +51,20 @@ npm run bootstrap
 npm run bootstrap -- --with-browser
 ```
 
-`bootstrap` 会检查 Node/npm、安装依赖、构建项目、创建本地 `~/.qling/` 目录并运行 `doctor`。默认不安装浏览器依赖，也不自动开启 dashboard、semantic memory、dynamic discovery。
+`bootstrap` 会检查 Node/npm、安装依赖、构建项目、创建本地 `~/.qling/` 目录并给出 `doctor`/`setup` 下一步。默认不安装浏览器依赖，也不自动开启 dashboard、semantic memory、dynamic discovery。
 
-### 手动安装
-
-```bash
-npm install
-npm run build
-```
-
-安装为全局命令（可选）：
+### 全局命令
 
 ```bash
+# 源码目录内
 npm link
 qling
+
+# 或从 GitHub 直接全局安装
+npm install -g github:Zzy-min/qling
+
+# npm 发布后
+# npm install -g qling
 ```
 
 已安装 CLI 后，可运行本机初始化检查：
@@ -69,6 +73,14 @@ qling
 qling bootstrap
 qling bootstrap --with-browser
 qling bootstrap --profile dev
+```
+
+### 手动安装
+
+```bash
+npm install
+npm run build
+npm link   # 可选
 ```
 
 ### 最小配置
@@ -389,8 +401,14 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 
 ## 版本与变更
 
-- 当前版本：`0.5.0`
+- 当前版本：`1.0.0`
 - 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
+- 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)
+- Skills：见 [docs/skills.md](docs/skills.md)
+- SDK：见 [docs/sdk.md](docs/sdk.md)
+- 本地评测：`npm run eval:smoke`
+- 英文说明：见 [README.en.md](README.en.md)
+- 竞品对标与提升路线：见 `docs/superpowers/specs/20260709-agent-cli-competitive-analysis-and-v1-roadmap-spec.md`
 - 设计 / 实施文档：见 `docs/superpowers/specs/`、`docs/superpowers/plans/`
 
 ## License

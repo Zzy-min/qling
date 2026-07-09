@@ -18,6 +18,7 @@ test("statusline formatter includes local interaction state", () => {
     sessionId: "session_1234567890abcdef",
     branch: "main",
     permissionMode: "ask",
+    sessionMode: "agent",
     goalStatus: "active",
     activeTasks: 2,
     tokens: 12345,
@@ -27,6 +28,7 @@ test("statusline formatter includes local interaction state", () => {
   });
 
   assert.match(line, /模型=deepseek-chat/);
+  assert.match(line, /模式=agent/);
   assert.match(line, /会话=session_1/);
   assert.match(line, /分支=main/);
   assert.match(line, /权限=询问\(确认\)/);

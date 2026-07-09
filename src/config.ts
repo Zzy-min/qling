@@ -398,12 +398,32 @@ export async function loadQlingConfig(
   applyPermissionModeCompat(withCli);
   normalizeAgentsIsolationConfig(withCli);
   normalizeRuntimeRoots(withCli);
+  await mergeLocalMcpStore(withCli, warnings);
 
   return {
     config: withCli,
     warnings,
     usedConfigPath,
   };
+}
+
+/** 合并 ~/.qling/mcp-servers.json；env/config 中同名 server 优先 */
+async function mergeLocalMcpStore(config: QlingConfig, warnings: string[]): Promise<void> {
+  try {
+    const { loadMcpStore, defaultMcpStorePath } = await import("./mcp/store.js");
+    const storePath = defaultMcpStorePath(config.runtime.file_state_dir);
+    const store = await loadMcpStore(storePath);
+    const storeCount = Object.keys(store.servers).length;
+    if (storeCount === 0) return;
+    config.mcp.servers = {
+      ...store.servers,
+      ...config.mcp.servers,
+    };
+  } catch (err) {
+    warnings.push(
+      `mcp store merge skipped: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 export function applyConfigToProcessEnv(config: QlingConfig): void {
@@ -900,14 +920,35 @@ export function scanDotEnvContent(filePath: string, content: string): EnvSecretH
  * Locations: ~/.qling/.env and process.cwd()/.env
  * Only reports hits; never emits values.
  */
+/** 参与密钥扫描的 env 文件名（相对目录） */
+export const SECRET_ENV_FILENAMES = [
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.production",
+  ".env.test",
+  ".env.development.local",
+  ".env.production.local",
+];
+
+export function listSecretScanCandidatePaths(
+  cwd: string = process.cwd(),
+  stateDir?: string
+): string[] {
+  const home = os.homedir();
+  const qlingDir = stateDir || path.join(home, ".qling");
+  const paths: string[] = [path.join(qlingDir, ".env")];
+  for (const name of SECRET_ENV_FILENAMES) {
+    paths.push(path.join(cwd, name));
+  }
+  // 去重
+  return Array.from(new Set(paths.map((p) => path.resolve(p))));
+}
+
 export async function scanRuntimeDotEnvSecrets(stateDir?: string): Promise<EnvSecretHit[]> {
   const { readFile } = await import("fs/promises");
   const hits: EnvSecretHit[] = [];
-  const home = os.homedir();
-  const candidates: string[] = [
-    path.join(stateDir || path.join(home, ".qling"), ".env"),
-    path.join(process.cwd(), ".env"),
-  ];
+  const candidates = listSecretScanCandidatePaths(process.cwd(), stateDir);
 
   for (const p of candidates) {
     try {

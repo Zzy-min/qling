@@ -202,6 +202,20 @@ export class StreamingREPL {
           return buildStatusLine(this.createSlashContext());
         },
       },
+      toolOutput: {
+        expanded: typeof this.ui.isExpandLongToolOutput === "function"
+          ? this.ui.isExpandLongToolOutput()
+          : false,
+        setExpanded: (expanded: boolean) => {
+          if (typeof this.ui.setExpandLongToolOutput === "function") {
+            this.ui.setExpandLongToolOutput(expanded);
+          }
+        },
+        toggle: () =>
+          typeof this.ui.toggleExpandLongToolOutput === "function"
+            ? this.ui.toggleExpandLongToolOutput()
+            : false,
+      },
       setImmediatePrompt: (prompt: string) => {
         this.immediatePrompt = prompt;
       },
@@ -231,6 +245,7 @@ export class StreamingREPL {
         workspace: this.agent.getWorkspaceDir(),
         ready: !this.inputQueue.isProcessing,
         permissionMode: snapshot.permissionMode,
+        sessionMode: snapshot.sessionMode ?? "agent",
         memoryStatus: "本地",  // 简单指示；未来可从 agent memory store 获取计数
       });
     } catch {
@@ -405,12 +420,18 @@ export class StreamingREPL {
     this.immediatePrompt = null;
     const handled = await handleSlashCommand(input, this.createSlashContext());
     if (handled) {
+      // plan/model/permissions 等变更后刷新 chrome + statusline
+      await this.refreshStatusLine();
       if (this.immediatePrompt) {
         const nextPrompt = this.immediatePrompt;
         this.immediatePrompt = null;
         await this.processPrompt(nextPrompt);
       } else {
         await this.scheduler.runDueTasksOnce();
+        // 真实 TUI 有 showPrompt；单测 mock 可能没有
+        if (typeof (this.ui as { showPrompt?: () => void }).showPrompt === "function") {
+          this.ui.showPrompt();
+        }
       }
       return;
     }

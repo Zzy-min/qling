@@ -5,6 +5,9 @@
 
 import { ToolDefinition, ToolResult } from "../types.js";
 import { chromium } from "playwright";
+import { appendGuardAudit, checkUrlFetchPolicy } from "../guard.js";
+import { guardConfigFromEnv } from "../config.js";
+import { toolError } from "./error-utils.js";
 
 export const browserFetchTool: ToolDefinition = {
   name: "browser_fetch",
@@ -61,6 +64,36 @@ export async function runBrowserFetch(args: {
   url: string;
   wait_for?: string;
 }): Promise<ToolResult> {
+  const rawUrl = String(args.url ?? "").trim();
+  if (!rawUrl) {
+    return toolError("BROWSER_FETCH_MISSING_URL", "url is required");
+  }
+
+  let target: URL;
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    return toolError("BROWSER_FETCH_INVALID_URL", `invalid url: ${rawUrl}`);
+  }
+
+  // Phase 1.5: 与 url_fetch 共用网络 Guard（prefix / 私网 / network mode）
+  const guard = guardConfigFromEnv();
+  const decision = await checkUrlFetchPolicy(target, guard);
+  if (!decision.allowed) {
+    await appendGuardAudit(guard, {
+      tool: "browser_fetch",
+      action: "deny",
+      category: decision.category,
+      target: target.toString(),
+      reason: decision.reason,
+    });
+    return toolError(
+      "BROWSER_FETCH_GUARD_BLOCKED",
+      decision.reason ?? "guard denied browser_fetch",
+      { category: "network" }
+    );
+  }
+
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -68,8 +101,8 @@ export async function runBrowserFetch(args: {
   const page = await context.newPage();
 
   try {
-    console.error(`🌐 正在打开浏览器访问: ${args.url}...`);
-    await page.goto(args.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    console.error(`🌐 正在打开浏览器访问: ${rawUrl}...`);
+    await page.goto(rawUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
     if (args.wait_for) {
       await page.waitForSelector(args.wait_for, { timeout: 10000 });
@@ -94,10 +127,17 @@ export async function runBrowserFetch(args: {
       .trim()
       .slice(0, 15000); // 截断以防超出 context
 
+    await appendGuardAudit(guard, {
+      tool: "browser_fetch",
+      action: "allow",
+      category: "network",
+      target: rawUrl,
+    });
+
     return {
       tool_call_id: "",
-      output: `📄 【网页抓取结果】: ${title}\nURL: ${args.url}\n\n${cleanedContent}`,
-      meta: { title, url: args.url }
+      output: `📄 【网页抓取结果】: ${title}\nURL: ${rawUrl}\n\n${cleanedContent}`,
+      meta: { title, url: rawUrl }
     };
 
   } catch (err: any) {

@@ -366,9 +366,17 @@ async function main() {
     process.exit(0);
   }
 
-  // v0.4 Onboarding Tutorial (仅在交互模式下触发)
+  // v0.4 / Phase 1.4 Onboarding（仅交互模式；非 TTY 跳过）
   if (decision.mode === "chat" || decision.mode === "repl") {
-    await checkOnboarding({ stateDir: decision.global.fileStateDir });
+    const needSetup = !(
+      process.env.QLING_LLM_API_KEY?.trim() ||
+      process.env.DEEPSEEK_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim()
+    );
+    await checkOnboarding({
+      stateDir: decision.global.fileStateDir,
+      needSetup,
+    });
   }
 
   for (const warning of decision.warnings) {
@@ -758,10 +766,16 @@ async function main() {
   }
 
   if (decision.mode === "mcp") {
-    console.log(formatLocalMcpReport(buildLocalMcpReport(loaded.config.mcp, {
-      ...process.env,
-      QLING_MCP_SERVERS: originalMcpServersEnv ?? process.env.QLING_MCP_SERVERS,
-    })).join("\n"));
+    const { handleMcpCli } = await import("./cli/mcp-control.js");
+    const code = await handleMcpCli(decision.subArgs, {
+      mcpConfig: loaded.config.mcp,
+      env: {
+        ...process.env,
+        QLING_MCP_SERVERS: originalMcpServersEnv ?? process.env.QLING_MCP_SERVERS,
+      },
+      stateDir: loaded.config.runtime.file_state_dir,
+    });
+    if (code !== 0) process.exit(code);
     return;
   }
 

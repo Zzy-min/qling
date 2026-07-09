@@ -151,7 +151,69 @@ test("patch: outside workspace path validation rejects", async () => {
     });
 
     assert.equal(result.is_error, true);
-    assert.match(result.error?.message, /outside allowed roots/i);
+    assert.match(result.error?.message ?? result.output, /outside (allowed roots|write sandbox)/i);
+  });
+});
+
+test("patch: empty search is rejected", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "target.txt");
+    await writeFile(file, "hello\n", "utf-8");
+    const result = await runPatch({
+      path: "target.txt",
+      chunks: [{ search: "", replace: "x" }],
+    });
+    assert.equal(result.is_error, true);
+    assert.match(result.error?.message ?? result.output, /empty search/i);
+    assert.equal(await readFile(file, "utf-8"), "hello\n");
+  });
+});
+
+test("patch: noop when content unchanged is rejected without write", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "target.txt");
+    const original = "same-line\n";
+    await writeFile(file, original, "utf-8");
+    const result = await runPatch({
+      path: "target.txt",
+      chunks: [{ search: "same-line", replace: "same-line" }],
+    });
+    assert.equal(result.is_error, true);
+    assert.match(result.error?.message ?? result.output, /no-op|unchanged/i);
+    assert.equal(await readFile(file, "utf-8"), original);
+  });
+});
+
+test("patch: dry_run returns diff and does not write", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "target.txt");
+    const original = "line1\nline2\n";
+    await writeFile(file, original, "utf-8");
+    const result = await runPatch({
+      path: "target.txt",
+      dry_run: true,
+      chunks: [{ search: "line2", replace: "line-two" }],
+    });
+    assert.equal(result.is_error, undefined);
+    assert.match(result.output, /dry_run OK/i);
+    assert.match(result.output, /summary: chunks=1/);
+    assert.match(result.output, /\+line-two/);
+    assert.match(result.output, /no file written/i);
+    assert.equal(await readFile(file, "utf-8"), original);
+  });
+});
+
+test("patch: success includes summary line stats", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "target.txt");
+    await writeFile(file, "a\nb\n", "utf-8");
+    const result = await runPatch({
+      path: "target.txt",
+      chunks: [{ search: "b", replace: "B" }],
+    });
+    assert.equal(result.is_error, undefined);
+    assert.match(result.output, /summary: chunks=1/);
+    assert.match(result.output, /\+/);
   });
 });
 

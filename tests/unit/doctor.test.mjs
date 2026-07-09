@@ -30,12 +30,37 @@ test("doctor report summarizes healthy local checks", async () => {
     gitBranch: () => "main",
     nodeVersion: "22.22.1",
     daemonProbe: async () => ({ ok: true, detail: "running" }),
+    ollamaProbe: async () => ({ ok: true, detail: "http://127.0.0.1:11434/api/tags reachable models=llama3" }),
   });
 
   assert.equal(report.summary.fail, 0);
   // 允许 secrets 等 warn（真实开发机 .env 常检测到密钥）
   assert.ok(report.summary.pass >= 9);
   assert.equal(report.checks.find((check) => check.id === "daemon")?.status, "pass");
+  assert.equal(report.checks.find((check) => check.id === "ollama")?.status, "pass");
+});
+
+test("doctor ollama warn recommends local model path", async () => {
+  const report = await buildDoctorReport(createContext(), {
+    env: {
+      QLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qling",
+      QLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qling\\cache",
+      QLING_LLM_PROVIDER: "deepseek",
+      QLING_LLM_MODEL: "deepseek-chat",
+      QLING_LLM_ENDPOINT: "https://api.deepseek.com",
+      QLING_LLM_API_KEY: "sk-test",
+    },
+    exists: () => true,
+    gitBranch: () => "main",
+    nodeVersion: "22.22.1",
+    daemonProbe: async () => ({ ok: true, detail: "running" }),
+    ollamaProbe: async () => ({ ok: false, detail: "unreachable: connect ECONNREFUSED" }),
+  });
+
+  const ollama = report.checks.find((check) => check.id === "ollama");
+  assert.equal(ollama?.status, "warn");
+  assert.match(report.recommendations.join("\n"), /Ollama/);
+  assert.match(report.recommendations.join("\n"), /\/model use ollama/);
 });
 
 test("doctor report includes config mcp and hooks summaries without leaking secrets", async () => {
@@ -73,12 +98,14 @@ test("doctor report includes config mcp and hooks summaries without leaking secr
     gitBranch: () => "main",
     nodeVersion: "22.22.1",
     daemonProbe: async () => ({ ok: true, detail: "running" }),
+    ollamaProbe: async () => ({ ok: false, detail: "unreachable" }),
   });
   const text = formatDoctorReport(report).join("\n");
 
   assert.equal(report.checks.find((check) => check.id === "config")?.status, "pass");
   assert.equal(report.checks.find((check) => check.id === "mcp")?.status, "pass");
   assert.equal(report.checks.find((check) => check.id === "hooks")?.status, "pass");
+  assert.equal(report.checks.find((check) => check.id === "ollama")?.status, "warn");
   assert.match(text, /config/);
   assert.match(text, /provider=deepseek/);
   assert.match(text, /model=doctor-model/);

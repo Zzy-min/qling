@@ -10,6 +10,9 @@ export interface TopBarSnapshot {
   ready?: boolean;
   tokens?: number;
   branch?: string | null;
+  /** agent | plan */
+  sessionMode?: string | null;
+  permissionMode?: string | null;
   width?: number;
 }
 
@@ -91,6 +94,20 @@ function workspaceName(workspace: string): string {
   return parts.at(-1) ?? normalized;
 }
 
+function formatSessionModeLabel(mode: string | null | undefined): string {
+  const m = String(mode ?? "agent").trim().toLowerCase();
+  if (m === "plan") return "plan";
+  return "agent";
+}
+
+function formatPermLabel(mode: string | null | undefined): string {
+  const m = String(mode ?? "").trim().toLowerCase();
+  if (m === "allow") return "allow";
+  if (m === "ask") return "ask";
+  if (m === "deny") return "deny";
+  return m || "-";
+}
+
 export function formatTopBar(snapshot: TopBarSnapshot): string[] {
   const width = normalizeWidth(snapshot.width);
   const product = normalizeLabel(snapshot.productName, "轻灵");
@@ -99,19 +116,31 @@ export function formatTopBar(snapshot: TopBarSnapshot): string[] {
   const left = `${product} ${english} v${version}`;
   const workspace = `Workspace: ${workspaceName(snapshot.workspace)}`;
   const model = `Model: ${normalizeLabel(snapshot.model, "unknown")}`;
+  const sessionMode = `Mode:${formatSessionModeLabel(snapshot.sessionMode)}`;
+  const perm = `Perm:${formatPermLabel(snapshot.permissionMode)}`;
   const ready = `${snapshot.ready === false ? "○" : "●"} ${snapshot.ready === false ? "忙碌" : "就绪"}`;
-  const tokens = `Tokens: ${formatTokenCount(snapshot.tokens)}`;
-  const branch = `Git: ${normalizeLabel(snapshot.branch, "-")}`;
-  const parts = [left, workspace, model, ready, tokens, branch];
+  const tokens = `Tokens:${formatTokenCount(snapshot.tokens)}`;
+  const branch = `Git:${normalizeLabel(snapshot.branch, "-")}`;
+  // 优先级：身份/工作区/模型/模式/权限/状态 > 令牌/分支（空间不足时先丢后者）
+  const high = [left, workspace, model, sessionMode, perm, ready];
+  const low = [tokens, branch];
+  const parts = [...high, ...low];
 
-  let line = parts[0];
-  for (const part of parts.slice(1)) {
-    const separator = "    ";
-    if (visibleWidth(line + separator + part) > width) {
-      line += "  " + part;
-    } else {
-      line += separator + part;
+  const pack = (items: string[]): string => {
+    let line = items[0] ?? "";
+    for (const part of items.slice(1)) {
+      const sep = "  ";
+      if (visibleWidth(line + sep + part) <= width) {
+        line += sep + part;
+      }
     }
+    return line;
+  };
+
+  let line = pack(parts);
+  if (visibleWidth(line) > width) {
+    // 丢弃低优先级字段再装一次
+    line = pack(high);
   }
 
   return [truncateVisible(line, width), "─".repeat(width)];
@@ -210,7 +239,81 @@ export function formatInputFrame(options: InputFrameOptions): string[] {
 
 export function formatBottomHints(): string {
   const t = getLocalizedText();
-  return t.tui?.hints?.bottom || "Enter 发送   Ctrl+N 换行   粘贴多行先编辑   Ctrl+C 清空/中断   /model 切换模型   /exit 退出";
+  return (
+    t.tui?.hints?.bottom ||
+    "Enter 发送 · / 命令 · Ctrl+N 换行 · Ctrl+O 展开工具输出 · Ctrl+C 清空/中断 · /statusline · /expand"
+  );
+}
+
+export interface ToolOutputCardOptions {
+  expand?: boolean;
+  maxTop?: number;
+  maxBottom?: number;
+  /** 超过该行数视为长输出并折叠（expand=false 时） */
+  longThreshold?: number;
+}
+
+export interface ToolOutputCard {
+  displayLines: string[];
+  totalLines: number;
+  hidden: number;
+  collapsed: boolean;
+  footer: string | null;
+}
+
+/**
+ * 工具输出折叠卡片（纯函数，便于单测）。
+ * expand=true 时全量展示；否则保留 top/bottom 并报告 hidden。
+ */
+export function formatToolOutputCard(
+  output: string,
+  options: ToolOutputCardOptions = {}
+): ToolOutputCard {
+  const maxTop = Math.max(1, options.maxTop ?? 8);
+  const maxBottom = Math.max(0, options.maxBottom ?? 2);
+  const longThreshold = Math.max(maxTop + maxBottom + 1, options.longThreshold ?? 12);
+  const lines = String(output ?? "").split("\n");
+  const totalLines = lines.length;
+  const expand = options.expand === true;
+
+  if (expand || totalLines <= longThreshold) {
+    return {
+      displayLines: lines,
+      totalLines,
+      hidden: 0,
+      collapsed: false,
+      footer:
+        expand && totalLines > longThreshold
+          ? `... ${totalLines} lines total  (Ctrl+O to collapse)`
+          : null,
+    };
+  }
+
+  if (totalLines <= maxTop + maxBottom) {
+    return {
+      displayLines: lines,
+      totalLines,
+      hidden: 0,
+      collapsed: false,
+      footer: null,
+    };
+  }
+
+  const top = lines.slice(0, maxTop);
+  const bottom = maxBottom > 0 ? lines.slice(-maxBottom) : [];
+  const hidden = totalLines - maxTop - maxBottom;
+  const displayLines = [
+    ...top,
+    `... +${hidden} lines`,
+    ...bottom,
+  ];
+  return {
+    displayLines,
+    totalLines,
+    hidden,
+    collapsed: true,
+    footer: `... ${totalLines} lines total  (Ctrl+O to expand)`,
+  };
 }
 
 export interface HomeSnapshot {
@@ -242,9 +345,6 @@ export function formatWelcomeGuide(width = 80, snapshot?: HomeSnapshot): string[
     const rec = snapshot.recentSessions.slice(0, 2).join(" | ");
     lines.push(truncateVisible(`${home.recentSessions || "最近会话"}: ${rec}`, safeWidth));
   }
-
-  lines.push(truncateVisible("3 步开始: 输入任务 → 按 / 打开命令面板 → /doctor 检查环境", safeWidth));
-  lines.push(truncateVisible(`常用入口 : /help · /privacy · /context · /doctor · ${home.recommended || "推荐命令"}`, safeWidth));
 
   return lines;
 }

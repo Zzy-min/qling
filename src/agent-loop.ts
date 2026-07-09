@@ -43,9 +43,31 @@ import {
   type SavedSessionSnapshot,
   type SavedSessionSummary,
 } from "./session/session-registry.js";
+import {
+  apiKeyRequiredForEndpoint,
+  isLoopbackEndpoint,
+} from "./providers/presets.js";
+import { maybeAutoCommitAfterWrite } from "./git/auto-commit.js";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_QLING_DIR = path.join(HOME_DIR, ".qling");
+
+/** 本地 loopback / ollama 允许空 key，用占位符满足 OpenAI 兼容 Authorization 头 */
+function resolveSessionApiKey(raw: string, endpoint: string, provider: string): string {
+  const trimmed = String(raw ?? "").trim();
+  if (trimmed) return trimmed;
+  if (!apiKeyRequiredForEndpoint(endpoint, provider) || isLoopbackEndpoint(endpoint)) {
+    return "local";
+  }
+  return "";
+}
+
+export interface LlmSessionPatch {
+  model?: string;
+  provider?: string;
+  endpoint?: string;
+  apiKey?: string;
+}
 
 interface TurnTelemetry {
   turn: number;
@@ -180,19 +202,30 @@ export class AgentLoop extends AgentEventEmitter {
 
   constructor(config: Partial<AgentConfig> = {}) {
     super();
-    const apiKey =
-      config.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
-    if (!apiKey) {
-      throw new Error("Missing API key (expected config.apiKey / DEEPSEEK_API_KEY / OPENAI_API_KEY)");
-    }
-
     const provider = config.provider ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
     const endpoint =
       config.endpoint ??
       process.env.QLING_LLM_ENDPOINT ??
       process.env.OPENAI_BASE_URL ??
       process.env.DEEPSEEK_BASE_URL ??
-      (provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com");
+      (provider === "openai"
+        ? "https://api.openai.com/v1"
+        : provider === "ollama" || provider === "local"
+          ? "http://localhost:11434/v1"
+          : "https://api.deepseek.com");
+
+    const rawApiKey =
+      config.apiKey ??
+      process.env.QLING_LLM_API_KEY ??
+      process.env.DEEPSEEK_API_KEY ??
+      process.env.OPENAI_API_KEY ??
+      "";
+    const apiKey = resolveSessionApiKey(rawApiKey, endpoint, provider);
+    if (!apiKey) {
+      throw new Error(
+        "Missing API key (expected config.apiKey / QLING_LLM_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY)。本地 Ollama 可将 endpoint 设为 http://localhost:11434/v1 以跳过密钥。"
+      );
+    }
     this.runtimeRootDir = path.resolve(
       config.runtime?.fileStateDir ??
         process.env.QLING_FILE_STATE_DIR ??
@@ -782,6 +815,33 @@ export class AgentLoop extends AgentEventEmitter {
           }
         }
 
+        // Phase 1.2: 可选 git auto-commit（write/patch 成功且非 dry_run）
+        if (
+          !result.is_error &&
+          (tc.name === "write" || tc.name === "patch") &&
+          !(tc.arguments as { dry_run?: boolean })?.dry_run
+        ) {
+          const args = tc.arguments as { path?: string; file?: string };
+          const targetFile = String(args.path || args.file || "").trim();
+          if (targetFile) {
+            try {
+              const ac = await maybeAutoCommitAfterWrite({
+                workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
+                filePath: targetFile,
+                toolName: tc.name,
+              });
+              if (ac.mode !== "off") {
+                result = {
+                  ...result,
+                  output: `${result.output}\n\n[${ac.message}]`,
+                };
+              }
+            } catch {
+              // auto-commit 失败不影响工具成功语义
+            }
+          }
+        }
+
         // Guard M2: 内容过滤（工具输出）
         if (this.guardConfig.enabled && this.guardConfig.content_filter?.enabled) {
           const cf = applyContentFilter(result.output, {
@@ -901,11 +961,61 @@ export class AgentLoop extends AgentEventEmitter {
     return this.config.model;
   }
 
+  getProvider(): string {
+    return this.config.provider ?? "unknown";
+  }
+
+  getEndpoint(): string {
+    return this.config.endpoint ?? "";
+  }
+
   setModel(model: string): void {
-    const next = String(model ?? "").trim();
-    if (!next) return;
-    this.config.model = next;
-    this.compactor = new ContextCompactor(6000, next);
+    this.applyLlmSession({ model });
+  }
+
+  /**
+   * 进程内切换 LLM 会话态（model / provider / endpoint / apiKey）。
+   * 默认不写盘；同步更新 QLING_LLM_* 环境变量以便后续子组件读取。
+   */
+  applyLlmSession(patch: LlmSessionPatch): { provider: string; endpoint: string; model: string } {
+    if (typeof patch.provider === "string" && patch.provider.trim()) {
+      this.config.provider = patch.provider.trim();
+      process.env.QLING_LLM_PROVIDER = this.config.provider;
+    }
+    if (typeof patch.endpoint === "string" && patch.endpoint.trim()) {
+      this.config.endpoint = patch.endpoint.trim();
+      process.env.QLING_LLM_ENDPOINT = this.config.endpoint;
+    }
+    if (typeof patch.model === "string" && patch.model.trim()) {
+      this.config.model = patch.model.trim();
+      process.env.QLING_LLM_MODEL = this.config.model;
+      this.compactor = new ContextCompactor(6000, this.config.model);
+      this.verifier = new VerificationAgent(this.config.apiKey, this.config.model);
+    }
+    if (typeof patch.apiKey === "string") {
+      const nextKey = resolveSessionApiKey(
+        patch.apiKey,
+        this.config.endpoint ?? "",
+        this.config.provider ?? ""
+      );
+      if (nextKey) {
+        this.config.apiKey = nextKey;
+      }
+    } else {
+      // endpoint/provider 切到本地时，若当前 key 为空则填占位
+      const ensured = resolveSessionApiKey(
+        this.config.apiKey ?? "",
+        this.config.endpoint ?? "",
+        this.config.provider ?? ""
+      );
+      if (ensured) this.config.apiKey = ensured;
+    }
+
+    return {
+      provider: this.config.provider ?? "unknown",
+      endpoint: this.config.endpoint ?? "",
+      model: this.config.model,
+    };
   }
 
   getToolCount(): number {
@@ -938,6 +1048,19 @@ export class AgentLoop extends AgentEventEmitter {
     this.hookManager.setPermissionDefaultDecision(mode);
     this.guardConfig.permissions.default = mode;
     process.env.QLING_GUARD_PERMISSIONS_DEFAULT = mode;
+  }
+
+  isPlanMode(): boolean {
+    return this.hookManager.isPlanMode();
+  }
+
+  setPlanMode(enabled: boolean): void {
+    this.hookManager.setPlanMode(enabled);
+    process.env.QLING_PLAN_MODE = enabled ? "1" : "0";
+  }
+
+  getSessionMode(): "agent" | "plan" {
+    return this.isPlanMode() ? "plan" : "agent";
   }
 
   async compactSessionNow(): Promise<{ beforeCount: number; afterCount: number; changed: boolean }> {

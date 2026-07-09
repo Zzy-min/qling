@@ -9,27 +9,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { getLocalizedText } from "../i18n/index.js";
-
-interface ProviderPreset {
-  name: string;
-  name_display?: string;
-  endpoint: string;
-  model: string;
-  keyHint?: string;
-}
-
-const PRESETS: Record<string, ProviderPreset> = {
-  "1": { name: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-chat" },
-  "2": { name: "dashscope", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", keyHint: "阿里云 API Key" },
-  "3": { name: "zhipu", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4", keyHint: "智谱 AI Key" },
-  "4": { name: "moonshot", endpoint: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", keyHint: "Kimi API Key" },
-  "5": { name: "minimax", endpoint: "https://api.minimaxi.com/v1", model: "MiniMax-M2.7", keyHint: "MiniMax API Key" },
-  "6": { name: "mimo", name_display: "Xiaomi MiMo (按量计费)", endpoint: "https://api.xiaomimimo.com/v1", model: "MiMo-V2.5-Pro", keyHint: "小米 MiMo sk-xxx" },
-  "7": { name: "mimo", name_display: "Xiaomi MiMo (Token Plan 订阅用户)", endpoint: "https://token-plan-cn.xiaomimimo.com/v1", model: "MiMo-V2.5-Pro", keyHint: "小米 MiMo tp-xxx" },
-  "8": { name: "siliconflow", endpoint: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct", keyHint: "硅基流动 Key" },
-  "9": { name: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4o" },
-  "10": { name: "local", endpoint: "http://localhost:11434/v1", model: "llama3", keyHint: "Ollama (可留空)" },
-};
+import { getProviderPreset, listProviderPresets } from "../providers/presets.js";
 
 export interface SetupEnvInput {
   provider: string;
@@ -83,26 +63,28 @@ export async function runSetup() {
   console.log("11. " + providerList["11"]);
 
   const choice = (await rl.question("\n您的选择 [默认: 1]: ")).trim() || "1";
+  const orderedPresets = listProviderPresets();
+  const customChoice = String(orderedPresets.length + 1);
 
   let pName = "";
   let pEndpoint = "";
   let pModel = "";
+  let selectedPreset = getProviderPreset(choice);
 
-  if (choice === "11" || !PRESETS[choice]) {
+  if (choice === customChoice || !selectedPreset) {
     pName = (await rl.question(t.setup.customPrompts.providerName)).trim() || "custom";
     pEndpoint = (await rl.question(t.setup.customPrompts.endpoint)).trim();
     pModel = (await rl.question(t.setup.customPrompts.model)).trim();
+    selectedPreset = undefined;
   } else {
-    const preset = PRESETS[choice];
-    pName = preset.name;
-    const epPrompt = (t.setup.configEndpointPrompt || "配置 Endpoint URL [默认: {endpoint}]: ").replace("{endpoint}", preset.endpoint);
-    const modelPrompt = (t.setup.configModelPrompt || "配置 Model 名称 [默认: {model}]: ").replace("{model}", preset.model);
-    pEndpoint = (await rl.question(epPrompt)).trim() || preset.endpoint;
-    pModel = (await rl.question(modelPrompt)).trim() || preset.model;
+    pName = selectedPreset.provider;
+    const epPrompt = (t.setup.configEndpointPrompt || "配置 Endpoint URL [默认: {endpoint}]: ").replace("{endpoint}", selectedPreset.endpoint);
+    const modelPrompt = (t.setup.configModelPrompt || "配置 Model 名称 [默认: {model}]: ").replace("{model}", selectedPreset.model);
+    pEndpoint = (await rl.question(epPrompt)).trim() || selectedPreset.endpoint;
+    pModel = (await rl.question(modelPrompt)).trim() || selectedPreset.model;
   }
 
-  const preset = PRESETS[choice];
-  const keyHint = preset?.keyHint ? ` (${preset.keyHint})` : "";
+  const keyHint = selectedPreset?.keyHint ? ` (${selectedPreset.keyHint})` : "";
   const apiKey = await rl.question(`${getLocalizedText().setup.keyPrompt}${keyHint}: `);
   const key = apiKey.trim();
 

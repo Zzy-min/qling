@@ -163,7 +163,7 @@ export const zhCN = {
       advanced: "高级",
     },
     hints: {
-      bottom: "Enter 发送   Ctrl+N 换行   粘贴多行先编辑   Ctrl+C 清空/中断   /model 切换模型   /exit 退出   (队列待处理时显示状态)",
+      bottom: "Enter 发送 · / 命令 · Ctrl+N 换行 · Ctrl+O 展开工具输出 · Ctrl+C 清空/中断 · /statusline · /expand",
       panel: "提示    : ↑/↓ 选择 · Tab 补全 · Enter 执行当前输入",
       continueInput: "提示    : 继续输入参数 · Enter 执行当前输入",
     },

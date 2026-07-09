@@ -32,6 +32,8 @@ export interface DoctorOptions {
   gitBranch?: (workspaceDir?: string) => string | null;
   nodeVersion?: string;
   daemonProbe?: () => Promise<{ ok: boolean; detail: string }>;
+  /** 注入 Ollama 探测结果；未提供时探测本机 loopback */
+  ollamaProbe?: () => Promise<{ ok: boolean; detail: string }>;
 }
 
 const DEFAULT_STATE_DIR = join(homedir(), ".qling");
@@ -149,6 +151,14 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
     recommendations.push("  运行 `qling doctor` 再次确认。");
   }
 
+  if (byId.get("ollama")?.status === "warn") {
+    recommendations.push("- 本机未检测到 Ollama。若要用本地模型：安装并启动 Ollama，然后 `/model use ollama` 或 `qling setup` 选本地部署。");
+    recommendations.push("  默认探测 http://127.0.0.1:11434 ；可用环境变量 QLING_OLLAMA_URL 覆盖。");
+  }
+  if (byId.get("ollama")?.status === "pass") {
+    recommendations.push("- 已检测到本机 Ollama。可用 `/model use ollama` 切换到本地模型（无需 API key）。");
+  }
+
   // P4: channel connectors (完善 Telegram/Slack，规划其他)
   const hasTelegram = !!process.env.QLING_CHANNEL_TELEGRAM_TOKEN;
   const hasSlack = !!process.env.QLING_CHANNEL_SLACK_BOT_TOKEN;
@@ -226,6 +236,54 @@ async function probeDaemon(env: DoctorOptions["env"]): Promise<{ ok: boolean; de
   }
 }
 
+const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/tags";
+
+async function probeOllama(env: DoctorOptions["env"]): Promise<{ ok: boolean; detail: string }> {
+  const raw = envText(env, "QLING_OLLAMA_URL") || DEFAULT_OLLAMA_URL;
+  let url = raw;
+  try {
+    const parsed = new URL(raw);
+    // 允许用户只给 base；自动补 /api/tags
+    if (!parsed.pathname || parsed.pathname === "/") {
+      parsed.pathname = "/api/tags";
+      url = parsed.toString();
+    }
+  } catch {
+    return { ok: false, detail: `无效 QLING_OLLAMA_URL: ${raw}` };
+  }
+
+  if (!isLoopbackUrl(url)) {
+    return { ok: false, detail: "跳过：Ollama URL 不是本机 loopback。doctor 不会探测公网。" };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 800);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      return { ok: false, detail: `${url} HTTP ${response.status}` };
+    }
+    let modelHint = "";
+    try {
+      const body = (await response.json()) as { models?: Array<{ name?: string }> };
+      const names = (body.models ?? []).map((m) => m.name).filter(Boolean) as string[];
+      if (names.length > 0) {
+        modelHint = ` models=${names.slice(0, 5).join(",")}${names.length > 5 ? "…" : ""}`;
+      } else {
+        modelHint = " models=(empty — 可 ollama pull llama3)";
+      }
+    } catch {
+      modelHint = "";
+    }
+    return { ok: true, detail: `${url} reachable${modelHint}` };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { ok: false, detail: `unreachable: ${msg}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function buildDoctorReport(
   context: SlashCommandContext,
   options: DoctorOptions = {}
@@ -245,6 +303,7 @@ export async function buildDoctorReport(
     : env.QLING_GUARD_PERMISSIONS_DEFAULT;
   const branch = gitBranch(workspaceDir);
   const daemon = options.daemonProbe ? await options.daemonProbe() : await probeDaemon(env);
+  const ollama = options.ollamaProbe ? await options.ollamaProbe() : await probeOllama(env);
   const secretsCheck = await buildSecretsCheck();
 
   const checks: DoctorCheck[] = [
@@ -297,6 +356,12 @@ export async function buildDoctorReport(
       label: "qlingd",
       status: daemon.ok ? "pass" : "warn",
       detail: daemon.detail,
+    },
+    {
+      id: "ollama",
+      label: "ollama",
+      status: ollama.ok ? "pass" : "warn",
+      detail: ollama.detail,
     },
   ];
 

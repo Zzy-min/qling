@@ -104,7 +104,7 @@ test("slash catalog exposes Claude-compatible command shell metadata", () => {
     assert.ok(byName.has(name), `${name} should be discoverable`);
   }
   assert.equal(byName.get("/model").category, "session");
-  assert.match(byName.get("/model").argumentHint, /\[model\]/);
+  assert.match(byName.get("/model").argumentHint, /list|use|model/i);
   assert.equal(byName.get("/login").availability, "unsupported");
 });
 
@@ -141,16 +141,24 @@ test("slash model shows and switches current session model without writing confi
 
 test("slash plan queues a normal planning prompt through immediate prompt path", async () => {
   let prompt = "";
+  let planMode = false;
   const { ctx, lines } = createContext({
     setImmediatePrompt: (value) => {
       prompt = value;
     },
+    agentLoop: {
+      isPlanMode: () => planMode,
+      setPlanMode: (v) => {
+        planMode = Boolean(v);
+      },
+    },
   });
 
   assert.equal(await handleSlashCommand("/plan 修复认证失败", ctx), true);
+  assert.equal(planMode, true);
   assert.match(prompt, /修复认证失败/);
-  assert.match(prompt, /先给出计划/);
-  assert.match(lines.join("\n"), /普通会话计划/);
+  assert.match(prompt, /Plan Mode|分步实施计划/);
+  assert.match(lines.join("\n"), /Plan Mode|计划请求/);
 });
 
 test("slash usage reports token source and context budget", async () => {

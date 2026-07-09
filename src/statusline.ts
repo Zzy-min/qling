@@ -8,6 +8,8 @@ export interface StatusLineSnapshot {
   sessionId: string;
   branch: string | null;
   permissionMode: string | null;
+  /** agent | plan */
+  sessionMode?: string | null;
   goalStatus: string | null;
   activeTasks: number;
   tokens: number;
@@ -135,14 +137,23 @@ function resolveTokenBudgetMax(agentLoop: any): number | null {
   return normalizePositiveNumber(value);
 }
 
+function formatSessionMode(mode: string | null | undefined): string {
+  const m = String(mode ?? "").trim().toLowerCase();
+  if (m === "plan") return "plan";
+  if (m === "agent") return "agent";
+  return m || "agent";
+}
+
 export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   const t = getLocalizedText();
   const goal = snapshot.goalStatus || "无";
   const branch = snapshot.branch || "-";
   const permission = formatPermissionMode(snapshot.permissionMode);
+  const sessionMode = formatSessionMode(snapshot.sessionMode);
   const cost = formatCostEstimate(snapshot.tokens, snapshot.costPer1kTokens);
   const parts = [
     `模型=${snapshot.model || "未知"}`,
+    `模式=${sessionMode}`,
     `会话=${resolveShortSessionId(snapshot.sessionId)}`,
     `分支=${branch}`,
     `权限=${permission}`,
@@ -166,6 +177,7 @@ export function collectLocalStatusLineSnapshot(options: LocalStatusLineSnapshotO
     sessionId: "",
     branch: resolveGitBranch(options.workspaceDir ?? undefined),
     permissionMode: options.permissionMode ?? null,
+    sessionMode: "agent",
     goalStatus: null,
     activeTasks: 0,
     tokens: 0,
@@ -195,6 +207,14 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
   const permissionMode = typeof agentLoop.getPermissionMode === "function"
     ? agentLoop.getPermissionMode()
     : process.env.QLING_GUARD_PERMISSIONS_DEFAULT ?? null;
+  const sessionMode =
+    typeof agentLoop.getSessionMode === "function"
+      ? agentLoop.getSessionMode()
+      : typeof agentLoop.isPlanMode === "function" && agentLoop.isPlanMode()
+        ? "plan"
+        : process.env.QLING_PLAN_MODE === "1"
+          ? "plan"
+          : "agent";
   const inputQueue = context.inputQueue
     ? {
         pendingCount: Number(context.inputQueue.pendingCount ?? 0),
@@ -208,6 +228,7 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
     sessionId: stats.sessionId ?? "",
     branch: resolveGitBranch(context.workspaceDir),
     permissionMode,
+    sessionMode,
     goalStatus: goal?.status ?? null,
     activeTasks,
     tokens: Number(stats.tokens ?? 0),

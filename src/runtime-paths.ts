@@ -9,9 +9,29 @@ export interface RuntimeRoots {
 
 export type DefaultRootKind = "workspace" | "file_cache" | "file_state";
 
+/** write/patch 沙箱：默认仅工作区 */
+export type WriteSandboxMode = "workspace" | "roots" | "off";
+
 const HOME = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
 const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
+
+/** 默认拒绝写入的敏感文件名模式（小写比较） */
+const SENSITIVE_BASENAME_EXACT = new Set([
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.production",
+  ".env.test",
+  "id_rsa",
+  "id_ed25519",
+  "credentials.json",
+  "service-account.json",
+  ".npmrc",
+  ".pypirc",
+]);
+
+const SENSITIVE_BASENAME_SUFFIXES = [".pem", ".key", ".p12", ".pfx"];
 
 export function getRuntimeRootsFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeRoots {
   const state = path.resolve(env.QLING_FILE_STATE_DIR ?? DEFAULT_STATE_DIR);
@@ -23,6 +43,87 @@ export function getRuntimeRootsFromEnv(env: NodeJS.ProcessEnv = process.env): Ru
     fileCacheDir: cache,
     fileStateDir: state,
   };
+}
+
+export function resolveWriteSandboxMode(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): WriteSandboxMode {
+  const raw = String(env.QLING_WRITE_SANDBOX ?? "workspace").trim().toLowerCase();
+  if (raw === "off" || raw === "false" || raw === "0" || raw === "none") return "off";
+  if (raw === "roots" || raw === "all" || raw === "legacy") return "roots";
+  return "workspace";
+}
+
+/** 有效工作区：显式 workspace，否则 cwd */
+export function resolveEffectiveWorkspace(roots: RuntimeRoots): string {
+  return path.resolve(roots.workspaceDir ?? process.cwd());
+}
+
+/**
+ * 写工具路径是否允许。
+ * - workspace: 仅工作区（默认）
+ * - roots: workspace + state + cache
+ * - off: 不检查
+ */
+export function isPathAllowedForWrite(
+  absPath: string,
+  roots: RuntimeRoots,
+  mode?: WriteSandboxMode
+): boolean {
+  const m = mode ?? resolveWriteSandboxMode();
+  if (m === "off") return true;
+  const target = path.resolve(absPath);
+  if (m === "roots") return isWithinAllowedRoots(target, roots);
+  const ws = resolveEffectiveWorkspace(roots);
+  return isSubPath(target, ws);
+}
+
+export interface SensitiveWriteCheck {
+  blocked: boolean;
+  code: string;
+  reason: string;
+}
+
+/**
+ * 敏感写目标检测（.env / 密钥文件）。
+ * QLING_ALLOW_SENSITIVE_WRITE=1 时放行。
+ */
+export function checkSensitiveWriteTarget(
+  absPath: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): SensitiveWriteCheck | null {
+  const allow = String(env.QLING_ALLOW_SENSITIVE_WRITE ?? "").trim().toLowerCase();
+  if (allow === "1" || allow === "true" || allow === "yes" || allow === "on") {
+    return null;
+  }
+
+  const base = path.basename(absPath);
+  const baseLower = base.toLowerCase();
+  const norm = path.resolve(absPath).replace(/\\/g, "/").toLowerCase();
+
+  if (SENSITIVE_BASENAME_EXACT.has(baseLower) || baseLower.startsWith(".env.")) {
+    return {
+      blocked: true,
+      code: "WRITE_SENSITIVE_PATH",
+      reason: `refusing to write sensitive file '${base}'. Set QLING_ALLOW_SENSITIVE_WRITE=1 to override.`,
+    };
+  }
+  if (SENSITIVE_BASENAME_SUFFIXES.some((s) => baseLower.endsWith(s))) {
+    return {
+      blocked: true,
+      code: "WRITE_SENSITIVE_PATH",
+      reason: `refusing to write key-like file '${base}'. Set QLING_ALLOW_SENSITIVE_WRITE=1 to override.`,
+    };
+  }
+  // 路径中显式 .git/credentials 等
+  if (norm.includes("/.git/credentials") || norm.endsWith("/.git-credentials")) {
+    return {
+      blocked: true,
+      code: "WRITE_SENSITIVE_PATH",
+      reason: "refusing to write git credentials store.",
+    };
+  }
+  return null;
 }
 
 export function resolveToolPath(

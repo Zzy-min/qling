@@ -200,6 +200,15 @@ export class SpeculativeClassifier {
 
 // --- 3. Hook Manager ---
 
+/** Plan 模式下禁止的写/执行类工具（OpenCode plan agent 语义） */
+export const PLAN_MODE_DENY_TOOLS = [
+  "write",
+  "patch",
+  "bash",
+  "subtask",
+  "browser_fetch",
+] as const;
+
 export class HookManager {
   private preHooks: PreToolUseHandler[] = [];
   private postHooks: PostToolUseHandler[] = [];
@@ -208,6 +217,7 @@ export class HookManager {
   private permissionMatrix: PermissionMatrix | null = null;
   private rateLimiter: RateLimiter | null = null;
   private guardConfig: GuardConfig | null = null;
+  private planMode = false;
 
   constructor(toolDefs: ToolDefinition[], guardConfig?: GuardConfig) {
     this.classifier = new SpeculativeClassifier(toolDefs);
@@ -216,13 +226,43 @@ export class HookManager {
       if (guardConfig.permissions) {
         this.permissionMatrix = new PermissionMatrix(
           guardConfig.permissions.default,
-          guardConfig.permissions.rules
+          this.mergePermissionRules(guardConfig.permissions.rules)
         );
       }
       if (guardConfig.rate_limit?.enabled) {
         this.rateLimiter = new RateLimiter(guardConfig.rate_limit.max_per_minute);
       }
     }
+  }
+
+  private planModeRules(): Array<{ tool_pattern: string; decision: "deny"; reason: string }> {
+    return PLAN_MODE_DENY_TOOLS.map((tool) => ({
+      tool_pattern: tool,
+      decision: "deny" as const,
+      reason: `Plan Mode: 工具 ${tool} 已禁用（只读规划）。使用 /plan off 退出。`,
+    }));
+  }
+
+  private mergePermissionRules(
+    baseRules: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string }> = []
+  ) {
+    // plan 规则优先（放前面）
+    return this.planMode ? [...this.planModeRules(), ...baseRules] : baseRules;
+  }
+
+  private rebuildPermissionMatrix(): void {
+    const defaultDecision = this.guardConfig?.permissions?.default ?? "allow";
+    const rules = this.mergePermissionRules(this.guardConfig?.permissions?.rules ?? []);
+    this.permissionMatrix = new PermissionMatrix(defaultDecision, rules);
+  }
+
+  isPlanMode(): boolean {
+    return this.planMode;
+  }
+
+  setPlanMode(enabled: boolean): void {
+    this.planMode = Boolean(enabled);
+    this.rebuildPermissionMatrix();
   }
 
   getPermissionDefaultDecision(): "allow" | "deny" | "ask" {
@@ -238,7 +278,7 @@ export class HookManager {
         rules: currentRules,
       };
     }
-    this.permissionMatrix = new PermissionMatrix(decision, currentRules);
+    this.rebuildPermissionMatrix();
   }
 
   register(name: "PreToolUse", handler: PreToolUseHandler): void;

@@ -612,7 +612,7 @@ ${binName} - 通用 CLI Agent
   ${binName} permissions              # 查看本地权限默认策略与规则
   ${binName} permissions explain <tool> # 解释指定工具的权限决策
   ${binName} config                   # 查看本地配置摘要（密钥脱敏）
-  ${binName} mcp                      # 查看本地 MCP server 配置摘要
+  ${binName} mcp                      # MCP 状态 / list / presets / add / remove
   ${binName} hooks                    # 查看本地 hooks/guard 配置摘要
   ${binName} agents                   # 按状态分组查看后台任务
   ${binName} 代理                     # agents 的中文别名

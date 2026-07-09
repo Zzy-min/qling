@@ -2,13 +2,21 @@ import { readFile, writeFile } from "fs/promises";
 import { relative } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
-import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+import {
+  checkSensitiveWriteTarget,
+  getRuntimeRootsFromEnv,
+  isPathAllowedForWrite,
+  resolveToolPath,
+} from "../runtime-paths.js";
+
+/** 超过该字节数拒绝做 LCS diff / 写入，防止超大文件 OOM */
+export const PATCH_MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 export const patchTool: ToolDefinition = {
   name: "patch",
   description:
-    "Apply precise search-and-replace edits (chunks) to an existing file. Only writes to the file if all chunks uniquely match. Prefer larger unique context blocks for reliability.",
-  longDescription: `精准局部替换文件内容（补丁）。**会修改磁盘文件**。
+    "Apply precise search-and-replace edits (chunks) to an existing file. Only writes if all chunks uniquely match. Supports dry_run. Prefer larger unique context blocks.",
+  longDescription: `精准局部替换文件内容（补丁）。默认会修改磁盘文件；dry_run=true 时只校验并返回 diff。
 
 **使用场景**:
 - 修改文件中的一个或多个函数、变量定义、导入声明等
@@ -16,14 +24,15 @@ export const patchTool: ToolDefinition = {
 
 **工作逻辑**:
 - 必须精确匹配 search 字段中的代码段（包括空格、缩进与换行）
-- 只有当所有指定的 chunks 在文件中**有且仅有唯一匹配**时，才会将替换内容写入文件。
-- 如果任意一个 chunk 未能匹配或匹配到多个位置，将不作任何修改，并返回详细冲突上下文 + 实际文件中的最接近代码块建议（帮助 LLM 快速修正）。
+- 只有当所有指定的 chunks 在文件中**有且仅有唯一匹配**时，才会将替换内容写入文件（dry_run 除外）
+- 任意 chunk 失败则**整次事务不写盘**，并返回诊断上下文 + 建议 search 块
+- search 为空、结果无变化（noop）、文件过大均会拒绝
 
 **最佳实践（强烈推荐给 LLM）**:
 - 使用包含周围几行的较大唯一块作为 search，而不是孤立的一行。
 - 复制时务必 100% 精确，包括所有空白和换行。
 - 不确定时，先调用 read 工具获取文件精确内容片段再构造 patch。
-- 多 chunk 时按顺序，前面 chunk 成功后后面基于更新内容匹配（当前实现是模拟全部再写）。`,
+- 可用 dry_run=true 先预览 unified diff。`,
   parameters: {
     type: "object",
     properties: {
@@ -49,6 +58,10 @@ export const patchTool: ToolDefinition = {
         },
         description: "List of replacement chunks to apply in sequence",
       },
+      dry_run: {
+        type: "boolean",
+        description: "If true, validate and return unified diff without writing the file",
+      },
     },
     required: ["path", "chunks"],
   },
@@ -62,9 +75,14 @@ export const patchTool: ToolDefinition = {
       type: "array",
       description: "需要依次执行的精准替换块列表。",
     },
+    dry_run: {
+      type: "boolean",
+      description: "为 true 时只预览 diff，不写盘。",
+    },
   },
   examples: [
     'patch path="src/utils.ts" chunks=[{"search":"export const foo = 1;","replace":"export const foo = 2;"}]',
+    'patch path="src/utils.ts" dry_run=true chunks=[{"search":"a","replace":"b"}]',
   ],
   seeAlso: ["read", "write"],
   scenes: ["coding"],
@@ -80,9 +98,53 @@ interface PatchChunk {
   replace: string;
 }
 
+export interface PatchLineStats {
+  added: number;
+  removed: number;
+  unchanged: number;
+}
+
+export function computeLineStats(originalContent: string, newContent: string): PatchLineStats {
+  const originalLines = originalContent.split(/\r?\n/);
+  const newLines = newContent.split(/\r?\n/);
+  // 简化：按行集合差估算；用于摘要（非完美 LCS 统计）
+  let oi = 0;
+  let ni = 0;
+  let added = 0;
+  let removed = 0;
+  let unchanged = 0;
+  while (oi < originalLines.length && ni < newLines.length) {
+    if (originalLines[oi] === newLines[ni]) {
+      unchanged++;
+      oi++;
+      ni++;
+      continue;
+    }
+    // 贪心：优先认为是替换
+    const lookAhead = originalLines.indexOf(newLines[ni], oi + 1);
+    const lookBack = newLines.indexOf(originalLines[oi], ni + 1);
+    if (lookAhead !== -1 && (lookBack === -1 || lookAhead - oi <= lookBack - ni)) {
+      removed += lookAhead - oi;
+      oi = lookAhead;
+    } else if (lookBack !== -1) {
+      added += lookBack - ni;
+      ni = lookBack;
+    } else {
+      removed++;
+      added++;
+      oi++;
+      ni++;
+    }
+  }
+  removed += originalLines.length - oi;
+  added += newLines.length - ni;
+  return { added, removed, unchanged };
+}
+
 export async function runPatch(args: {
   path: string;
   chunks: PatchChunk[];
+  dry_run?: boolean;
 }): Promise<ToolResult> {
   const inputPath = String(args.path ?? "").trim();
   if (!inputPath) {
@@ -94,10 +156,19 @@ export async function runPatch(args: {
     return toolError("PATCH_INVALID_CHUNKS", "chunks must be a non-empty array");
   }
 
+  const dryRun = args.dry_run === true || String((args as { dryRun?: unknown }).dryRun) === "true";
+
   const roots = getRuntimeRootsFromEnv();
   const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
-  if (!isWithinAllowedRoots(resolvedPath, roots)) {
-    return toolError("PATCH_OUTSIDE_ALLOWED_ROOT", `${resolvedPath} is outside allowed roots`);
+  if (!isPathAllowedForWrite(resolvedPath, roots)) {
+    return toolError(
+      "PATCH_OUTSIDE_ALLOWED_ROOT",
+      `${resolvedPath} is outside write sandbox (default: workspace only; set QLING_WRITE_SANDBOX=roots|off to relax)`
+    );
+  }
+  const sensitive = checkSensitiveWriteTarget(resolvedPath);
+  if (sensitive?.blocked) {
+    return toolError(sensitive.code, sensitive.reason, { category: "permission" });
   }
 
   let originalContent: string;
@@ -105,6 +176,14 @@ export async function runPatch(args: {
     originalContent = await readFile(resolvedPath, "utf-8");
   } catch (err: unknown) {
     return toolError("PATCH_READ_FAILED", `failed to read file: ${getErrorMessage(err)}`);
+  }
+
+  const byteLength = Buffer.byteLength(originalContent, "utf-8");
+  if (byteLength > PATCH_MAX_FILE_BYTES) {
+    return toolError(
+      "PATCH_FILE_TOO_LARGE",
+      `file is ${byteLength} bytes; max supported is ${PATCH_MAX_FILE_BYTES} bytes. Use write for large rewrites or split the file.`
+    );
   }
 
   // Work with a copy/simulation to check all matches before writing
@@ -117,6 +196,12 @@ export async function runPatch(args: {
 
     if (searchStr === undefined || replaceStr === undefined) {
       return toolError("PATCH_INVALID_CHUNK", `chunk at index ${idx} is missing search or replace field`);
+    }
+    if (searchStr === "") {
+      return toolError(
+        "PATCH_EMPTY_SEARCH",
+        `chunk at index ${idx} has empty search; refusing ambiguous full-file match.`
+      );
     }
 
     // Split content to search for occurrences
@@ -152,13 +237,35 @@ export async function runPatch(args: {
     currentContent = currentContent.replace(searchStr, replaceStr);
   }
 
+  if (currentContent === originalContent) {
+    return toolError(
+      "PATCH_NOOP",
+      "all chunks applied but file content is unchanged (no-op). Refine search/replace or skip this patch."
+    );
+  }
+
+  const workspaceDir = roots.workspaceDir ?? process.cwd();
+  const relFile = relative(workspaceDir, resolvedPath).replace(/\\/g, "/");
+  const stats = computeLineStats(originalContent, currentContent);
+  const diffText = generateUnifiedDiff(relFile, originalContent, currentContent);
+  const summary =
+    `summary: chunks=${chunks.length} +${stats.added}/-${stats.removed} lines ` +
+    `(unchanged≈${stats.unchanged}) path=${relFile}`;
+
+  if (dryRun) {
+    return toolSuccess(
+      `🔎 dry_run OK — would apply ${chunks.length} patch chunk(s) to ${resolvedPath}\n` +
+        `${summary}\n\n${diffText}\n\n(no file written)`
+    );
+  }
+
   // Write changes after all validations pass
   try {
     await writeFile(resolvedPath, currentContent, "utf-8");
-    const workspaceDir = roots.workspaceDir ?? process.cwd();
-    const relFile = relative(workspaceDir, resolvedPath).replace(/\\/g, "/");
-    const diffText = generateUnifiedDiff(relFile, originalContent, currentContent);
-    return toolSuccess(`✅ Successfully applied ${chunks.length} patch chunk(s) to ${resolvedPath}\n\n${diffText}`);
+    return toolSuccess(
+      `✅ Successfully applied ${chunks.length} patch chunk(s) to ${resolvedPath}\n` +
+        `${summary}\n\n${diffText}`
+    );
   } catch (err: unknown) {
     return toolError("PATCH_WRITE_FAILED", `failed to write file: ${getErrorMessage(err)}`);
   }

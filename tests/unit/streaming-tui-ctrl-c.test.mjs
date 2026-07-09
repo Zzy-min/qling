@@ -268,7 +268,9 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.match(outputStr, /│/);
     assert.match(getOutput(), /Enter 发送/);
     assert.match(getOutput(), /Ctrl\+C/);
-    assert.match(getOutput(), /\/model 切换模型/);
+    assert.match(getOutput(), /statusline/i);
+    assert.doesNotMatch(getOutput(), /\/model 切换模型/);
+    // Phase 1.3: statusline 在输入栏上方真正打印
     assert.match(getOutput(), /model=test session=session-1/);
     assert.match(getOutput(), /draft prompt/);
   });
@@ -285,7 +287,9 @@ test("stream ui prompt renders inside input frame without duplicate bare prompt"
     assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
     assert.match(output, /└─+┘/);
     assert.doesNotMatch(output, /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
-    assert.match(output, /\/exit 退出/);
+    assert.match(output, /statusline/i);
+    assert.match(output, /model=test session=session-1/);
+    assert.doesNotMatch(output, /\/exit 退出/);
   });
 });
 
@@ -392,10 +396,9 @@ test("stream ui startup renders concise first-run guidance card", async () => {
     ui.stop();
 
     const output = getOutput();
-    assert.match(output, /3 步开始/);
-    assert.match(output, /输入任务/);
-    assert.match(output, /按 \/ 打开命令面板/);
-    assert.match(output, /\/doctor/);
+    assert.doesNotMatch(output, /3 步开始/);
+    assert.doesNotMatch(output, /常用入口/);
+    assert.match(output, /轻灵 · 本地工作台/);
     assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
     assert.match(output, /└─+┘/);
   });
@@ -478,8 +481,8 @@ test("stream ui shows argument hint for slash command with trailing space", asyn
 
     for (const ch of "/model ") ui.handleChar(ch);
 
-    assert.match(getOutput(), /参数|Args|model/i);
-    assert.match(getOutput(), /\[model\]/);
+    assert.match(getOutput(), /参数|Args|model|list|use/i);
+    assert.match(getOutput(), /list|use|model/i);
   });
 });
 
