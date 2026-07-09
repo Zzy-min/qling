@@ -23,7 +23,7 @@
 | 观测台 | `qling dashboard start` 打开本地白盒化观测控制台，串起 thinking / tool / token 链路。 |
 | 通道与扩展 | `src/channels/` 内置 console / Telegram / Slack 通道；`qling discovery sync` 动态同步插件与技能。 |
 | 权限可解释 | `/permissions`、`/permissions explain <tool>`、guard、内容过滤、速率限制和密钥脱敏都以本地规则呈现。 |
-| 上下文透明 | `/context`、`/usage` 显示 token 来源、估算、上下文预算和压缩状态。 |
+| 上下文透明 | `/context`、`/usage` 显示 provider 官方 token usage 与压缩状态（无预算）。 |
 | 诊断内建 | `/doctor`、`/config`、`/mcp`、`/hooks`、`/diff` 用于快速判断当前项目和运行时状态。 |
 | 诚实边界 | 平台专属命令会被识别并给出本地边界说明，不会伪装成功。 |
 
@@ -219,7 +219,7 @@ qling 日志 <id>   # logs <id>
 | Command | Purpose |
 |---|---|
 | `/model [model]` | 显示或切换当前 session 模型；不写入配置文件。 |
-| `/usage`, `/cost`, `/stats` | token 来源、用量、上下文预算和压缩状态。 |
+| `/usage`, `/cost`, `/stats` | provider 官方 token usage（input/output/total）与压缩次数。 |
 | `/context` | 本地上下文和 token 使用情况。 |
 | `/statusline [on\|off]` | 显示或切换输入区状态线。 |
 

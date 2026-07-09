@@ -2,6 +2,12 @@
 
 ## v1.0.0 (2026-07-09)
 
+### Token 与预算
+
+- **官方 usage 计数**：会话 token 仅累加模型 API 返回的 `prompt_tokens` / `completion_tokens` / `total_tokens`（及 Anthropic/Ollama 等价字段）；不再用字符×4 估算账单。
+- **删除预算功能**：移除 `TokenBudgetManager`、预算 nudge、system prompt Token 预算节、`max_token_budget` 配置接线与百分比水位。
+- **展示**：`/usage`、`/context`、statusline 显示 total/in/out 与 `provider|unknown` 来源。
+
 ### TUI 体验（结果聚焦）
 
 - **输入区去噪**：输入框上方不再打印 statusline 与快捷键黑灰提示行；详情仍用 `/statusline`、`/shortcuts` 与顶栏。

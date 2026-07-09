@@ -161,13 +161,15 @@ test("slash plan queues a normal planning prompt through immediate prompt path",
   assert.match(lines.join("\n"), /Plan Mode|计划请求/);
 });
 
-test("slash usage reports token source and context budget", async () => {
+test("slash usage reports provider token usage without budget", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
       getSessionStats: () => ({
         sessionId: "session-usage",
         turnCount: 4,
         tokens: 24000,
+        promptTokens: 18000,
+        completionTokens: 6000,
         tokenSource: "provider",
         compactions: 1,
       }),
@@ -177,8 +179,12 @@ test("slash usage reports token source and context budget", async () => {
   assert.equal(await handleSlashCommand("/usage", ctx), true);
   const text = lines.join("\n");
   assert.match(text, /24,000/);
+  assert.match(text, /18,000/);
+  assert.match(text, /6,000/);
   assert.match(text, /provider/);
-  assert.match(text, /上下文|Context/);
+  assert.match(text, /官方 usage/);
+  assert.doesNotMatch(text, /% of|max_token_budget|Context\s*:/i);
+  assert.match(text, /无 token 预算/);
 });
 
 test("slash copy copies nth latest assistant reply through local clipboard hook", async () => {
@@ -1666,7 +1672,7 @@ test("slash statusline shows current compact status", async () => {
   assert.match(lines.join("\n"), /model=deepseek-chat/);
 });
 
-test("slash statusline fallback shows context usage and local cost estimate without secrets", async () => {
+test("slash statusline fallback shows provider token usage and local cost estimate without secrets", async () => {
   await withEnv(
     {
       QLING_STATUSLINE_COST_PER_1K_TOKENS: "0.002",
@@ -1676,8 +1682,15 @@ test("slash statusline fallback shows context usage and local cost estimate with
       const { ctx, lines } = createContext({
         agentLoop: {
           getModel: () => "deepseek-chat",
-          getSessionStats: () => ({ sessionId: "session-status-cost", turnCount: 2, tokens: 12000, compactions: 0 }),
-          getTokenBudget: () => ({ maxTokens: 120000 }),
+          getSessionStats: () => ({
+            sessionId: "session-status-cost",
+            turnCount: 2,
+            tokens: 12000,
+            promptTokens: 9000,
+            completionTokens: 3000,
+            tokenSource: "provider",
+            compactions: 0,
+          }),
           getPermissionMode: () => "ask",
         },
       });
@@ -1686,7 +1699,11 @@ test("slash statusline fallback shows context usage and local cost estimate with
 
       assert.equal(handled, true);
       const joined = lines.join("\n");
-      assert.match(joined, /上下文=12,000\/120,000\(10%\)/);
+      assert.match(joined, /令牌=12,000/);
+      assert.match(joined, /in=9,000/);
+      assert.match(joined, /out=3,000/);
+      assert.match(joined, /来源=provider/);
+      assert.doesNotMatch(joined, /上下文=/);
       assert.match(joined, /成本≈\$0\.0240/);
       assert.doesNotMatch(joined, /sk-statusline-secret/);
     }

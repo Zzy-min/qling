@@ -210,7 +210,6 @@ export class DurableSessionSupervisor {
         fileStateDir: this.stateDir,
         maxSteps: config.runtime.max_steps,
         parseRetries: config.runtime.parse_retries,
-        maxTokenBudget: config.runtime.max_token_budget,
         toolRepeatLimit: config.runtime.tool_repeat_limit,
         timeoutMs: config.runtime.timeout_ms,
       },

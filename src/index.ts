@@ -650,7 +650,6 @@ async function main() {
       workspaceDir: loaded.config.runtime.workspace_dir ?? process.cwd(),
       stateDir: loaded.config.runtime.file_state_dir,
       cacheDir: loaded.config.runtime.file_cache_dir,
-      maxTokens: loaded.config.runtime.max_token_budget,
     });
     console.log(formatContextReport(report).join("\n"));
     return;
@@ -723,7 +722,6 @@ async function main() {
       workspaceDir: loaded.config.runtime.workspace_dir,
       model: loaded.config.llm.model,
       permissionMode: loaded.config.guard.permissions.default,
-      maxTokens: loaded.config.runtime.max_token_budget,
       costPer1kTokens: parseStatusLineCostPer1k(process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS),
     });
     console.log("");
@@ -1029,18 +1027,12 @@ async function main() {
     model: loaded.config.llm.model,
     maxIterations: loaded.config.runtime.max_steps,
     tools,
-    tokenBudget: {
-      maxTokens: loaded.config.runtime.max_token_budget,
-      totalBudget: loaded.config.runtime.max_token_budget,
-      nudgeThreshold: 0.2,
-    },
     runtime: {
       workspaceDir: loaded.config.runtime.workspace_dir,
       fileCacheDir: loaded.config.runtime.file_cache_dir,
       fileStateDir: loaded.config.runtime.file_state_dir,
       maxSteps: loaded.config.runtime.max_steps,
       parseRetries: loaded.config.runtime.parse_retries,
-      maxTokenBudget: loaded.config.runtime.max_token_budget,
       toolRepeatLimit: loaded.config.runtime.tool_repeat_limit,
       timeoutMs: loaded.config.runtime.timeout_ms,
     },

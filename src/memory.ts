@@ -699,49 +699,4 @@ export async function extractDreamMemories(
   return Array.from(new Set(memories));
 }
 
-// --- Token Budget Manager ---
 
-export class TokenBudgetManager {
-  maxTokens: number;
-  nudgeThreshold: number;
-  usedTokens: number;
-
-  constructor(maxTokens: number, nudgeThreshold: number = 0.2, usedTokens: number = 0) {
-    this.maxTokens = maxTokens;
-    this.nudgeThreshold = nudgeThreshold;
-    this.usedTokens = usedTokens;
-  }
-
-  addUsage(tokens: number): void {
-    this.usedTokens += tokens;
-  }
-
-  syncUsage(actualTokens: number): void {
-    this.usedTokens = actualTokens;
-  }
-
-  reset(): void {
-    this.usedTokens = 0;
-  }
-
-  getRemaining(): number {
-    return this.maxTokens - this.usedTokens;
-  }
-
-  getRemainingPct(): number {
-    return this.getRemaining() / this.maxTokens;
-  }
-
-  shouldNudge(): boolean {
-    return this.getRemainingPct() < this.nudgeThreshold;
-  }
-
-  buildNudgeMessage(): string {
-    const pct = Math.round(this.getRemainingPct() * 100);
-    return "Token 预算即将耗尽（剩余 " + pct + "%），请精简回复，减少工具调用频率。";
-  }
-
-  estimateMessagesCost(messages: { content: string }[]): number {
-    return messages.reduce((sum, m) => sum + m.content.length * 4, 0);
-  }
-}

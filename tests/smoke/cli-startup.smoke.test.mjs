@@ -1060,7 +1060,10 @@ test("cli startup smoke: chinese statusline alias exits with code 0 and prints l
     assert.match(result.stdout, /模型=local-status/);
     assert.match(result.stdout, /会话=-/);
     assert.match(result.stdout, /分支=main/);
-    assert.match(result.stdout, /上下文=0\/120,000\(0%\)/);
+    assert.match(result.stdout, /令牌=0/);
+    assert.match(result.stdout, /in=0/);
+    assert.match(result.stdout, /out=0/);
+    assert.doesNotMatch(result.stdout, /上下文=/);
     assert.match(result.stdout, /成本≈\$0\.0000/);
     assert.doesNotMatch(result.stdout, /SECRET_STATUSLINE_SESSION_BODY/);
     assert.doesNotMatch(result.stdout, /sk-statusline-smoke-secret/);

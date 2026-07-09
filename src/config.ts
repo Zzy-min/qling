@@ -86,7 +86,6 @@ export interface QlingConfig {
     file_state_dir: string;
     max_steps: number;
     parse_retries: number;
-    max_token_budget: number;
     tool_repeat_limit: number;
     timeout_ms: number;
   };
@@ -224,7 +223,6 @@ export function buildDefaultConfig(): QlingConfig {
       file_state_dir: DEFAULT_STATE_DIR,
       max_steps: 50,
       parse_retries: 2,
-      max_token_budget: 120000,
       tool_repeat_limit: 6,
       timeout_ms: 300000,
     },

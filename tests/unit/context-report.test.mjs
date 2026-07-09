@@ -14,6 +14,8 @@ function createContext(overrides = {}) {
         sessionId: "session-test",
         turnCount: 3,
         tokens: 24000,
+        promptTokens: 18000,
+        completionTokens: 6000,
         tokenSource: "provider",
         compactions: 2,
       }),
@@ -46,20 +48,20 @@ test("context report includes local session statistics and paths", async () => {
       QLING_FILE_STATE_DIR: "C:\\Users\\Lenovo\\.qling",
       QLING_FILE_CACHE_DIR: "C:\\Users\\Lenovo\\.qling\\cache",
     },
-    maxTokens: 120000,
   });
 
   assert.equal(report.sessionId, "session-test");
   assert.equal(report.turnCount, 3);
   assert.equal(report.messageCount, 2);
   assert.equal(report.tokens, 24000);
+  assert.equal(report.promptTokens, 18000);
+  assert.equal(report.completionTokens, 6000);
   assert.equal(report.tokenSource, "provider");
   assert.equal(report.compactions, 2);
-  assert.equal(report.tokenUsagePercent, 20);
-  assert.equal(report.contextLevel, "ok");
-  assert.match(report.recommendation, /正常/);
-  assert.match(report.tokenSourceDescription, /provider reported/i);
+  assert.match(report.tokenSourceDescription, /官方 usage|provider/i);
   assert.match(report.sessionsDir, /sessions$/);
+  assert.equal("maxTokens" in report, false);
+  assert.equal("tokenUsagePercent" in report, false);
 });
 
 test("context report handles missing saved sessions", async () => {
@@ -72,68 +74,44 @@ test("context report handles missing saved sessions", async () => {
 });
 
 test("context report formatter is readable and local-first", async () => {
-  const report = await buildContextReport(createContext(), { maxTokens: 120000 });
+  const report = await buildContextReport(createContext());
   const text = formatContextReport(report).join("\n");
 
   assert.match(text, /轻灵 · 本地上下文/);
   assert.match(text, /会话/);
-  assert.match(text, /Token 与状态/);
+  assert.match(text, /Token（官方 usage）/);
   assert.match(text, /本地路径/);
   assert.match(text, /session-test/);
-  assert.match(text, /本地/);
   assert.match(text, /Token 来源\s*: provider/);
-  assert.match(text, /上下文状态\s*: ok/);
-  assert.match(text, /建议\s*:/);
-  assert.match(text, /Token 说明\s*: provider reported/i);
+  assert.doesNotMatch(text, /预算|budget|%\s*of/i);
   assert.match(text, /边界\s*: \/context 只展示本地统计与路径/);
 });
 
-test("context report classifies watch and critical token usage", async () => {
-  const watch = await buildContextReport(createContext({
-    agentLoop: {
-      getSessionStats: () => ({
-        sessionId: "session-watch",
-        turnCount: 8,
-        tokens: 84000,
-        tokenSource: "estimate",
-        compactions: 1,
-      }),
-    },
-  }), { maxTokens: 120000 });
-  const critical = await buildContextReport(createContext({
-    agentLoop: {
-      getSessionStats: () => ({
-        sessionId: "session-critical",
-        turnCount: 12,
-        tokens: 110000,
-        tokenSource: "unknown",
-        compactions: 3,
-      }),
-    },
-  }), { maxTokens: 120000 });
-
-  assert.equal(watch.contextLevel, "watch");
-  assert.match(watch.recommendation, /压缩|checkpoint/i);
-  assert.match(watch.tokenSourceDescription, /local estimate/i);
-  assert.equal(critical.contextLevel, "critical");
-  assert.match(critical.recommendation, /立即|compact|checkpoint/i);
-  assert.match(critical.tokenSourceDescription, /unknown/i);
-});
-
-test("context report marks usage unknown when max token budget is missing", async () => {
+test("context report unknown usage recommends checking provider fields", async () => {
   const report = await buildContextReport(createContext({
     agentLoop: {
-      getTokenBudget: () => ({ maxTokens: null }),
+      getSessionStats: () => ({
+        sessionId: "session-unknown",
+        turnCount: 1,
+        tokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        tokenSource: "unknown",
+        compactions: 0,
+      }),
     },
   }));
 
-  assert.equal(report.contextLevel, "unknown");
-  assert.match(report.recommendation, /配置|预算|unknown/i);
+  assert.equal(report.tokenSource, "unknown");
+  assert.match(report.recommendation, /usage|官方/i);
 });
 
-test("formatTokenUsage degrades for missing or invalid budgets", () => {
-  assert.equal(formatTokenUsage(1000, 0), "1,000 / unknown");
-  assert.equal(formatTokenUsage(1000, 10000), "1,000 / 10,000 (10%)");
+test("formatTokenUsage shows provider breakdown without budget denominator", () => {
+  assert.match(
+    formatTokenUsage({ tokens: 1000, promptTokens: 700, completionTokens: 300, source: "provider" }),
+    /1,000.*in 700.*out 300.*provider/
+  );
+  assert.match(formatTokenUsage({ tokens: 0, source: "unknown" }), /0.*unknown/);
 });
 
 test("local context report summarizes saved sessions without exposing message bodies", async () => {
@@ -178,7 +156,6 @@ test("local context report summarizes saved sessions without exposing message bo
       workspaceDir: "C:/repo/qling",
       stateDir: root,
       cacheDir: join(root, "cache"),
-      maxTokens: 120000,
     });
     const text = formatContextReport(report).join("\n");
 

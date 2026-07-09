@@ -38,7 +38,6 @@ test("agent-loop: tool arguments tolerate loose json within parse retries", asyn
       fileStateDir: process.cwd(),
       maxSteps: 3,
       parseRetries: 3,
-      maxTokenBudget: 120000,
       toolRepeatLimit: 6,
       timeoutMs: 60000,
     },
@@ -102,7 +101,6 @@ test("agent-loop: invalid tool arguments become tool error instead of crashing",
       fileStateDir: process.cwd(),
       maxSteps: 3,
       parseRetries: 1,
-      maxTokenBudget: 120000,
       toolRepeatLimit: 6,
       timeoutMs: 60000,
     },
@@ -165,7 +163,6 @@ test("agent-loop: tool repeat limit blocks repeated identical calls", async () =
       fileStateDir: process.cwd(),
       maxSteps: 3,
       parseRetries: 1,
-      maxTokenBudget: 120000,
       toolRepeatLimit: 1,
       timeoutMs: 60000,
     },
@@ -258,7 +255,6 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
       fileStateDir: process.cwd(),
       maxSteps: 1,
       parseRetries: 1,
-      maxTokenBudget: 120000,
       toolRepeatLimit: 6,
       timeoutMs: 60000,
     },
@@ -282,6 +278,8 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
 
     assert.equal(finalAnswer, "done");
     assert.equal(agent.getSessionStats().tokens, 321);
+    assert.equal(agent.getSessionStats().promptTokens, 111);
+    assert.equal(agent.getSessionStats().completionTokens, 210);
     assert.equal(agent.getSessionStats().tokenSource, "provider");
   } finally {
     await agent.shutdown();
@@ -289,7 +287,7 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
   }
 });
 
-test("agent-loop: session token stats fall back when provider usage is missing", async () => {
+test("agent-loop: session token stats stay unknown when provider usage is missing", async () => {
   const prev = snapshotEnv();
   process.env.QLING_MEMORY_WAL_ENABLED = "false";
   process.env.QLING_METRICS_ENABLED = "false";
@@ -304,7 +302,6 @@ test("agent-loop: session token stats fall back when provider usage is missing",
       fileStateDir: process.cwd(),
       maxSteps: 1,
       parseRetries: 1,
-      maxTokenBudget: 120000,
       toolRepeatLimit: 6,
       timeoutMs: 60000,
     },
@@ -318,13 +315,14 @@ test("agent-loop: session token stats fall back when provider usage is missing",
       },
     });
 
-    agent.addUserMessage("fallback usage");
+    agent.addUserMessage("no usage fields");
     const finalAnswer = await agent.run();
 
     assert.equal(finalAnswer, "done");
-    assert.ok(agent.getSessionStats().tokens > 0);
-    assert.notEqual(agent.getSessionStats().tokens, 321);
-    assert.equal(agent.getSessionStats().tokenSource, "estimate");
+    assert.equal(agent.getSessionStats().tokens, 0);
+    assert.equal(agent.getSessionStats().promptTokens, 0);
+    assert.equal(agent.getSessionStats().completionTokens, 0);
+    assert.equal(agent.getSessionStats().tokenSource, "unknown");
   } finally {
     await agent.shutdown();
     restoreEnv(prev);

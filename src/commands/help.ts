@@ -11,7 +11,7 @@ export const HELP_LINES = [
   "/plan [on|off|status|..] - Plan Mode（只读规划，禁写工具）",
   "/expand [on|off|status]  - 切换长工具输出展开（同 Ctrl+O）",
   "/plan [description]     - 创建普通会话计划请求",
-  "/usage, /cost, /stats   - 查看本地 token 与上下文用量",
+  "/usage, /cost, /stats   - 查看 provider 官方 token usage",
   "/diff                   - 查看当前 Git 变更摘要",
   "/copy [N]               - 复制最近第 N 条 assistant 回复",
   "/rewind, /undo          - 查看可恢复会话点",

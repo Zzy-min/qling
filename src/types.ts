@@ -50,7 +50,6 @@ export interface AgentConfig {
   maxIterations: number;
   tools: ToolDefinition[];
   // v2 新增
-  tokenBudget?: TokenBudgetConfig;
   sections?: PromptSectionRegistry;
   runtime?: {
     workspaceDir: string | null;
@@ -58,7 +57,6 @@ export interface AgentConfig {
     fileStateDir: string;
     maxSteps: number;
     parseRetries: number;
-    maxTokenBudget: number;
     toolRepeatLimit: number;
     timeoutMs: number;
   };
@@ -104,15 +102,6 @@ export interface ToolDefinition {
   // v2 新增：场景路由
   scenes?: string[];       // 所属场景标签（如 "coding", "data", "web", "system"）
   priority?: number;       // 优先级 0-10（默认 5），低优先级工具在超限时先禁用
-}
-
-// --- Token Budget（7.3 节）---
-
-export interface TokenBudgetConfig {
-  maxTokens: number;
-  nudgeThreshold: number;      // 剩余多少 token 时开始 nudge
-  totalBudget: number;         // 当前会话总 token 上限
-  usedTokens?: number;
 }
 
 // --- Hook 系统（5.2 节）---

@@ -15,7 +15,6 @@ export const SECTION_IDS = {
   RESTRICTIONS: "restrictions",
   TONE: "tone",
   REPOMAP: "repomap",
-  TOKEN_BUDGET: "token_budget",
   SESSION: "session",
   MCP: "mcp",
   MEMORY: "memory",
@@ -155,23 +154,6 @@ export function buildMemorySection(): PromptSection {
   };
 }
 
-export function buildTokenBudgetSection(usedTokens: number, maxTokens: number): PromptSection {
-  const remaining = maxTokens - usedTokens;
-  const pct = Math.round((remaining / maxTokens) * 100);
-
-  return {
-    id: SECTION_IDS.TOKEN_BUDGET,
-    title: "Token 预算",
-    content: `【Token 预算】
-已使用: ~${usedTokens.toLocaleString()} tokens
-剩余: ~${remaining.toLocaleString()} tokens (${pct}%)
-当剩余低于 20% 时，主动精简回复，减少工具调用频率。`,
-    cacheable: false,
-    dynamic: true,
-    cached: false,
-  };
-}
-
 export function buildSkillsSection(skills: SkillMeta[]): PromptSection {
   if (skills.length === 0) {
     return {
@@ -244,11 +226,7 @@ export function buildRepoMapSection(
 
 // --- 默认 Registry Builder ---
 
-export function buildDefaultRegistry(
-  tools: AgentConfig["tools"],
-  usedTokens: number = 0,
-  maxTokens: number = 120_000
-): PromptSectionRegistry {
+export function buildDefaultRegistry(tools: AgentConfig["tools"]): PromptSectionRegistry {
   const registry = new PromptSectionRegistry();
 
   registry.register(buildIntroSection("轻灵", getPackageVersion()));
@@ -259,7 +237,6 @@ export function buildDefaultRegistry(
   registry.register(buildRepoMapSection([]));
   registry.register(buildSessionSection());
   registry.register(buildMemorySection());
-  registry.register(buildTokenBudgetSection(usedTokens, maxTokens));
 
   return registry;
 }

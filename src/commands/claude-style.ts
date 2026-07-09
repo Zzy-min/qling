@@ -57,7 +57,7 @@ function createUnavailableCommand(
 export const usageCommand: SlashCommand = {
   name: "/usage",
   aliases: ["/cost", "/stats"],
-  description: "查看本地 token 与上下文预算使用情况",
+  description: "查看 provider 官方 token usage（无预算）",
   usage: "/usage",
   category: "session",
   availability: "local",
@@ -65,21 +65,30 @@ export const usageCommand: SlashCommand = {
   execute: async (_args, context) => {
     const stats = typeof (context.agentLoop as any).getSessionStats === "function"
       ? await (context.agentLoop as any).getSessionStats()
-      : { sessionId: "unknown", turnCount: 0, tokens: 0, tokenSource: "unknown", compactions: 0 };
-    const maxTokens = Number(process.env.QLING_MAX_TOKEN_BUDGET ?? process.env.QLING_RUNTIME_MAX_TOKEN_BUDGET ?? "120000");
+      : {
+          sessionId: "unknown",
+          turnCount: 0,
+          tokens: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          tokenSource: "unknown",
+          compactions: 0,
+        };
     const tokens = Math.max(0, Number(stats.tokens ?? 0));
-    const pct = Number.isFinite(maxTokens) && maxTokens > 0 ? Math.round((tokens / maxTokens) * 100) : null;
+    const promptTokens = Math.max(0, Number(stats.promptTokens ?? 0));
+    const completionTokens = Math.max(0, Number(stats.completionTokens ?? 0));
 
     context.writeLine("");
-    context.writeLine("📈 【本地用量】");
+    context.writeLine("📈 【Token 用量 · 官方 usage】");
     context.writeLine("-----------------------------------------");
     context.writeLine(`Session   : ${stats.sessionId ?? "unknown"}`);
     context.writeLine(`Turns     : ${Number(stats.turnCount ?? 0)}`);
-    context.writeLine(`Tokens    : ${tokens.toLocaleString()}`);
+    context.writeLine(`Total     : ${tokens.toLocaleString()}`);
+    context.writeLine(`Input     : ${promptTokens.toLocaleString()}`);
+    context.writeLine(`Output    : ${completionTokens.toLocaleString()}`);
     context.writeLine(`Source    : ${stats.tokenSource ?? "unknown"}`);
-    context.writeLine(`Context   : ${pct === null ? "unknown" : `${pct}% of ${maxTokens.toLocaleString()}`}`);
     context.writeLine(`Compacts  : ${Number(stats.compactions ?? 0)}`);
-    context.writeLine("边界      : provider usage 优先；缺失时使用本地估算，不代表最终账单。");
+    context.writeLine("边界      : 仅累加模型 API 返回的 usage；无本地字符估算、无 token 预算。");
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },

@@ -10,7 +10,6 @@ export interface LocalConfigReport {
   stateDir: string;
   cacheDir: string;
   maxSteps: number;
-  maxTokenBudget: number;
   permissionMode: string;
   permissionRuleCount: number;
   features: Record<string, boolean>;
@@ -82,7 +81,7 @@ export function buildLocalConfigReport(config: QlingConfig): LocalConfigReport {
     stateDir: safeText(config.runtime.file_state_dir),
     cacheDir: safeText(config.runtime.file_cache_dir),
     maxSteps: Number(config.runtime.max_steps ?? 0),
-    maxTokenBudget: Number(config.runtime.max_token_budget ?? 0),
+
     permissionMode: safeText(config.guard.permissions.default, "allow"),
     permissionRuleCount: config.guard.permissions.rules?.length ?? 0,
     features: {
@@ -127,7 +126,7 @@ export function formatLocalConfigReport(report: LocalConfigReport): string[] {
     `Workspace  : ${report.workspaceDir}`,
     `State dir  : ${report.stateDir}`,
     `Cache dir  : ${report.cacheDir}`,
-    `Runtime    : max_steps=${report.maxSteps} max_tokens=${report.maxTokenBudget.toLocaleString()}`,
+    `Runtime    : max_steps=${report.maxSteps}`,
     `Permissions: ${formatPermissionMode(report.permissionMode)}`,
     `Rules      : ${report.permissionRuleCount}`,
     `Features   : ${formatFeatureFlags(report.features)}`,

@@ -1,5 +1,6 @@
 // ============================================================
-// 轻灵 - Agent Loop v2（整合 Pipeline Hook + Section Prompt + Token Budget）
+// 轻灵 - Agent Loop v2（整合 Pipeline Hook + Section Prompt）
+// Token 计数仅采用 provider 官方 usage 字段。
 // ============================================================
 
 import axios from "axios";
@@ -10,8 +11,14 @@ import { exec } from "child_process";
 import { existsSync } from "fs";
 import { dispatch, ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
-import { buildDefaultRegistry, buildSystemPrompt, SECTION_IDS, buildRepoMapSection } from "./pipeline/sections.js";
-import { MemoryStore, TokenBudgetManager, extractDreamMemories } from "./memory.js";
+import { buildDefaultRegistry, buildSystemPrompt, buildRepoMapSection } from "./pipeline/sections.js";
+import { MemoryStore, extractDreamMemories } from "./memory.js";
+import {
+  extractProviderUsage,
+  resolveRoundTokenUsage,
+  type ChatUsage,
+  type TokenUsageSource,
+} from "./token-usage.js";
 import { WriteAheadLog } from "./memory/wal.js";
 import { extractDreamMemoriesLLM } from "./memory/memory-llm-dream.js";
 import { MCPRegistry } from "./mcp/registry.js";
@@ -75,12 +82,6 @@ interface TurnTelemetry {
   toolFailures: number;
 }
 
-interface ChatUsage {
-  totalTokens?: number;
-}
-
-type TokenUsageSource = "provider" | "estimate" | "unknown";
-
 interface ChatResponse {
   content: string;
   tool_calls?: RawToolCall[];
@@ -118,7 +119,6 @@ export class AgentLoop extends AgentEventEmitter {
   private pipeline: ToolPipeline;
   private sectionRegistry = buildDefaultRegistry(ALL_TOOLS);
   private memoryStore: MemoryStore;
-  private tokenBudget: TokenBudgetManager;
   private verifier: VerificationAgent;
   private compactor: ContextCompactor;
   private knowledgeAdapter: KnowledgeAgentAdapter;
@@ -156,11 +156,21 @@ export class AgentLoop extends AgentEventEmitter {
     this.verificationCommand = cmd;
     await this.persistVerificationCommand();
   }
-  getSessionStats(): { sessionId: string; turnCount: number; tokens: number; tokenSource: TokenUsageSource; compactions: number } {
+  getSessionStats(): {
+    sessionId: string;
+    turnCount: number;
+    tokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    tokenSource: TokenUsageSource;
+    compactions: number;
+  } {
     return {
       sessionId: this.sessionId,
       turnCount: this.turnCount,
       tokens: this.sessionTokens,
+      promptTokens: this.sessionPromptTokens,
+      completionTokens: this.sessionCompletionTokens,
       tokenSource: this.tokenUsageSource,
       compactions: this.compactionCount,
     };
@@ -189,8 +199,10 @@ export class AgentLoop extends AgentEventEmitter {
     }
   }
 
-  // Token 追踪（仅计增量，避免每轮重复计算整个上下文）
+  // Token 追踪：仅累加 provider 官方 usage（按请求增量）
   private sessionTokens = 0;
+  private sessionPromptTokens = 0;
+  private sessionCompletionTokens = 0;
   private tokenUsageSource: TokenUsageSource = "unknown";
   private initPromise: Promise<void>;
 
@@ -248,11 +260,6 @@ export class AgentLoop extends AgentEventEmitter {
       systemPrompt: config.systemPrompt ?? "",
       maxIterations: config.maxIterations ?? 50,
       tools: config.tools ?? ALL_TOOLS,
-      tokenBudget: config.tokenBudget ?? {
-        maxTokens: 120_000,
-        nudgeThreshold: 0.2,
-        totalBudget: 120_000,
-      },
       runtime: {
         workspaceDir: config.runtime?.workspaceDir ?? process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
         fileCacheDir:
@@ -262,7 +269,6 @@ export class AgentLoop extends AgentEventEmitter {
         fileStateDir: this.runtimeRootDir,
         maxSteps: config.runtime?.maxSteps ?? 50,
         parseRetries: config.runtime?.parseRetries ?? 2,
-        maxTokenBudget: config.runtime?.maxTokenBudget ?? 120_000,
         toolRepeatLimit: config.runtime?.toolRepeatLimit ?? 6,
         timeoutMs: config.runtime?.timeoutMs ?? 300_000,
       },
@@ -282,10 +288,6 @@ export class AgentLoop extends AgentEventEmitter {
     this.memoryStore = new MemoryStore(this.memoryDir, {
       workspaceDir: this.config.runtime?.workspaceDir || undefined,
     });
-    this.tokenBudget = new TokenBudgetManager(
-      this.config.tokenBudget?.totalBudget ?? 120_000,
-      this.config.tokenBudget?.nudgeThreshold ?? 0.2
-    );
     this.verifier = new VerificationAgent(apiKey, this.config.model);
     this.compactor = new ContextCompactor(6000, this.config.model);
     this.knowledgeAdapter = new KnowledgeAgentAdapter(this.memoryStore);
@@ -557,14 +559,7 @@ export class AgentLoop extends AgentEventEmitter {
         }
       }
 
-      // 0. Token Budget Nudge
-      if (this.tokenBudget.shouldNudge()) {
-        const nudge = this.tokenBudget.buildNudgeMessage();
-        this.messages.push({ role: "user", content: nudge });
-        console.error("\n" + nudge + "\n");
-      }
-
-      // 0b. 上下文压缩（超过阈值时触发）
+      // 0. 上下文压缩（超过阈值时触发）
       if (this.compactor.needsCompaction(this.messages)) {
         console.error("\n📦 上下文压缩中...（" + this.messages.length + " 条消息）");
         const compacted = await this.compactor.compact(this.messages);
@@ -573,7 +568,7 @@ export class AgentLoop extends AgentEventEmitter {
         console.error("📦 压缩完成 → " + this.messages.length + " 条消息\n");
       }
 
-      // 0c. 冲突/注入扫描（Lesson 12: Context Validation）
+      // 0b. 冲突/注入扫描（Lesson 12: Context Validation）
       const conflicts = this.compactor.scanConflicts(this.messages);
       if (conflicts.length > 0) {
         console.error("⚠️ 检测到 " + conflicts.length + " 处指令冲突");
@@ -591,17 +586,15 @@ export class AgentLoop extends AgentEventEmitter {
         await this.workflowRuntime.updateContext(this.messages);
       }
 
-      // 2. 准备本地 token fallback；若 provider 返回 usage，优先采用 provider 值。
-      const lastMsg = this.messages[this.messages.length - 1];
-      const estimatedRoundTokens = (lastMsg?.content?.length ?? 0) * 4 + (systemPrompt.length * 0.5);
-
-      // 3. API 调用
+      // 2. API 调用；token 仅累加 provider 官方 usage
       const { content, tool_calls, usage } = await this.chat(systemPrompt);
-      const tokenUsage = this.resolveRoundTokenUsage(usage, estimatedRoundTokens);
-      const roundTokens = tokenUsage.tokens;
-      this.tokenUsageSource = tokenUsage.source;
-      this.sessionTokens += roundTokens;
-      this.tokenBudget.addUsage(roundTokens);
+      const tokenUsage = resolveRoundTokenUsage(usage);
+      if (tokenUsage.source === "provider") {
+        this.sessionTokens += tokenUsage.tokens;
+        this.sessionPromptTokens += tokenUsage.promptTokens;
+        this.sessionCompletionTokens += tokenUsage.completionTokens;
+        this.tokenUsageSource = "provider";
+      }
       this.messages.push({ role: "assistant", content, tool_calls });
       this.emit("thinking", content || "正在思考...");
 
@@ -1026,8 +1019,9 @@ export class AgentLoop extends AgentEventEmitter {
     this.messages = [];
     this.turnCount = 0;
     this.sessionTokens = 0;
+    this.sessionPromptTokens = 0;
+    this.sessionCompletionTokens = 0;
     this.tokenUsageSource = "unknown";
-    this.tokenBudget.reset();
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
   }
@@ -1247,12 +1241,13 @@ export class AgentLoop extends AgentEventEmitter {
     this.messages = snapshot.messages.map((message) => ({ ...message }));
     this.turnCount = snapshot.turnCount;
     this.sessionTokens = snapshot.sessionTokens;
+    this.sessionPromptTokens = 0;
+    this.sessionCompletionTokens = 0;
     this.tokenUsageSource = "unknown";
     this.compactionCount = snapshot.compactionCount;
     this.sessionId = snapshot.sessionId;
     this.sessionCreatedAt = snapshot.createdAt;
     this.pipeline.setSessionId(this.sessionId);
-    this.tokenBudget.syncUsage(this.sessionTokens);
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
     if (this.config.runtime) {
@@ -1313,25 +1308,6 @@ export class AgentLoop extends AgentEventEmitter {
       } catch (err) {
         // Ignore
       }
-    }
-
-    // 更新 token budget section
-    const budgetSec = this.sectionRegistry.get(SECTION_IDS.TOKEN_BUDGET);
-    if (budgetSec) {
-      const used = this.sessionTokens;
-      const max = this.tokenBudget.maxTokens;
-      this.sectionRegistry.register({
-        ...budgetSec,
-        content:
-          "【Token 预算】\n已使用: ~" +
-          used.toLocaleString() +
-          " tokens\n剩余: ~" +
-          (max - used).toLocaleString() +
-          " tokens (" +
-          Math.round(((max - used) / max) * 100) +
-          "%)\n当剩余低于 20% 时，主动精简回复，减少工具调用频率。",
-        dynamic: true,
-      });
     }
 
     // 加载记忆 (v0.3 支持语义异步预取)
@@ -1415,26 +1391,14 @@ export class AgentLoop extends AgentEventEmitter {
       }));
     }
 
+    // 优先解析 data.usage；若无则尝试整包 data（Ollama 等顶层字段）
+    const usage =
+      extractProviderUsage(resp.data?.usage) ?? extractProviderUsage(resp.data);
     return {
       content: msg.content ?? "",
       tool_calls: rawToolCalls,
-      usage: this.extractChatUsage(resp.data?.usage),
+      usage,
     };
-  }
-
-  private extractChatUsage(rawUsage: unknown): ChatUsage | undefined {
-    if (!rawUsage || typeof rawUsage !== "object") return undefined;
-    const usage = rawUsage as Record<string, unknown>;
-    const total = Number(usage.total_tokens ?? usage.totalTokens);
-    if (!Number.isFinite(total) || total <= 0) return undefined;
-    return { totalTokens: Math.floor(total) };
-  }
-
-  private resolveRoundTokenUsage(usage: ChatUsage | undefined, fallbackTokens: number): { tokens: number; source: TokenUsageSource } {
-    if (usage?.totalTokens && Number.isFinite(usage.totalTokens) && usage.totalTokens > 0) {
-      return { tokens: usage.totalTokens, source: "provider" };
-    }
-    return { tokens: fallbackTokens, source: "estimate" };
   }
 
   private async verifyLastOperation(): Promise<void> {
@@ -1552,12 +1516,6 @@ export class AgentLoop extends AgentEventEmitter {
     } catch (err) {
       // ignore
     }
-  }
-
-  private estimateTokens(): number {
-    // 粗略估算：总字符数 × 4
-    const totalChars = this.messages.reduce((sum, m) => sum + m.content.length, 0);
-    return totalChars * 4;
   }
 
   private logTurnTelemetry(metrics: TurnTelemetry): void {

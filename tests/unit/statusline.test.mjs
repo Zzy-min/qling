@@ -22,8 +22,9 @@ test("statusline formatter includes local interaction state", () => {
     goalStatus: "active",
     activeTasks: 2,
     tokens: 12345,
+    promptTokens: 10000,
+    completionTokens: 2345,
     tokenSource: "provider",
-    maxTokens: 120000,
     costPer1kTokens: 0.002,
   });
 
@@ -35,8 +36,10 @@ test("statusline formatter includes local interaction state", () => {
   assert.match(line, /目标=active/);
   assert.match(line, /任务=2/);
   assert.match(line, /令牌=12,345/);
+  assert.match(line, /in=10,000/);
+  assert.match(line, /out=2,345/);
   assert.match(line, /来源=provider/);
-  assert.match(line, /上下文=12,345\/120,000\(10%\)/);
+  assert.doesNotMatch(line, /上下文=/);
   assert.match(line, /成本≈\$0\.0247/);
 });
 
@@ -59,7 +62,7 @@ test("statusline formatter degrades when optional fields are absent", () => {
   assert.match(line, /任务=0/);
   assert.match(line, /令牌=0/);
   assert.match(line, /来源=unknown/);
-  assert.match(line, /上下文=0\/-/);
+  assert.doesNotMatch(line, /上下文=/);
   assert.match(line, /成本=-/);
   assert.doesNotMatch(line, /queue=/);
 });
@@ -126,8 +129,13 @@ test("statusline snapshot collects input queue metadata from slash context", asy
   const snapshot = await collectStatusLineSnapshot({
     agentLoop: {
       getModel: () => "deepseek-chat",
-      getSessionStats: () => ({ sessionId: "session_queue_snapshot", tokens: 88 }),
-      getTokenBudget: () => ({ maxTokens: 120000 }),
+      getSessionStats: () => ({
+        sessionId: "session_queue_snapshot",
+        tokens: 88,
+        promptTokens: 60,
+        completionTokens: 28,
+        tokenSource: "provider",
+      }),
       getPermissionMode: () => "ask",
     },
     scheduler: {
@@ -150,8 +158,10 @@ test("statusline snapshot collects input queue metadata from slash context", asy
     maxPending: 20,
     isProcessing: true,
   });
-  assert.equal(snapshot.maxTokens, 120000);
-  assert.equal(snapshot.tokenSource, "unknown");
+  assert.equal(snapshot.promptTokens, 60);
+  assert.equal(snapshot.completionTokens, 28);
+  assert.equal(snapshot.tokenSource, "provider");
+  assert.equal("maxTokens" in snapshot, false);
 });
 
 test("statusline snapshot reads local cost estimate from env", async () => {
@@ -161,8 +171,13 @@ test("statusline snapshot reads local cost estimate from env", async () => {
     const snapshot = await collectStatusLineSnapshot({
       agentLoop: {
         getModel: () => "deepseek-chat",
-        getSessionStats: () => ({ sessionId: "session_cost_snapshot", tokens: 12000 }),
-        getTokenBudget: () => ({ maxTokens: 120000 }),
+        getSessionStats: () => ({
+          sessionId: "session_cost_snapshot",
+          tokens: 12000,
+          promptTokens: 9000,
+          completionTokens: 3000,
+          tokenSource: "provider",
+        }),
         getPermissionMode: () => "ask",
       },
       scheduler: {
@@ -177,7 +192,10 @@ test("statusline snapshot reads local cost estimate from env", async () => {
     const line = formatStatusLine(snapshot);
 
     assert.equal(snapshot.costPer1kTokens, 0.002);
-    assert.match(line, /上下文=12,000\/120,000\(10%\)/);
+    assert.match(line, /令牌=12,000/);
+    assert.match(line, /in=9,000/);
+    assert.match(line, /out=3,000/);
+    assert.doesNotMatch(line, /上下文=/);
     assert.match(line, /成本≈\$0\.0240/);
   } finally {
     if (previous === undefined) delete process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS;
@@ -209,7 +227,6 @@ test("local statusline snapshot uses config model, permission mode, and git bran
       workspaceDir: root,
       model: "local-status-model",
       permissionMode: "ask",
-      maxTokens: 120000,
       costPer1kTokens: 0.002,
     });
     const line = formatStatusLine(snapshot);
@@ -222,7 +239,9 @@ test("local statusline snapshot uses config model, permission mode, and git bran
     assert.match(line, /目标=无/);
     assert.match(line, /任务=0/);
     assert.match(line, /令牌=0/);
-    assert.match(line, /上下文=0\/120,000\(0%\)/);
+    assert.match(line, /in=0/);
+    assert.match(line, /out=0/);
+    assert.doesNotMatch(line, /上下文=/);
     assert.match(line, /成本≈\$0\.0000/);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -13,8 +13,9 @@ export interface StatusLineSnapshot {
   goalStatus: string | null;
   activeTasks: number;
   tokens: number;
-  tokenSource?: "provider" | "estimate" | "unknown";
-  maxTokens?: number | null;
+  promptTokens?: number;
+  completionTokens?: number;
+  tokenSource?: "provider" | "unknown";
   costPer1kTokens?: number | null;
   inputQueue?: StatusLineInputQueueSnapshot;
 }
@@ -29,7 +30,6 @@ export interface LocalStatusLineSnapshotOptions {
   workspaceDir?: string | null;
   model?: string | null;
   permissionMode?: string | null;
-  maxTokens?: number | null;
   costPer1kTokens?: number | null;
 }
 
@@ -111,15 +111,6 @@ export function parseStatusLineCostPer1k(raw: unknown): number | null {
   return normalizePositiveNumber(raw);
 }
 
-function formatContextUsage(tokens: number, maxTokens?: number | null): string {
-  const used = Math.max(0, Math.floor(Number(tokens ?? 0)));
-  const max = normalizePositiveNumber(maxTokens);
-  if (!max) return `${used.toLocaleString()}/-`;
-  const roundedMax = Math.floor(max);
-  const pct = Math.round((used / roundedMax) * 100);
-  return `${used.toLocaleString()}/${roundedMax.toLocaleString()}(${pct}%)`;
-}
-
 function formatCostEstimate(tokens: number, costPer1kTokens?: number | null): string {
   const costPer1k = normalizePositiveNumber(costPer1kTokens);
   if (!costPer1k) return "-";
@@ -128,13 +119,8 @@ function formatCostEstimate(tokens: number, costPer1kTokens?: number | null): st
   return `≈$${estimate.toFixed(4)}`;
 }
 
-function normalizeTokenSource(value: unknown): "provider" | "estimate" | "unknown" {
-  return value === "provider" || value === "estimate" ? value : "unknown";
-}
-
-function resolveTokenBudgetMax(agentLoop: any): number | null {
-  const value = agentLoop.getTokenBudget?.()?.maxTokens ?? agentLoop.tokenBudget?.maxTokens;
-  return normalizePositiveNumber(value);
+function normalizeTokenSource(value: unknown): "provider" | "unknown" {
+  return value === "provider" ? "provider" : "unknown";
 }
 
 function formatSessionMode(mode: string | null | undefined): string {
@@ -151,6 +137,8 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   const permission = formatPermissionMode(snapshot.permissionMode);
   const sessionMode = formatSessionMode(snapshot.sessionMode);
   const cost = formatCostEstimate(snapshot.tokens, snapshot.costPer1kTokens);
+  const prompt = Math.max(0, Math.floor(Number(snapshot.promptTokens ?? 0)));
+  const completion = Math.max(0, Math.floor(Number(snapshot.completionTokens ?? 0)));
   const parts = [
     `模型=${snapshot.model || "未知"}`,
     `模式=${sessionMode}`,
@@ -160,8 +148,9 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
     `目标=${goal}`,
     `任务=${snapshot.activeTasks}`,
     `令牌=${Number(snapshot.tokens ?? 0).toLocaleString()}`,
+    `in=${prompt.toLocaleString()}`,
+    `out=${completion.toLocaleString()}`,
     `来源=${normalizeTokenSource(snapshot.tokenSource)}`,
-    `上下文=${formatContextUsage(snapshot.tokens, snapshot.maxTokens)}`,
     cost === "-" ? "成本=-" : `成本${cost}`,
   ];
   const queue = formatInputQueueStatus(snapshot.inputQueue);
@@ -181,8 +170,9 @@ export function collectLocalStatusLineSnapshot(options: LocalStatusLineSnapshotO
     goalStatus: null,
     activeTasks: 0,
     tokens: 0,
+    promptTokens: 0,
+    completionTokens: 0,
     tokenSource: "unknown",
-    maxTokens: normalizePositiveNumber(options.maxTokens),
     costPer1kTokens: parseStatusLineCostPer1k(options.costPer1kTokens),
   };
 }
@@ -232,8 +222,9 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
     goalStatus: goal?.status ?? null,
     activeTasks,
     tokens: Number(stats.tokens ?? 0),
+    promptTokens: Number(stats.promptTokens ?? 0),
+    completionTokens: Number(stats.completionTokens ?? 0),
     tokenSource: normalizeTokenSource(stats.tokenSource),
-    maxTokens: resolveTokenBudgetMax(agentLoop),
     costPer1kTokens: parseStatusLineCostPer1k(process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS),
     inputQueue,
   };

@@ -22,7 +22,6 @@ function createConfig(overrides = {}) {
       file_state_dir: "C:/state",
       max_steps: 20,
       parse_retries: 2,
-      max_token_budget: 100000,
       tool_repeat_limit: 3,
       timeout_ms: 600000,
     },

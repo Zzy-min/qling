@@ -97,7 +97,6 @@ export async function runSubtask(args: {
       fileStateDir: roots.fileStateDir,
       maxSteps: maxIterations,
       parseRetries: 2,
-      maxTokenBudget: 120_000,
       toolRepeatLimit: 6,
       timeoutMs,
     },

@@ -3,17 +3,20 @@ import { homedir } from "os";
 import type { SlashCommandContext } from "./commands/runtime.js";
 import { formatLocalPanel } from "./output-style.js";
 import { SessionRegistry } from "./session/session-registry.js";
+import {
+  formatProviderTokenLine,
+  type TokenUsageSource,
+} from "./token-usage.js";
 
 export interface ContextReport {
   sessionId: string;
   turnCount: number;
   messageCount: number;
   tokens: number;
-  tokenSource: "provider" | "estimate" | "unknown";
+  promptTokens: number;
+  completionTokens: number;
+  tokenSource: TokenUsageSource;
   tokenSourceDescription: string;
-  maxTokens: number | null;
-  tokenUsagePercent: number | null;
-  contextLevel: "ok" | "watch" | "critical" | "unknown";
   recommendation: string;
   compactions: number;
   workspaceDir: string;
@@ -26,14 +29,12 @@ export interface ContextReport {
 
 export interface ContextReportOptions {
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
-  maxTokens?: number | null;
 }
 
 export interface LocalContextReportOptions {
   workspaceDir: string;
   stateDir: string;
   cacheDir?: string;
-  maxTokens?: number | null;
 }
 
 function resolveStateDir(env: ContextReportOptions["env"], agentLoop: any): string {
@@ -46,52 +47,41 @@ function resolveCacheDir(env: ContextReportOptions["env"], stateDir: string): st
   return env?.QLING_FILE_CACHE_DIR || join(stateDir, "cache");
 }
 
-function resolveMaxTokens(options: ContextReportOptions, agentLoop: any): number | null {
-  if (typeof options.maxTokens === "number" && options.maxTokens > 0) {
-    return options.maxTokens;
-  }
-  const fromAgent = agentLoop.getTokenBudget?.()?.maxTokens ?? agentLoop.tokenBudget?.maxTokens;
-  return typeof fromAgent === "number" && fromAgent > 0 ? fromAgent : null;
+export function formatTokenUsage(options: {
+  tokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  source?: TokenUsageSource;
+}): string {
+  return formatProviderTokenLine({
+    tokens: options.tokens,
+    promptTokens: options.promptTokens,
+    completionTokens: options.completionTokens,
+    source: options.source,
+  });
 }
 
-export function formatTokenUsage(tokens: number, maxTokens: number | null | undefined): string {
-  const used = Number(tokens ?? 0);
-  if (!maxTokens || maxTokens <= 0) {
-    return `${used.toLocaleString()} / unknown`;
-  }
-  const pct = Math.round((used / maxTokens) * 100);
-  return `${used.toLocaleString()} / ${maxTokens.toLocaleString()} (${pct}%)`;
-}
-
-function classifyContextLevel(percent: number | null): ContextReport["contextLevel"] {
-  if (percent === null) return "unknown";
-  if (percent >= 90) return "critical";
-  if (percent >= 70) return "watch";
-  return "ok";
-}
-
-function describeContextRecommendation(level: ContextReport["contextLevel"]): string {
-  switch (level) {
-    case "critical":
-      return "立即保存 checkpoint 并执行 /compact，避免后续回复被截断或上下文丢失。";
-    case "watch":
-      return "建议在继续长任务前保存 checkpoint；如输出变长，提前 /compact。";
-    case "ok":
-      return "当前上下文占用正常，可继续推进。";
-    default:
-      return "未配置可用 token 预算，建议设置 max token budget 以获得准确上下文水位。";
-  }
-}
-
-function describeTokenSource(source: ContextReport["tokenSource"]): string {
+function describeTokenSource(source: TokenUsageSource): string {
   switch (source) {
     case "provider":
-      return "provider reported usage; suitable for accurate accounting when the provider returns usage.";
-    case "estimate":
-      return "local estimate; useful for context planning but not exact billing.";
+      return "provider 官方 usage（prompt/completion/total 字段）；适合账单与用量统计。";
     default:
-      return "unknown; provider usage and local estimate are unavailable.";
+      return "unknown：本会话尚未收到 provider usage；不会用本地字符估算伪造 token。";
   }
+}
+
+function describeRecommendation(options: {
+  tokenSource: TokenUsageSource;
+  compactions: number;
+  messageCount: number;
+}): string {
+  if (options.tokenSource === "unknown") {
+    return "当前无官方 usage。请确认模型 API 返回 usage；部分代理层可能剥离该字段。";
+  }
+  if (options.compactions > 0 || options.messageCount >= 40) {
+    return "上下文较长或已压缩过，可按需 /compact 或保存 checkpoint 后继续。";
+  }
+  return "Token 来自 provider 官方 usage，可继续推进。";
 }
 
 export async function buildContextReport(
@@ -106,6 +96,8 @@ export async function buildContextReport(
         sessionId: agentLoop.getSessionId?.() ?? "",
         turnCount: agentLoop.turnCount ?? 0,
         tokens: agentLoop.sessionTokens ?? 0,
+        promptTokens: 0,
+        completionTokens: 0,
         tokenSource: "unknown",
         compactions: agentLoop.compactionCount ?? 0,
       };
@@ -115,24 +107,24 @@ export async function buildContextReport(
   const savedSessions = context.listSavedSessions ? await context.listSavedSessions() : [];
   const stateDir = resolveStateDir(env, agentLoop);
   const cacheDir = resolveCacheDir(env, stateDir);
-  const maxTokens = resolveMaxTokens(options, agentLoop);
   const tokens = Number(stats.tokens ?? 0);
-  const tokenUsagePercent = maxTokens ? Math.round((tokens / maxTokens) * 100) : null;
+  const promptTokens = Number(stats.promptTokens ?? 0);
+  const completionTokens = Number(stats.completionTokens ?? 0);
   const tokenSource = normalizeTokenSource(stats.tokenSource);
-  const contextLevel = classifyContextLevel(tokenUsagePercent);
+  const messageCount = Array.isArray(messages) ? messages.length : Number(stats.messageCount ?? 0);
+  const compactions = Number(stats.compactions ?? stats.compactionCount ?? 0);
 
   return {
     sessionId: stats.sessionId || agentLoop.getSessionId?.() || "-",
     turnCount: Number(stats.turnCount ?? 0),
-    messageCount: Array.isArray(messages) ? messages.length : Number(stats.messageCount ?? 0),
+    messageCount,
     tokens,
+    promptTokens,
+    completionTokens,
     tokenSource,
     tokenSourceDescription: describeTokenSource(tokenSource),
-    maxTokens,
-    tokenUsagePercent,
-    contextLevel,
-    recommendation: describeContextRecommendation(contextLevel),
-    compactions: Number(stats.compactions ?? stats.compactionCount ?? 0),
+    recommendation: describeRecommendation({ tokenSource, compactions, messageCount }),
+    compactions,
     workspaceDir: context.workspaceDir || agentLoop.getWorkspaceDir?.() || process.cwd(),
     stateDir,
     cacheDir,
@@ -145,24 +137,18 @@ export async function buildContextReport(
 export async function buildLocalContextReport(options: LocalContextReportOptions): Promise<ContextReport> {
   const registry = new SessionRegistry({ stateDir: options.stateDir });
   const savedSessions = await registry.list();
-  const maxTokens = typeof options.maxTokens === "number" && options.maxTokens > 0
-    ? options.maxTokens
-    : null;
-  const tokenUsagePercent = maxTokens ? 0 : null;
-  const tokenSource = "unknown";
-  const contextLevel = classifyContextLevel(tokenUsagePercent);
+  const tokenSource: TokenUsageSource = "unknown";
 
   return {
     sessionId: "-",
     turnCount: 0,
     messageCount: 0,
     tokens: 0,
+    promptTokens: 0,
+    completionTokens: 0,
     tokenSource,
     tokenSourceDescription: describeTokenSource(tokenSource),
-    maxTokens,
-    tokenUsagePercent,
-    contextLevel,
-    recommendation: describeContextRecommendation(contextLevel),
+    recommendation: describeRecommendation({ tokenSource, compactions: 0, messageCount: 0 }),
     compactions: 0,
     workspaceDir: options.workspaceDir,
     stateDir: options.stateDir,
@@ -188,12 +174,18 @@ export function formatContextReport(report: ContextReport): string[] {
         ],
       },
       {
-        heading: "Token 与状态",
+        heading: "Token（官方 usage）",
         rows: [
-          ["Token", formatTokenUsage(report.tokens, report.maxTokens)],
+          ["Token", formatTokenUsage({
+            tokens: report.tokens,
+            promptTokens: report.promptTokens,
+            completionTokens: report.completionTokens,
+            source: report.tokenSource,
+          })],
+          ["输入 tokens", report.promptTokens.toLocaleString()],
+          ["输出 tokens", report.completionTokens.toLocaleString()],
           ["Token 来源", report.tokenSource],
           ["Token 说明", report.tokenSourceDescription],
-          ["上下文状态", report.contextLevel],
           ["建议", report.recommendation],
         ],
       },
@@ -213,6 +205,6 @@ export function formatContextReport(report: ContextReport): string[] {
   });
 }
 
-function normalizeTokenSource(value: unknown): ContextReport["tokenSource"] {
-  return value === "provider" || value === "estimate" ? value : "unknown";
+function normalizeTokenSource(value: unknown): TokenUsageSource {
+  return value === "provider" ? "provider" : "unknown";
 }
