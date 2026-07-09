@@ -5,8 +5,8 @@
 ## 安装
 
 ```bash
-npm install github:Zzy-min/qling
-# 或发布后: npm install qling
+npm install @qlingzzy/qling
+# 或: npm install github:Zzy-min/qling
 ```
 
 ## 最小示例
@@ -17,7 +17,7 @@ import {
   loadQlingConfig,
   applyConfigToProcessEnv,
   ALL_TOOLS,
-} from "qling";
+} from "@qlingzzy/qling";
 
 const { config } = await loadQlingConfig({
   workspaceDir: process.cwd(),
@@ -58,6 +58,7 @@ await agent.shutdown();
 - SDK 与 CLI 共享同一运行时；**不**自动启动 TUI  
 - API key 仍须由宿主进程提供（环境变量），SDK 不落盘密钥  
 - 公开 API 在 2.x 可能调整；请 pin 版本  
+- npm 包名为 `@qlingzzy/qling`（官方不允许无作用域名 `qling`）；全局安装后 CLI 命令仍是 `qling`
 
 ## CLI 仍推荐用于
 

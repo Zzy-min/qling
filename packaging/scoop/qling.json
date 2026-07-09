@@ -12,18 +12,18 @@
   "depends": [
     "nodejs"
   ],
-  "url": "https://registry.npmjs.org/qling/-/qling-1.0.0.tgz",
+  "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-1.0.0.tgz",
   "hash": "TODO_REPLACE_WITH_SHA256_OF_TGZ",
   "extract_dir": "package",
   "bin": "bin\\qling.cmd",
   "post_install": [
-    "Write-Host 'If bin shim is missing, run: npm install -g qling@$version' -ForegroundColor Yellow",
+    "Write-Host 'If bin shim is missing, run: npm install -g @qlingzzy/qling@$version' -ForegroundColor Yellow",
     "Write-Host 'Then: qling bootstrap && qling setup' -ForegroundColor Cyan"
   ],
   "checkver": {
     "github": "https://github.com/Zzy-min/qling"
   },
   "autoupdate": {
-    "url": "https://registry.npmjs.org/qling/-/qling-$version.tgz"
+    "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-$version.tgz"
   }
 }

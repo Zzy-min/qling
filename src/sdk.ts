@@ -2,7 +2,7 @@
 // 轻灵 Qling — SDK 导出面（Phase 2.0 雏形）
 //
 // 用法:
-//   import { AgentLoop, loadQlingConfig, listProviderPresets } from "qling";
+//   import { AgentLoop, loadQlingConfig, listProviderPresets } from "@qlingzzy/qling";
 //
 // 说明: 此为可嵌入入口；CLI 入口仍是 dist/index.js (bin: qling)
 // ============================================================
