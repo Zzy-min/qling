@@ -82,6 +82,69 @@ export class MetricsCollector {
     return results;
   }
 
+  async queryRecent(options: MetricsQuery & {
+    maxScanBytes?: number;
+  }): Promise<{ events: MetricEvent[]; scannedBytes: number; truncated: boolean }> {
+    const limit = Math.min(100, Math.max(1, Math.floor(options.limit ?? 20)));
+    const maxScanBytes = Math.min(
+      8 * 1024 * 1024,
+      Math.max(1024, Math.floor(options.maxScanBytes ?? 1024 * 1024))
+    );
+    const events = this.buffer
+      .filter((event) => this.matchesQuery(event, options))
+      .sort((a, b) => b.ts - a.ts);
+
+    let scannedBytes = 0;
+    let truncated = false;
+    if (events.length < limit && fsSync.existsSync(this.metricsDir)) {
+      const files = (await fs.readdir(this.metricsDir))
+        .filter((file) => file.startsWith("metrics-") && file.endsWith(".jsonl"))
+        .sort()
+        .reverse();
+
+      for (const file of files) {
+        if (events.length >= limit || scannedBytes >= maxScanBytes) break;
+        const filePath = path.join(this.metricsDir, file);
+        const stat = await fs.stat(filePath);
+        const bytesToRead = Math.min(stat.size, maxScanBytes - scannedBytes);
+        if (bytesToRead <= 0) break;
+
+        const start = Math.max(0, stat.size - bytesToRead);
+        const handle = await fs.open(filePath, "r");
+        try {
+          const buffer = Buffer.alloc(bytesToRead);
+          const { bytesRead } = await handle.read(buffer, 0, bytesToRead, start);
+          scannedBytes += bytesRead;
+          let text = buffer.subarray(0, bytesRead).toString("utf-8");
+          if (start > 0) {
+            const firstBreak = text.indexOf("\n");
+            text = firstBreak >= 0 ? text.slice(firstBreak + 1) : "";
+            truncated = true;
+          }
+          const lines = text.split(/\r?\n/).filter(Boolean).reverse();
+          for (const line of lines) {
+            if (events.length >= limit) break;
+            try {
+              const event = JSON.parse(line) as MetricEvent;
+              if (this.matchesQuery(event, options)) events.push(event);
+            } catch {
+              // Ignore incomplete or invalid JSONL records.
+            }
+          }
+        } finally {
+          await handle.close();
+        }
+      }
+      if (scannedBytes >= maxScanBytes) truncated = true;
+    }
+
+    return {
+      events: events.sort((a, b) => b.ts - a.ts).slice(0, limit),
+      scannedBytes,
+      truncated,
+    };
+  }
+
   startAutoFlush(): ReturnType<typeof setInterval> {
     return setInterval(() => {
       this.flush().catch(() => {});

@@ -118,6 +118,11 @@ export class MissionManager {
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
+  async refresh(): Promise<void> {
+    this.missions.clear();
+    await this.loadMissions();
+  }
+
   async getMissionLogs(id: string): Promise<MissionEvent[]> {
     this.getMissionOrThrow(id);
     const filePath = this.getEventPath(id);

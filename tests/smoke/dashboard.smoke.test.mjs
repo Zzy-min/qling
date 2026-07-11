@@ -22,19 +22,15 @@ test("dashboard smoke: /dashboard shows link and local only (no model call)", ()
   // 允许非0（可能进入交互提示），但输出必须包含关键本地信息
   const out = (result.stdout || "") + (result.stderr || "");
   assert.match(out, /Observability Dashboard|本地链接|Dashboard/);
-  assert.match(out, /localhost:19999/);
+  assert.match(out, /127\.0\.0\.1:19999/);
   assert.doesNotMatch(out, /sk-smoke-dashboard/);
 });
 
-test("dashboard smoke: server module serves Chinese dashboard HTML (read-only)", async () => {
-  // 轻量验证：确保 dashboard-server 模块可加载且 HTML 包含中文关键内容
+test("dashboard smoke: page and client are separate typed assets", async () => {
   const { DashboardServer } = await import("../../dist/dashboard-server.js");
+  const { DASHBOARD_HTML } = await import("../../dist/dashboard/page.js");
   assert.ok(DashboardServer, "DashboardServer exists");
-
-  // 模拟最小 HTML 内容检查（通过源码或构建产物间接）
-  const fs = await import("node:fs");
-  const src = fs.readFileSync("src/dashboard-server.ts", "utf8");
-  assert.match(src, /轻灵 · 本地 Dashboard/);
-  assert.match(src, /api\/sessions|api\/permissions|api\/doctor/);
-  assert.match(src, /只读观测/);
+  assert.match(DASHBOARD_HTML, /轻灵任务工作台/);
+  assert.match(DASHBOARD_HTML, /assets\/dashboard\.js/);
+  assert.doesNotMatch(DASHBOARD_HTML, /sess:\s*any/);
 });

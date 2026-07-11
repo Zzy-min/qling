@@ -30,12 +30,13 @@ export function parseSessionTaskCount(value?: string): number {
 
 export async function listLocalSessionTasks(
   stateDir: string,
-  options: { count?: number } = {}
+  options: { count?: number; maxCount?: number } = {}
 ): Promise<SessionTaskReport> {
   const tasksDir = path.join(stateDir, "session-tasks");
+  const maxCount = Math.max(1, Math.floor(options.maxCount ?? MAX_TASK_COUNT));
   const count = Math.min(
     Math.max(1, Math.floor(options.count ?? DEFAULT_TASK_COUNT)),
-    MAX_TASK_COUNT
+    maxCount
   );
   const warnings: string[] = [];
 

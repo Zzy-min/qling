@@ -98,4 +98,53 @@ describe("MetricsCollector", () => {
     const events = await collector.query({ session_id: "session-autoflush" });
     assert.ok(events.length >= 100, "auto-flush should have written at least 100 events");
   });
+
+  it("queryRecent returns newest buffered and persisted events within scan budget", async () => {
+    const dir = path.join(tmpDir, "recent-query");
+    const collector = new MetricsCollector(dir, "session-recent");
+    await collector.init();
+
+    for (let i = 0; i < 40; i++) {
+      collector.record({ type: "turn_complete", data: { turn: i } });
+    }
+    await collector.flush();
+    collector.record({ type: "tool_call", data: { toolName: "read", turn: 40 } });
+
+    const result = await collector.queryRecent({
+      limit: 5,
+      session_id: "session-recent",
+      maxScanBytes: 1024 * 1024,
+    });
+
+    assert.equal(result.events.length, 5);
+    assert.equal(result.events[0].data.turn, 40);
+    assert.deepEqual(result.events.slice(1).map((event) => event.data.turn), [39, 38, 37, 36]);
+    assert.ok(result.scannedBytes <= 1024 * 1024);
+  });
+
+  it("queryRecent stays bounded on a 10 MiB metrics file", async () => {
+    const dir = path.join(tmpDir, "recent-large");
+    await fs.mkdir(dir, { recursive: true });
+    const lines = [];
+    for (let i = 0; i < 55_000; i++) {
+      lines.push(JSON.stringify({
+        ts: i,
+        type: "tool_call",
+        session_id: "large-session",
+        data: { index: i, payload: "x".repeat(120) },
+      }));
+    }
+    await fs.writeFile(path.join(dir, "metrics-2026-07-11.jsonl"), lines.join("\n") + "\n");
+    const collector = new MetricsCollector(dir, "large-session");
+    await collector.init();
+
+    const start = performance.now();
+    const result = await collector.queryRecent({ limit: 20, maxScanBytes: 1024 * 1024 });
+    const duration = performance.now() - start;
+
+    assert.equal(result.events.length, 20);
+    assert.equal(result.events[0].data.index, 54_999);
+    assert.ok(result.scannedBytes <= 1024 * 1024);
+    assert.ok(duration < 500, `recent query took ${duration.toFixed(1)}ms`);
+  });
 });

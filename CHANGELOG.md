@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### TUI — Slash/Skill 输入框恢复
+
+- 修复 `/skill`、`/plan` 等本地 slash 命令完成后输入框被队列内外重复恢复、连续绘制两次的问题；输入框现在只在整条输入队列排空后恢复一次。
+
+### Dashboard — 本地任务工作台
+
+- **统一任务中心**：Mission、session loop task 与当前 Workflow 使用同一状态模型，活跃任务优先并支持筛选、搜索和按需详情。
+- **首屏性能**：新增单请求快照、750ms 服务端缓存、稳定 ETag/304；指标倒序读取最多扫描 1 MiB，任务正文与日志按需加载。
+- **安全控制**：Mission 根据 daemon 健康状态开放暂停、恢复、取消和重试；Loop 仅允许取消，Workflow 保持只读。
+- **本地边界**：Dashboard 仅监听 `127.0.0.1`，启用 CSP 与基础安全头，移除通配 CORS，未知 API 返回 JSON 404。
+- **可维护前端**：浏览器客户端、页面与样式从服务端拆分并纳入 TypeScript 构建，修复旧内嵌脚本无法解析而停留在“加载中”的问题。
+
 ### Phase 3.0 — Harness Lean（续调研落地）
 
 - **工具结果上下文卫生**：入会话前折叠超长 tool output（默认 `QLING_TOOL_RESULT_MAX_CHARS=6000`，`0` 关闭）；保留头尾与元数据。

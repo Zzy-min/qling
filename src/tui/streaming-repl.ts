@@ -428,10 +428,6 @@ export class StreamingREPL {
         await this.processPrompt(nextPrompt);
       } else {
         await this.scheduler.runDueTasksOnce();
-        // 真实 TUI 有 showPrompt；单测 mock 可能没有
-        if (typeof (this.ui as { showPrompt?: () => void }).showPrompt === "function") {
-          this.ui.showPrompt();
-        }
       }
       return;
     }

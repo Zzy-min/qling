@@ -1,14 +1,25 @@
-// ============================================================
-// 轻灵 - Observability Dashboard Server (v0.3)
-// 本地 Web 控制台后端，提供只读监控与读写控制接口
-// ============================================================
+import * as http from "node:http";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
-import * as http from "http";
-import { MetricsCollector } from "./metrics/collector.js";
-import { WorkflowRuntime } from "./workflow-runtime.js";
-import { AgentLoop } from "./agent-loop.js";
+import type { AgentLoop } from "./agent-loop.js";
+import { buildDashboardTasks } from "./dashboard/model.js";
+import { DASHBOARD_CSS, DASHBOARD_HTML } from "./dashboard/page.js";
+import type {
+  DashboardControlResult,
+  DashboardSnapshot,
+  DashboardTask,
+  DashboardTaskDetail,
+  DashboardTaskKind,
+} from "./dashboard/types.js";
+import type { MetricsCollector } from "./metrics/collector.js";
+import type { Mission } from "./mission/types.js";
 import { buildLocalPermissionsReport } from "./permissions-report.js";
-import { buildLocalStatusReport } from "./local-status-report.js";
+import {
+  cancelLocalSessionTask,
+  listLocalSessionTasks,
+} from "./session-task-report.js";
+import type { WorkflowRuntime } from "./workflow-runtime.js";
 
 export interface DashboardOptions {
   port: number;
@@ -17,335 +28,435 @@ export interface DashboardOptions {
   agentLoop: AgentLoop;
 }
 
+interface SnapshotCache {
+  snapshot: DashboardSnapshot;
+  payload: string;
+  etag: string;
+  expiresAt: number;
+}
+
+const SNAPSHOT_CACHE_MS = 750;
+const DAEMON_PROBE_MS = 5_000;
+const TASK_LIMIT = 50;
+const TASK_SCAN_LIMIT = 5_000;
+const ACTIVITY_LIMIT = 20;
+const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8" };
+const CLIENT_URL = new URL("./dashboard/client.js", import.meta.url);
+
+function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
+  res.writeHead(status, JSON_HEADERS);
+  res.end(JSON.stringify(value));
+}
+
+function summaryFor(tasks: DashboardTask[]): DashboardSnapshot["summary"] {
+  const summary: DashboardSnapshot["summary"] = {
+    total: tasks.length,
+    queued: 0,
+    running: 0,
+    blocked: 0,
+    paused: 0,
+    succeeded: 0,
+    failed: 0,
+    canceled: 0,
+  };
+  for (const task of tasks) summary[task.status]++;
+  return summary;
+}
+
+function parseTaskRoute(pathname: string): {
+  kind: DashboardTaskKind;
+  id: string;
+  action?: string;
+} | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] !== "api" || parts[1] !== "tasks" || parts.length < 4 || parts.length > 5) {
+    return null;
+  }
+  const kind = parts[2] as DashboardTaskKind;
+  if (!(["mission", "loop", "workflow"] as string[]).includes(kind)) return null;
+  try {
+    return {
+      kind,
+      id: decodeURIComponent(parts[3]),
+      action: parts[4] ? decodeURIComponent(parts[4]) : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export class DashboardServer {
   private server!: http.Server;
-  private options: DashboardOptions;
+  private readonly options: DashboardOptions;
+  private snapshotCache: SnapshotCache | null = null;
+  private daemonHealthy = false;
+  private daemonTimer: ReturnType<typeof setInterval> | null = null;
+  private clientSource: string | null = null;
   public listening = false;
 
   constructor(options: DashboardOptions) {
     this.options = options;
   }
 
-  start(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.server = http.createServer(async (req, res) => {
-        const url = new URL(req.url || "/", `http://localhost:${this.options.port}`);
-
-        // 设置 CORS
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-        if (req.method === "OPTIONS") {
-          res.writeHead(204);
-          res.end();
-          return;
-        }
-
-        try {
-          // --- 路由分发 ---
-
-          // 1. 获取所有指标 (Read-only)
-          if (url.pathname === "/api/metrics" && req.method === "GET") {
-            const limit = Number(url.searchParams.get("limit")) || 100;
-            const metrics = await this.options.collector.query({ limit });
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(metrics));
-            return;
-          }
-
-          // 2. 获取当前状态 (Read-only)
-          if (url.pathname === "/api/status" && req.method === "GET") {
-            const checkpoint = this.options.workflowRuntime.getCheckpoint();
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              checkpoint,
-              is_running: (this.options.agentLoop as any).turnCount > 0,
-              session_id: (this.options.agentLoop as any).sessionId,
-            }));
-            return;
-          }
-
-          // 2b. 获取所有使命 (Read-only)
-          if (url.pathname === "/api/missions" && req.method === "GET") {
-            const manager = (this.options.agentLoop as any).getMissionManager();
-            const list = manager.listMissions();
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(list));
-            return;
-          }
-
-          // P2 增强: sessions (只读)
-          if (url.pathname === "/api/sessions" && req.method === "GET") {
-            try {
-              const limit = Number(url.searchParams.get("limit")) || 10;
-              // 简化：从 workflow 或 agent 获取会话列表
-              const sessions = (this.options.agentLoop as any).getRecentSessions?.(limit)
-                || [{ id: "current", status: "active" }];
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ sessions }));
-            } catch {
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ sessions: [] }));
-            }
-            return;
-          }
-
-          // P2 增强: permissions (只读)
-          if (url.pathname === "/api/permissions" && req.method === "GET") {
-            try {
-              const config = (this.options.agentLoop as any).config || {};
-              const report = buildLocalPermissionsReport({
-                defaultMode: config.guard?.permissions?.default || "ask",
-                rules: config.guard?.permissions?.rules || [],
-                env: process.env,
-              });
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify(report));
-            } catch {
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ defaultMode: "ask", rules: [] }));
-            }
-            return;
-          }
-
-          // P2 增强: doctor 简要快照 (只读)
-          if (url.pathname === "/api/doctor" && req.method === "GET") {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              status: "ok",
-              node: process.version,
-              dashboard: true,
-              features: { dashboard: true },
-              note: "使用 /doctor 命令获取完整本地诊断"
-            }));
-            return;
-          }
-
-          // 3. 执行控制 (Read-write)
-          if (url.pathname === "/api/control/pause" && req.method === "POST") {
-            // 物理实现：通过 agentLoop 发射暂停信号 (M3 后续完善信号量)
-            this.options.agentLoop.emit("control_signal", "pause");
-            res.writeHead(200);
-            res.end(JSON.stringify({ ok: true, action: "pause", status: "pausing" }));
-            return;
-          }
-
-          if (url.pathname === "/api/control/resume" && req.method === "POST") {
-            this.options.agentLoop.emit("control_signal", "resume");
-            res.writeHead(200);
-            res.end(JSON.stringify({ ok: true, action: "resume", status: "resuming" }));
-            return;
-          }
-          // 4. 静态资源 (前端) - P2: 本地只读可观测控制台 (纯 HTML，无外部依赖)
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(`<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>轻灵 Dashboard · 本地可观测</title>
-  <style>
-    :root { --bg:#0f172a; --card:#1e2937; --text:#e2e8f0; --accent:#22d3ee; --green:#4ade80; --red:#f87171; }
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); color: var(--text); margin:0; padding:20px; }
-    .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
-    .card { background:var(--card); border-radius:8px; padding:16px; margin-bottom:16px; border:1px solid #334155; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap:16px; }
-    .section-title { font-size:14px; color:#94a3b8; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
-    .metric { font-size:13px; line-height:1.6; }
-    .metric b { color:var(--accent); }
-    table { width:100%; border-collapse:collapse; font-size:12px; }
-    th, td { padding:6px 8px; text-align:left; border-bottom:1px solid #334155; }
-    th { color:#64748b; }
-    .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; background:#334155; }
-    .ok { color:var(--green); } .warn { color:#facc15; } .err { color:var(--red); }
-    .log { background:#0b1120; padding:8px; border-radius:4px; font-size:11px; white-space:pre-wrap; max-height:160px; overflow:auto; }
-    button { background:var(--accent); color:#0f172a; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-size:12px; }
-    button:disabled { opacity:0.5; cursor:not-allowed; }
-    .small { font-size:11px; color:#64748b; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <h1 style="margin:0;font-size:20px;">轻灵 · 本地 Dashboard</h1>
-      <div class="small">端口 <span id="port"></span> · 只读观测 · <span id="status">加载中...</span></div>
-    </div>
-    <div>
-      <button onclick="refreshAll()">刷新</button>
-      <button onclick="pauseMission()" style="margin-left:8px;">暂停</button>
-      <button onclick="resumeMission()" style="margin-left:4px;">恢复</button>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <div class="section-title">当前状态</div>
-      <div id="status-panel" class="metric">加载中...</div>
-    </div>
-
-    <div class="card">
-      <div class="section-title">权限与边界</div>
-      <div id="perm-panel" class="metric">加载中...</div>
-    </div>
-
-    <div class="card">
-      <div class="section-title">Missions / 任务</div>
-      <div id="missions-panel">加载中...</div>
-    </div>
-
-    <div class="card">
-      <div class="section-title">会话 Sessions</div>
-      <div id="sessions-panel">加载中...</div>
-    </div>
-
-    <div class="card">
-      <div class="section-title">Doctor 快照</div>
-      <div id="doctor-panel">加载中...</div>
-    </div>
-
-    <div class="card">
-      <div class="section-title">最近指标 / 工具调用 (最近 20)</div>
-      <div id="metrics-panel" class="log">加载中...</div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="section-title">API 端点（只读优先）</div>
-    <div class="small">
-      GET /api/status &nbsp;|&nbsp; GET /api/missions &nbsp;|&nbsp; GET /api/metrics?limit=50<br>
-      POST /api/control/pause &nbsp;|&nbsp; POST /api/control/resume
-    </div>
-  </div>
-
-  <script>
-    const port = window.location.port || '9999';
-    document.getElementById('port').textContent = port;
-
-    async function fetchJSON(path) {
-      const res = await fetch('/' + path);
-      if (!res.ok) throw new Error(res.status);
-      return res.json();
-    }
-
-    async function loadStatus() {
-      try {
-        const s = await fetchJSON('api/status');
-        const el = document.getElementById('status-panel');
-        el.innerHTML = \`
-          <b>运行中</b>: \${s.is_running ? '是' : '否'}<br>
-          <b>会话</b>: \${s.session_id || '-'}<br>
-          <b>Checkpoint</b>: \${s.checkpoint ? '有' : '无'}
-        \`;
-        document.getElementById('status').textContent = '就绪';
-        document.getElementById('status').className = 'ok';
-      } catch(e) {
-        document.getElementById('status-panel').textContent = '无法获取状态';
-      }
-    }
-
-    async function loadMissions() {
-      try {
-        const list = await fetchJSON('api/missions');
-        const el = document.getElementById('missions-panel');
-        if (!list || list.length === 0) { el.innerHTML = '<div class="small">暂无活跃使命</div>'; return; }
-        el.innerHTML = list.slice(0,5).map(m => \`
-          <div class="metric">
-            <b>\${m.id?.slice(0,12) || 'mission'}</b> · \${m.status || ''}<br>
-            <span class="small">\${(m.goal || '').slice(0,60)}</span>
-          </div>
-        \`).join('');
-      } catch(e) { document.getElementById('missions-panel').innerHTML = '获取失败'; }
-    }
-
-    async function loadMetrics() {
-      try {
-        const data = await fetchJSON('api/metrics?limit=20');
-        const el = document.getElementById('metrics-panel');
-        if (!data || !data.length) { el.textContent = '暂无指标'; return; }
-        el.textContent = data.slice(0,12).map(m => {
-          const t = new Date(m.ts || Date.now()).toLocaleTimeString();
-          return \`\${t} | \${m.type || 'event'} \${JSON.stringify(m.payload || {}).slice(0,80)}\`;
-        }).join('\\n');
-      } catch(e) { document.getElementById('metrics-panel').textContent = '获取失败'; }
-    }
-
-    async function loadPerm() {
-      try {
-        const p = await fetchJSON('api/permissions');
-        const el = document.getElementById('perm-panel');
-        el.innerHTML = \`
-          <b>默认</b>: \${p.defaultMode || 'ask'}<br>
-          <b>规则</b>: \${p.rules?.length || 0}<br>
-          <span class="small">本地权限边界</span>
-        \`;
-      } catch(e) {
-        const el = document.getElementById('perm-panel');
-        el.innerHTML = '权限信息获取失败';
-      }
-    }
-
-    async function loadSessions() {
-      try {
-        const s = await fetchJSON('api/sessions');
-        let el = document.getElementById('sessions-panel');
-        if (!el) return;
-        const list = s.sessions || [];
-        el.innerHTML = list.length ? list.slice(0,3).map((sess: any) => \`<div class="metric"><b>\${(sess.id||'sess').slice(0,12)}</b> \${sess.status||''}</div>\`).join('') : '<div class="small">无活跃会话</div>';
-      } catch(e){}
-    }
-
-    async function loadDoctor() {
-      try {
-        const d = await fetchJSON('api/doctor');
-        let el = document.getElementById('doctor-panel');
-        if (!el) return;
-        el.innerHTML = \`<b>状态</b>: \${d.status || 'ok'} <span class="pill ok">本地</span>\`;
-      } catch(e){}
-    }
-
-    async function refreshAll() {
-      await Promise.all([loadStatus(), loadMissions(), loadMetrics(), loadPerm(), loadSessions(), loadDoctor()]);
-    }
-
-    async function pauseMission() {
-      try { await fetch('/api/control/pause', {method:'POST'}); alert('暂停信号已发送'); refreshAll(); } catch(e){}
-    }
-    async function resumeMission() {
-      try { await fetch('/api/control/resume', {method:'POST'}); alert('恢复信号已发送'); refreshAll(); } catch(e){}
-    }
-
-    // 启动
-    refreshAll();
-    setInterval(refreshAll, 15000); // 15s 自动刷新
-  </script>
-</body>
-</html>`);
-
-        } catch (err) {
-          res.writeHead(500);
-          res.end(JSON.stringify({ error: (err as Error).message }));
-        }
-      });
-
-      this.server.on("error", (err: any) => {
+  async start(): Promise<void> {
+    if (this.listening) return;
+    this.server = http.createServer((req, res) => void this.handleRequest(req, res));
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
           reject(new Error(`EADDRINUSE: 端口 ${this.options.port} 已被占用`));
-        } else {
-          reject(err);
-        }
-      });
-
-      this.server.listen(this.options.port, () => {
-        console.error(`🚀 Dashboard 运行在: http://localhost:${this.options.port}`);
+        } else reject(err);
+      };
+      this.server.once("error", onError);
+      this.server.listen(this.options.port, "127.0.0.1", () => {
+        this.server.off("error", onError);
         this.listening = true;
+        console.error(`🚀 Dashboard 运行在: http://127.0.0.1:${this.options.port}`);
         resolve();
       });
     });
+    void this.probeDaemon();
+    this.daemonTimer = setInterval(() => void this.probeDaemon(), DAEMON_PROBE_MS);
+    this.daemonTimer.unref?.();
   }
 
   stop(): void {
+    if (this.daemonTimer) clearInterval(this.daemonTimer);
+    this.daemonTimer = null;
     this.server?.close();
     this.listening = false;
+  }
+
+  private setSecurityHeaders(res: http.ServerResponse): void {
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+  }
+
+  private sameOriginAllowed(req: http.IncomingMessage): boolean {
+    const origin = req.headers.origin;
+    if (!origin) return true;
+    return origin === `http://127.0.0.1:${this.options.port}` || origin === `http://localhost:${this.options.port}`;
+  }
+
+  private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    this.setSecurityHeaders(res);
+    if (!this.sameOriginAllowed(req)) {
+      sendJson(res, 403, { error: "cross-origin dashboard request denied" });
+      return;
+    }
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url || "/", `http://127.0.0.1:${this.options.port}`);
+    try {
+      if (url.pathname === "/" && req.method === "GET") {
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+        res.end(DASHBOARD_HTML);
+        return;
+      }
+      if (url.pathname === "/assets/dashboard.css" && req.method === "GET") {
+        res.writeHead(200, {
+          "Content-Type": "text/css; charset=utf-8",
+          "Cache-Control": "public, max-age=3600",
+        });
+        res.end(DASHBOARD_CSS);
+        return;
+      }
+      if (url.pathname === "/assets/dashboard.js" && req.method === "GET") {
+        this.clientSource ??= await readFile(CLIENT_URL, "utf-8");
+        res.writeHead(200, {
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+        res.end(this.clientSource);
+        return;
+      }
+      if (url.pathname === "/api/dashboard/snapshot" && req.method === "GET") {
+        await this.serveSnapshot(req, res);
+        return;
+      }
+
+      const taskRoute = parseTaskRoute(url.pathname);
+      if (taskRoute && req.method === "GET" && !taskRoute.action) {
+        sendJson(res, 200, await this.buildTaskDetail(taskRoute.kind, taskRoute.id));
+        return;
+      }
+      if (taskRoute && req.method === "POST" && taskRoute.action) {
+        const result = await this.controlTask(taskRoute.kind, taskRoute.id, taskRoute.action);
+        sendJson(res, result.status, result.body);
+        return;
+      }
+
+      if (url.pathname === "/api/metrics" && req.method === "GET") {
+        const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 100));
+        const recent = await this.options.collector.queryRecent({ limit });
+        sendJson(res, 200, recent.events);
+        return;
+      }
+      if (url.pathname === "/api/status" && req.method === "GET") {
+        sendJson(res, 200, {
+          checkpoint: this.options.workflowRuntime.getCheckpoint(),
+          is_running: (this.options.agentLoop as any).turnCount > 0,
+          session_id: this.getSessionId(),
+        });
+        return;
+      }
+      if (url.pathname === "/api/missions" && req.method === "GET") {
+        const manager = this.options.agentLoop.getMissionManager();
+        await manager.refresh();
+        sendJson(res, 200, manager.listMissions());
+        return;
+      }
+      if (url.pathname === "/api/sessions" && req.method === "GET") {
+        sendJson(res, 200, { sessions: [{ id: this.getSessionId(), status: "active" }] });
+        return;
+      }
+      if (url.pathname === "/api/permissions" && req.method === "GET") {
+        sendJson(res, 200, this.permissionsReport());
+        return;
+      }
+      if (url.pathname === "/api/doctor" && req.method === "GET") {
+        sendJson(res, 200, {
+          status: "ok",
+          node: process.version,
+          dashboard: true,
+          daemonHealthy: this.daemonHealthy,
+          note: "使用 /doctor 命令获取完整本地诊断",
+        });
+        return;
+      }
+      if (url.pathname === "/api/control/pause" && req.method === "POST") {
+        this.options.agentLoop.emit("control_signal", "pause");
+        sendJson(res, 200, { ok: true, action: "pause", status: "pausing" });
+        return;
+      }
+      if (url.pathname === "/api/control/resume" && req.method === "POST") {
+        this.options.agentLoop.emit("control_signal", "resume");
+        sendJson(res, 200, { ok: true, action: "resume", status: "resuming" });
+        return;
+      }
+
+      if (url.pathname.startsWith("/api/")) {
+        sendJson(res, 404, { error: `dashboard route not found: ${url.pathname}` });
+        return;
+      }
+      sendJson(res, 404, { error: "not found" });
+    } catch (err) {
+      const status = Number((err as { statusCode?: number }).statusCode) || 500;
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async serveSnapshot(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const cache = await this.getSnapshot();
+    if (req.headers["if-none-match"] === cache.etag) {
+      res.writeHead(304, { ETag: cache.etag, "Cache-Control": "no-cache" });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      ...JSON_HEADERS,
+      ETag: cache.etag,
+      "Cache-Control": "no-cache",
+    });
+    res.end(cache.payload);
+  }
+
+  private async getSnapshot(): Promise<SnapshotCache> {
+    const now = Date.now();
+    if (this.snapshotCache && this.snapshotCache.expiresAt > now) return this.snapshotCache;
+
+    const manager = this.options.agentLoop.getMissionManager();
+    await manager.refresh();
+    const loopsReport = await listLocalSessionTasks(this.getStateDir(), {
+      count: TASK_SCAN_LIMIT,
+      maxCount: TASK_SCAN_LIMIT,
+    });
+    const recent = await this.options.collector.queryRecent({
+      limit: ACTIVITY_LIMIT,
+      maxScanBytes: 1024 * 1024,
+    });
+    const allTasks = buildDashboardTasks({
+      missions: manager.listMissions(),
+      loops: loopsReport.tasks,
+      workflow: this.options.workflowRuntime.getCheckpoint(),
+      daemonHealthy: this.daemonHealthy,
+      now,
+    });
+    const tasks = allTasks.slice(0, TASK_LIMIT);
+
+    const stable = {
+      runtime: {
+        ready: true,
+        sessionId: this.getSessionId(),
+        daemonHealthy: this.daemonHealthy,
+        daemonSource: this.daemonHealthy ? "daemon" as const : "local" as const,
+        permissionMode: this.getPermissionMode(),
+      },
+      summary: summaryFor(allTasks),
+      tasks,
+      activity: recent.events,
+      boundary: {
+        localOnly: true as const,
+        activityTruncated: recent.truncated,
+        activityScannedBytes: recent.scannedBytes,
+      },
+    };
+    const revision = createHash("sha256").update(JSON.stringify(stable)).digest("hex").slice(0, 16);
+    const snapshot: DashboardSnapshot = { generatedAt: now, revision, ...stable };
+    const payload = JSON.stringify(snapshot);
+    this.snapshotCache = {
+      snapshot,
+      payload,
+      etag: `"${revision}"`,
+      expiresAt: now + SNAPSHOT_CACHE_MS,
+    };
+    return this.snapshotCache;
+  }
+
+  private async buildTaskDetail(kind: DashboardTaskKind, id: string): Promise<DashboardTaskDetail> {
+    if (kind === "mission") {
+      const manager = this.options.agentLoop.getMissionManager();
+      await manager.refresh();
+      const mission = manager.getMissionOrThrow(id);
+      const task = buildDashboardTasks({ missions: [mission], loops: [], workflow: null, daemonHealthy: this.daemonHealthy })[0];
+      return { task, detail: mission as unknown as Record<string, unknown>, events: await manager.getMissionLogs(id) as unknown as Array<Record<string, unknown>> };
+    }
+    if (kind === "loop") {
+      const report = await listLocalSessionTasks(this.getStateDir(), {
+        count: TASK_SCAN_LIMIT,
+        maxCount: TASK_SCAN_LIMIT,
+      });
+      const loop = report.tasks.find((task) => task.id === id);
+      if (!loop) throw Object.assign(new Error(`session task not found: ${id}`), { statusCode: 404 });
+      const task = buildDashboardTasks({ missions: [], loops: [loop], workflow: null, daemonHealthy: this.daemonHealthy })[0];
+      return { task, detail: loop as unknown as Record<string, unknown>, events: [] };
+    }
+    const workflow = this.options.workflowRuntime.getCheckpoint();
+    if (!workflow || workflow.runId !== id) {
+      throw Object.assign(new Error(`workflow not found: ${id}`), { statusCode: 404 });
+    }
+    const task = buildDashboardTasks({ missions: [], loops: [], workflow, daemonHealthy: this.daemonHealthy })[0];
+    return { task, detail: workflow as unknown as Record<string, unknown>, events: workflow.history as unknown as Array<Record<string, unknown>> };
+  }
+
+  private async controlTask(kind: DashboardTaskKind, id: string, action: string): Promise<{ status: number; body: DashboardControlResult }> {
+    if (kind === "workflow") {
+      return { status: 405, body: { ok: false, source: "local", message: "Workflow 在 Dashboard 中仅供查看" } };
+    }
+    if (kind === "loop") {
+      if (action !== "cancel") return { status: 405, body: { ok: false, source: "local", message: "Loop task 仅支持 cancel" } };
+      const loop = await cancelLocalSessionTask(this.getStateDir(), id);
+      this.invalidateSnapshot();
+      const task = buildDashboardTasks({ missions: [], loops: [loop], workflow: null, daemonHealthy: this.daemonHealthy })[0];
+      return { status: 200, body: { ok: true, source: "local", task, message: `已取消循环任务 ${id}` } };
+    }
+
+    if (!(["pause", "resume", "cancel", "retry"] as string[]).includes(action)) {
+      return { status: 405, body: { ok: false, source: "local", message: `Mission 不支持操作 ${action}` } };
+    }
+    if (action === "retry" && !this.daemonHealthy) {
+      return { status: 503, body: { ok: false, source: "local", message: "重试需要运行中的 qling daemon；请先执行 qling daemon start" } };
+    }
+
+    if (this.daemonHealthy) {
+      const remote = await this.controlMissionViaDaemon(id, action);
+      if (remote) return remote;
+      if (action === "retry") {
+        return { status: 503, body: { ok: false, source: "local", message: "Daemon 已离线，未创建无法执行的重试任务" } };
+      }
+    }
+
+    const manager = this.options.agentLoop.getMissionManager();
+    await manager.refresh();
+    let mission: Mission;
+    if (action === "pause") mission = await manager.pauseMission(id, "dashboard_local");
+    else if (action === "resume") mission = await manager.resumeMission(id, "dashboard_local");
+    else mission = await manager.cancelMission(id, "dashboard_local");
+    this.invalidateSnapshot();
+    const task = buildDashboardTasks({ missions: [mission], loops: [], workflow: null, daemonHealthy: false })[0];
+    return { status: 200, body: { ok: true, source: "local", task, message: `已在本地状态中${this.actionLabel(action)} ${mission.name}` } };
+  }
+
+  private async controlMissionViaDaemon(id: string, action: string): Promise<{ status: number; body: DashboardControlResult } | null> {
+    try {
+      const response = await fetch(`${this.daemonUrl()}/missions/${encodeURIComponent(id)}/${action}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(1_200),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        return { status: response.status, body: { ok: false, source: "daemon", message: body.error ?? `Daemon 操作失败 (${response.status})` } };
+      }
+      const body = await response.json() as { mission?: Mission; missionId?: string };
+      const manager = this.options.agentLoop.getMissionManager();
+      await manager.refresh();
+      const mission = body.mission ?? manager.getMission(body.missionId ?? id);
+      const task = mission ? buildDashboardTasks({ missions: [mission], loops: [], workflow: null, daemonHealthy: true })[0] : undefined;
+      this.invalidateSnapshot();
+      return { status: 200, body: { ok: true, source: "daemon", task, message: `Daemon 已${this.actionLabel(action)}任务` } };
+    } catch {
+      this.daemonHealthy = false;
+      this.invalidateSnapshot();
+      return null;
+    }
+  }
+
+  private async probeDaemon(): Promise<void> {
+    try {
+      const response = await fetch(`${this.daemonUrl()}/health`, { signal: AbortSignal.timeout(350) });
+      const healthy = response.ok;
+      if (healthy !== this.daemonHealthy) {
+        this.daemonHealthy = healthy;
+        this.invalidateSnapshot();
+      }
+    } catch {
+      if (this.daemonHealthy) {
+        this.daemonHealthy = false;
+        this.invalidateSnapshot();
+      }
+    }
+  }
+
+  private permissionsReport(): ReturnType<typeof buildLocalPermissionsReport> {
+    const config = (this.options.agentLoop as any).config || {};
+    return buildLocalPermissionsReport({
+      defaultMode: config.guard?.permissions?.default || this.getPermissionMode(),
+      rules: config.guard?.permissions?.rules || [],
+      env: process.env,
+    });
+  }
+
+  private getStateDir(): string {
+    return this.options.agentLoop.getRuntimeRootDir();
+  }
+
+  private getSessionId(): string {
+    return this.options.agentLoop.getSessionId();
+  }
+
+  private getPermissionMode(): string {
+    return this.options.agentLoop.getPermissionMode?.() ?? "ask";
+  }
+
+  private daemonUrl(): string {
+    const port = Number(process.env.QLING_DAEMON_PORT) || 9998;
+    return `http://127.0.0.1:${port}`;
+  }
+
+  private actionLabel(action: string): string {
+    return ({ pause: "暂停", resume: "恢复", cancel: "取消", retry: "重试" } as Record<string, string>)[action] ?? action;
+  }
+
+  private invalidateSnapshot(): void {
+    this.snapshotCache = null;
   }
 }

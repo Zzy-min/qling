@@ -20,7 +20,7 @@
 | 可恢复长任务 | `/checkpoint`、`/resume`、`/rewind`、`--continue`、`qling workflow resume` 让中断后的上下文可以接上。 |
 | 本地 skill | `skills/` 与 `.qling/skills/` 中的 Markdown skill 可被 `/skill` 或 `/<skill-name>` 直接读取；内置命令优先级高于 skill。 |
 | 后台使命 | `qling daemon` + `qling mission` 提供长任务状态机、暂停 / 恢复 / 重试 / attach。 |
-| 观测台 | `qling dashboard start` 打开本地白盒化观测控制台，串起 thinking / tool / token 链路。 |
+| 任务工作台 | `qling dashboard start` 打开仅监听本机的任务中心，统一查看 Mission、循环任务、Workflow、执行来源与最近活动。 |
 | 通道与扩展 | `src/channels/` 内置 console / Telegram / Slack 通道；`qling discovery sync` 动态同步插件与技能。 |
 | 权限可解释 | `/permissions`、`/permissions explain <tool>`、guard、内容过滤、速率限制和密钥脱敏都以本地规则呈现。 |
 | 上下文透明 | `/context`、`/usage` 显示 provider 官方 token usage 与压缩状态（无预算）。 |

@@ -459,6 +459,33 @@ test("streaming repl routes slash command output through ui instead of console",
   }
 });
 
+test("streaming repl restores exactly one input frame after skill command completes", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-skill-prompt-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+    repl.scheduler = {
+      listTasks: async () => [],
+      runDueTasksOnce: async () => {},
+    };
+    repl.goalController = {
+      getGoalStatus: async () => null,
+    };
+    repl.processPrompt = async () => {
+      throw new Error("skill listing must not invoke the model");
+    };
+
+    await repl.handleUserInput("/skill list");
+
+    assert.equal(ui.prompts.length, 1);
+    assert.equal(ui.outputs.length > 0, true);
+    assert.equal(ui.errors.length, 0);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("streaming repl routes slash command errors through ui instead of console", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-slash-error-"));
   const originalError = console.error;

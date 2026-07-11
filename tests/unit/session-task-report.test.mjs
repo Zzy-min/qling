@@ -92,6 +92,21 @@ test("session task count defaults to 20 and clamps at 100", () => {
   assert.equal(parseSessionTaskCount("7"), 7);
 });
 
+test("session task report supports an explicit internal maximum without changing the public default", async () => {
+  await withTempDir(async (root) => {
+    await writeTasks(root, "session-large", Array.from({ length: 150 }, (_, index) =>
+      task(`tsk_${index}`, { updatedAt: index })
+    ));
+
+    const publicReport = await listLocalSessionTasks(root, { count: 150 });
+    const internalReport = await listLocalSessionTasks(root, { count: 150, maxCount: 500 });
+
+    assert.equal(publicReport.tasks.length, 100);
+    assert.equal(internalReport.tasks.length, 150);
+    assert.equal(internalReport.totalTasks, 150);
+  });
+});
+
 test("session task cancel persists canceled status and clears pending", async () => {
   await withTempDir(async (root) => {
     await writeTasks(root, "session-cancel", [
