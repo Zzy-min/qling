@@ -9,6 +9,7 @@ dist/
 
 # Runtime data
 .qling-todos.json
+/runs/
 
 # Temp / debug files
 *.ps1
