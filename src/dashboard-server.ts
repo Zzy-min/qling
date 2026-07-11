@@ -338,14 +338,20 @@ export class DashboardServer {
       const loop = report.tasks.find((task) => task.id === id);
       if (!loop) throw Object.assign(new Error(`session task not found: ${id}`), { statusCode: 404 });
       const task = buildDashboardTasks({ missions: [], loops: [loop], workflow: null, daemonHealthy: this.daemonHealthy })[0];
-      return { task, detail: loop as unknown as Record<string, unknown>, events: [] };
+      const trace = task.sessionId ? await this.options.agentLoop.getRecentRunTrace(task.sessionId) : [];
+      return { task, detail: loop as unknown as Record<string, unknown>, events: trace as unknown as Array<Record<string, unknown>> };
     }
     const workflow = this.options.workflowRuntime.getCheckpoint();
     if (!workflow || workflow.runId !== id) {
       throw Object.assign(new Error(`workflow not found: ${id}`), { statusCode: 404 });
     }
     const task = buildDashboardTasks({ missions: [], loops: [], workflow, daemonHealthy: this.daemonHealthy })[0];
-    return { task, detail: workflow as unknown as Record<string, unknown>, events: workflow.history as unknown as Array<Record<string, unknown>> };
+    const trace = await this.options.agentLoop.getRecentRunTrace(this.getSessionId());
+    return {
+      task,
+      detail: workflow as unknown as Record<string, unknown>,
+      events: [...workflow.history, ...trace] as unknown as Array<Record<string, unknown>>,
+    };
   }
 
   private async controlTask(kind: DashboardTaskKind, id: string, action: string): Promise<{ status: number; body: DashboardControlResult }> {
