@@ -248,7 +248,7 @@ export const planCommand: SlashCommand = {
       context.writeLine("🧭 【Plan Mode】");
       context.writeLine("-----------------------------------------");
       context.writeLine(`当前模式  : ${mode}`);
-      context.writeLine("说明      : plan=只读规划（禁 write/patch/bash/subtask/browser_fetch）");
+      context.writeLine("说明      : plan=只读规划（禁 write/patch/bash/subtask/browser_fetch/browser_act）");
       context.writeLine("          : agent=正常工具权限");
       context.writeLine("用法      : /plan on | /plan off | /plan status");
       context.writeLine("          : /plan <任务描述>  → 进入 plan 并排队计划 prompt");
@@ -300,7 +300,7 @@ export const planCommand: SlashCommand = {
     }
     const prompt = [
       "你正处于轻灵 Plan Mode（只读规划）。",
-      "约束：不要调用 write/patch/bash/subtask/browser_fetch；只做阅读、搜索与计划输出。",
+      "约束：不要调用 write/patch/bash/subtask/browser_fetch/browser_act；只做阅读、搜索与计划输出。",
       "请先给出分步实施计划，标出风险与验证方式，再等待用户确认。",
       "用户确认后可用 /plan off 退出 Plan Mode 再实施。",
       "",

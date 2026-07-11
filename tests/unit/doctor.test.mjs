@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDoctorReport, formatDoctorReport } from "../../dist/doctor.js";
+import { buildDoctorReport, buildPhase3FeatureChecks, formatDoctorReport } from "../../dist/doctor.js";
 
 function createContext(overrides = {}) {
   return {
@@ -15,6 +15,16 @@ function createContext(overrides = {}) {
     ...overrides,
   };
 }
+
+test("buildPhase3FeatureChecks reports defaults", () => {
+  const checks = buildPhase3FeatureChecks({});
+  assert.ok(checks.some((c) => c.id === "phase3_browser_act"));
+  assert.ok(checks.some((c) => c.id === "phase3_subtask_parallel"));
+  assert.ok(checks.some((c) => c.id === "phase3_mission_notify"));
+  assert.ok(checks.some((c) => c.id === "phase4_lsp"));
+  assert.equal(checks.find((c) => c.id === "phase3_browser_act")?.status, "warn");
+  assert.equal(checks.find((c) => c.id === "phase4_lsp")?.status, "warn");
+});
 
 test("doctor report summarizes healthy local checks", async () => {
   const report = await buildDoctorReport(createContext(), {
@@ -38,6 +48,7 @@ test("doctor report summarizes healthy local checks", async () => {
   assert.ok(report.summary.pass >= 9);
   assert.equal(report.checks.find((check) => check.id === "daemon")?.status, "pass");
   assert.equal(report.checks.find((check) => check.id === "ollama")?.status, "pass");
+  assert.ok(report.checks.some((c) => c.id === "phase3_browser_act"));
 });
 
 test("doctor ollama warn recommends local model path", async () => {

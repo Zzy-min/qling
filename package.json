@@ -32,7 +32,8 @@
     "docs/sdk.md",
     "docs/skills.md",
     "docs/install.md",
-    "docs/docker.md"
+    "docs/docker.md",
+    "docs/web-routing.md"
   ],
   "engines": {
     "node": ">=18"
@@ -77,11 +78,13 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "daemon": "node dist/daemon.js",
     "prepare": "npm run build",
-    "prepack": "npm run build",
     "dev": "tsc --watch",
     "test": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\"",
     "test:smoke": "npm run build && node --test \"tests/smoke/**/*.test.mjs\"",
     "eval:smoke": "npm run build && node scripts/eval-smoke.mjs",
+    "eval:llm": "npm run build && node scripts/eval-llm.mjs",
+    "dep:layers": "node scripts/dep-layers.mjs",
+    "dep:layers:json": "node scripts/dep-layers.mjs --json",
     "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs"
   },
   "dependencies": {
@@ -92,6 +95,14 @@
     "string-width": "^8.2.0",
     "yaml": "^2.8.1",
     "zod": "^3.23.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

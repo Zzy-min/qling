@@ -77,6 +77,56 @@ function boolText(value: boolean): "on" | "off" {
   return value ? "on" : "off";
 }
 
+function envFlagOn(env: DoctorOptions["env"], name: string): boolean {
+  const raw = envText(env, name).toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
+}
+
+/** Phase 3 可选能力开关（informational） */
+export function buildPhase3FeatureChecks(env: DoctorOptions["env"] = process.env): DoctorCheck[] {
+  const browserAct = envFlagOn(env, "QLING_BROWSER_ACT");
+  const parallel = envFlagOn(env, "QLING_SUBTASK_PARALLEL");
+  const missionNotify = envText(env, "QLING_MISSION_NOTIFY").toLowerCase();
+  const notifyOn = !(missionNotify === "off" || missionNotify === "0" || missionNotify === "false");
+  const logMode = envText(env, "QLING_MISSION_NOTIFY_LOGS") || "milestone";
+  const style = envText(env, "QLING_MISSION_NOTIFY_STYLE") || "rich";
+  const hasTg = Boolean(envText(env, "QLING_CHANNEL_TELEGRAM_TOKEN"));
+  const hasSlack = Boolean(envText(env, "QLING_CHANNEL_SLACK_BOT_TOKEN"));
+
+  return [
+    {
+      id: "phase3_browser_act",
+      label: "phase3:browser_act",
+      status: browserAct ? "pass" : "warn",
+      detail: browserAct
+        ? "QLING_BROWSER_ACT=on（交互浏览已启用）"
+        : "默认关闭；启用设 QLING_BROWSER_ACT=1，见 docs/web-routing.md",
+    },
+    {
+      id: "phase3_subtask_parallel",
+      label: "phase3:subtask_parallel",
+      status: parallel ? "pass" : "warn",
+      detail: parallel
+        ? "QLING_SUBTASK_PARALLEL=on（explore 并行已启用）"
+        : "默认关闭；启用设 QLING_SUBTASK_PARALLEL=1",
+    },
+    {
+      id: "phase3_mission_notify",
+      label: "phase3:mission_notify",
+      status: notifyOn && (hasTg || hasSlack) ? "pass" : notifyOn ? "warn" : "pass",
+      detail: `notify=${notifyOn ? "on" : "off"} style=${style} logs=${logMode} telegram=${hasTg ? "token" : "none"} slack=${hasSlack ? "token" : "none"}`,
+    },
+    {
+      id: "phase4_lsp",
+      label: "phase4:lsp",
+      status: envFlagOn(env, "QLING_LSP") ? "pass" : "warn",
+      detail: envFlagOn(env, "QLING_LSP")
+        ? "QLING_LSP=on（TS LanguageService 语义查询已启用）"
+        : "默认关闭；启用设 QLING_LSP=1（需 typescript 包）",
+    },
+  ];
+}
+
 function buildConfigCheck(env: DoctorOptions["env"]): DoctorCheck {
   const provider = envText(env, "QLING_LLM_PROVIDER") || "unset";
   const model = envText(env, "QLING_LLM_MODEL") || "unset";
@@ -363,6 +413,7 @@ export async function buildDoctorReport(
       status: ollama.ok ? "pass" : "warn",
       detail: ollama.detail,
     },
+    ...buildPhase3FeatureChecks(env),
   ];
 
   return {

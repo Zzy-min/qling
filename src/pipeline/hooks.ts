@@ -207,6 +207,7 @@ export const PLAN_MODE_DENY_TOOLS = [
   "bash",
   "subtask",
   "browser_fetch",
+  "browser_act",
 ] as const;
 
 export class HookManager {

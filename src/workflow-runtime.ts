@@ -6,7 +6,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { existsSync } from "fs";
-import { WorkflowDefinition, WorkflowCheckpoint, WorkflowState } from "./workflow-types.js";
+import { WorkflowDefinition, WorkflowCheckpoint } from "./workflow-types.js";
 import { Message, ToolCall, ToolResult } from "./types.js";
 
 export class WorkflowRuntime {
@@ -34,6 +34,7 @@ export class WorkflowRuntime {
     this.currentCheckpoint = {
       runId,
       workflowId: workflow.id,
+      workflowDefinition: workflow,
       sessionId,
       status: "running",
       currentState: workflow.initialState,
@@ -52,15 +53,23 @@ export class WorkflowRuntime {
    * 从 Checkpoint 恢复
    */
   async resume(runId: string): Promise<WorkflowCheckpoint> {
+    if (!/^[A-Za-z0-9_-]+$/.test(runId)) {
+      throw new Error(`Invalid workflow runId: ${runId}`);
+    }
     const cpPath = this.getCheckpointPath(runId);
     if (!existsSync(cpPath)) {
       throw new Error(`Checkpoint not found for runId: ${runId}`);
     }
 
     const raw = await fs.readFile(cpPath, "utf-8");
-    this.currentCheckpoint = JSON.parse(raw) as WorkflowCheckpoint;
-
-    // TODO: 这里需要加载对应的 WorkflowDefinition（可能需要持久化存储定义）
+    const checkpoint = JSON.parse(raw) as WorkflowCheckpoint;
+    if (!checkpoint.workflowDefinition || checkpoint.workflowDefinition.id !== checkpoint.workflowId) {
+      throw new Error(
+        `Checkpoint ${runId} cannot be resumed: workflow definition is missing or inconsistent`
+      );
+    }
+    this.workflow = checkpoint.workflowDefinition;
+    this.currentCheckpoint = checkpoint;
 
     this.currentCheckpoint.status = "running";
     this.currentCheckpoint.updatedAt = Date.now();

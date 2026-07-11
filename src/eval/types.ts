@@ -10,11 +10,18 @@ export interface EvalTaskContext {
   env: NodeJS.ProcessEnv;
 }
 
+export interface EvalTaskOutcome {
+  ok: boolean;
+  detail: string;
+  /** 显式跳过（如无 API key）；不计入 fail */
+  skip?: boolean;
+}
+
 export interface EvalTask {
   id: string;
   title: string;
-  /** 纯本地、无网络、无真实 LLM */
-  run: (ctx: EvalTaskContext) => Promise<{ ok: boolean; detail: string }>;
+  /** 默认本地 smoke；可选任务可 skip */
+  run: (ctx: EvalTaskContext) => Promise<EvalTaskOutcome>;
 }
 
 export interface EvalTaskResult {

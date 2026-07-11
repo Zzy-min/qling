@@ -30,3 +30,21 @@ test("tool registry: includes subtask tool in static layer", () => {
   const names = tools.map((t) => t.name);
   assert.equal(names.includes("subtask"), true);
 });
+
+test("tool registry: includes browser_act in static layer", () => {
+  const tools = buildToolRegistry();
+  const names = tools.map((t) => t.name);
+  assert.equal(names.includes("browser_act"), true);
+});
+
+test("tool registry: includes code_symbols in static layer", () => {
+  const tools = buildToolRegistry();
+  const names = tools.map((t) => t.name);
+  assert.equal(names.includes("code_symbols"), true);
+});
+
+test("tool registry: includes lsp in static layer", () => {
+  const tools = buildToolRegistry();
+  const names = tools.map((t) => t.name);
+  assert.equal(names.includes("lsp"), true);
+});

@@ -146,9 +146,9 @@ opencli xiaohongshu download "<完整笔记URL或xhslink>" --output ./xiaohongsh
 
 **正确流程：**
 
-1. `search` 或 `feed` 拿列表  
-2. 从结果 JSON 取 `url`（含 `xsec_token`）  
-3. 再 `note` / `comments` / `download` 用该完整 url  
+1. `search` 或 `feed` 拿列表
+2. 从结果 JSON 取 `url`（含 `xsec_token`）
+3. 再 `note` / `comments` / `download` 用该完整 url
 
 禁止：跳过 search、手编 explore 链接且不带 token；禁止 `url_fetch` 打开小红书页。
 
@@ -187,19 +187,22 @@ opencli browser mysess eval "document.title"
 
 ## 7. 失败诊断清单
 
-1. `opencli doctor` — Daemon / Extension 是否 OK  
-2. `opencli <site> whoami -f json` — 是否登录  
-3. `opencli <site> --help` — 命令是否存在、参数是否正确  
-4. 若仍是反爬页 — 换站点适配器 API 命令，而不是加大 `url_fetch` 重试  
+1. `opencli doctor` — Daemon / Extension 是否 OK
+2. `opencli <site> whoami -f json` — 是否登录
+3. `opencli <site> --help` — 命令是否存在、参数是否正确
+4. 若仍是反爬页 — 换站点适配器 API 命令，而不是加大 `url_fetch` 重试
 
 ## 8. 与轻灵其他工具的分工
 
-| 工具 | 用途 |
-|------|------|
-| **opencli**（via bash） | 平台结构化数据、登录会话、站点适配器 |
-| **url_fetch** | 白名单内简单 HTTP API / 静态资源 |
-| **browser_fetch** | 文档站等需 JS 渲染、弱反爬页面摘要 |
-| **skill opencli** | 本手册（调用平台前加载） |
+| 工具 | 默认 | 用途 |
+|------|------|------|
+| **opencli**（via bash） | 本机 CLI | 平台结构化数据、登录会话、站点适配器 |
+| **url_fetch** | 开 | 白名单内简单 HTTP API / 静态资源 |
+| **browser_fetch** | 开 | 文档站等需 JS 渲染、弱反爬页面摘要 |
+| **browser_act** | **关** | 有限点击/填表（`QLING_BROWSER_ACT=1`）；强反爬仍用 opencli |
+| **skill opencli** | — | 本手册（调用平台前加载） |
+
+完整路由：包内 `docs/web-routing.md`。
 
 ## 9. 最短决策树
 
@@ -211,6 +214,9 @@ opencli browser mysess eval "document.title"
 │   → whoami/login → 业务命令 -f json
 ├─ 是普通文档/API（无强反爬）
 │   → url_fetch 或 browser_fetch
-└─ 需要本机已登录浏览器交互
-    → opencli browser <session> …
+├─ 需要本机已登录浏览器交互
+│   → opencli browser <session> …（推荐）
+│   → 或 browser_act（须 QLING_BROWSER_ACT=1，同进程 session 跨步保活）
+└─ 不确定
+    → opencli doctor / list，不要盲目 url_fetch
 ```

@@ -405,10 +405,16 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 - 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
 - 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)
 - Skills：见 [docs/skills.md](docs/skills.md)
+- 网页/平台路由：见 [docs/web-routing.md](docs/web-routing.md)
 - SDK：见 [docs/sdk.md](docs/sdk.md)
-- 本地评测：`npm run eval:smoke`
+- 本地评测：`npm run eval:smoke`（无 LLM）；可选 `QLING_EVAL_LLM=1 npm run eval:llm`
+- Phase 4 路线：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
+- 可选 TS 语义：`QLING_LSP=1` 后使用工具 `lsp`（definition/hover/…）
+- 模块分层：`docs/architecture-layers.md`；`npm run dep:layers`
 - 英文说明：见 [README.en.md](README.en.md)
-- 竞品对标与提升路线：见 `docs/superpowers/specs/20260709-agent-cli-competitive-analysis-and-v1-roadmap-spec.md`
+- 竞品对标与 1.0 路线：见 `docs/superpowers/specs/20260709-agent-cli-competitive-analysis-and-v1-roadmap-spec.md`
+- **2026-07 生态续调研与 Phase 3 路线**：见 `docs/superpowers/specs/20260710-agent-ecosystem-refresh-and-phase3-roadmap-spec.md`
+- Phase 3 实施计划：见 `docs/superpowers/plans/20260710-phase3-harness-lean-skills-orchestration-plan.md`
 - 设计 / 实施文档：见 `docs/superpowers/specs/`、`docs/superpowers/plans/`
 
 ## License

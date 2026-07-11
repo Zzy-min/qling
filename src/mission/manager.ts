@@ -7,6 +7,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { existsSync } from "fs";
 import { Mission, MissionStatus, MissionEvent } from "./types.js";
+import { notifyMissionLog, notifyMissionProgress } from "./progress-notify.js";
 
 const TERMINAL_STATUSES = new Set<MissionStatus>(["succeeded", "failed", "canceled"]);
 const PAUSABLE_STATUSES = new Set<MissionStatus>(["queued", "running", "blocked"]);
@@ -95,6 +96,8 @@ export class MissionManager {
         ...meta,
       },
     });
+    // Phase 3.5: 可选 Telegram/Slack 进度推送（失败不阻断使命）
+    void notifyMissionProgress(mission, previousStatus, status).catch(() => undefined);
     return mission;
   }
 
@@ -141,6 +144,8 @@ export class MissionManager {
         ...meta,
       },
     });
+    // 里程碑日志可选推送（QLING_MISSION_NOTIFY_LOGS，默认 milestone）
+    void notifyMissionLog(mission, message).catch(() => undefined);
   }
 
   async pauseMission(id: string, reason?: string): Promise<Mission> {

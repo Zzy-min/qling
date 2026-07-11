@@ -79,6 +79,31 @@ test("Qling v0.3 - Workflow & Checkpoints", async () => {
     const updatedCp = runtime.getCheckpoint();
     assert.strictEqual(updatedCp.currentState, "end");
     assert.strictEqual(updatedCp.status, "completed");
+
+    const resumedRuntime = new WorkflowRuntime(join(dir, "workflows"));
+    await resumedRuntime.init();
+    const resumed = await resumedRuntime.resume(cp.runId);
+    assert.strictEqual(resumed.currentState, "end");
+    await resumedRuntime.transitionTo("start", "Reopen");
+    assert.strictEqual(resumedRuntime.getCheckpoint().currentState, "start");
+    await resumedRuntime.transitionTo("end", "Finish again");
+    assert.strictEqual(resumedRuntime.getCheckpoint().status, "completed");
+
+    await assert.rejects(
+      () => resumedRuntime.resume("../outside"),
+      /invalid workflow runId/i
+    );
+
+    const legacy = { ...resumedRuntime.getCheckpoint() };
+    delete legacy.workflowDefinition;
+    await writeFile(
+      join(dir, "workflows", "legacy.checkpoint.json"),
+      JSON.stringify({ ...legacy, runId: "legacy" })
+    );
+    await assert.rejects(
+      () => resumedRuntime.resume("legacy"),
+      /workflow definition is missing or inconsistent/i
+    );
   });
 });
 

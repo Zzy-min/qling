@@ -12,6 +12,10 @@ import { fileURLToPath } from "url";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { toolError, toolSuccess } from "./error-utils.js";
 import { listSkills, searchSkills, parseSkillFile } from "../skills/registry.js";
+import {
+  formatSkillScanBlockMessage,
+  scanSkillContent,
+} from "../skills/security-scan.js";
 
 /** 包根目录（dist/tools/skill.js → 仓库或 npm 包根，含 skills/） */
 export function getPackageRootForSkills(): string {
@@ -198,6 +202,13 @@ export async function runSkill(args: { name?: string; query?: string }): Promise
 
   try {
     const content = await readFile(filePath, "utf-8");
+    const scan = scanSkillContent(content);
+    if (!scan.ok) {
+      return toolError(
+        "SKILL_SECURITY_BLOCKED",
+        formatSkillScanBlockMessage(name, scan)
+      );
+    }
     const lines = content.split("\n");
     const startIdx = lines.findIndex((l) => l.trim() === "---");
     const endIdx = startIdx >= 0 ? lines.findIndex((l, i) => i > startIdx && l.trim() === "---") : -1;
@@ -205,7 +216,14 @@ export async function runSkill(args: { name?: string; query?: string }): Promise
       startIdx >= 0 && endIdx >= 0
         ? lines.slice(endIdx + 1).join("\n").trim()
         : content;
-    return toolSuccess(`📖 Skill: ${name}\n\n${body}`);
+    let prefix = `📖 Skill: ${name}\n\n`;
+    if (scan.findings.length > 0 && scan.mode === "warn") {
+      prefix +=
+        `⚠️ 安全扫描警告（仍加载）:\n` +
+        scan.findings.map((f) => `  - [${f.severity}] ${f.rule}: ${f.detail}`).join("\n") +
+        "\n\n";
+    }
+    return toolSuccess(`${prefix}${body}`);
   } catch (err) {
     return toolError("SKILL_READ_FAILED", `failed to read skill: ${(err as Error).message}`);
   }

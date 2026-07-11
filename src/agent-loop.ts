@@ -55,9 +55,22 @@ import {
   isLoopbackEndpoint,
 } from "./providers/presets.js";
 import { maybeAutoCommitAfterWrite } from "./git/auto-commit.js";
+import {
+  prepareToolResultContent,
+  resolveToolResultMaxChars,
+} from "./context-tool-hygiene.js";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_QLING_DIR = path.join(HOME_DIR, ".qling");
+const EXPLICIT_ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
+
+export function resolveMemoryDreamLlmEnabled(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): boolean {
+  return EXPLICIT_ENABLE_VALUES.has(
+    String(env.QLING_MEMORY_DREAM_LLM_ENABLED ?? "").trim().toLowerCase()
+  );
+}
 
 /** 本地 loopback / ollama 允许空 key，用占位符满足 OpenAI 兼容 Authorization 头 */
 function resolveSessionApiKey(raw: string, endpoint: string, provider: string): string {
@@ -311,7 +324,9 @@ export class AgentLoop extends AgentEventEmitter {
     } catch {
       // ignore parse errors
     }
-    this.discoveryRegistry = new DiscoveryRegistry(discoverySources);
+    this.discoveryRegistry = new DiscoveryRegistry(discoverySources, {
+      guardConfig: this.guardConfig,
+    });
     this.missionManager = new MissionManager(this.runtimeRootDir);
 
     // HTTP client + retry interceptor
@@ -365,9 +380,14 @@ export class AgentLoop extends AgentEventEmitter {
       console.error("🔍 正在同步动态插件与技能...");
       await this.discoveryRegistry.syncAll();
       const discoveredTools = this.discoveryRegistry.getDiscoveredTools();
-      if (discoveredTools.length > 0) {
-        this.config.tools = [...this.config.tools, ...discoveredTools];
-        console.error(`📦 已发现 ${discoveredTools.length} 个动态工具`);
+      const executableTools = this.discoveryRegistry.getExecutableTools();
+      if (executableTools.length > 0) {
+        this.config.tools = [...this.config.tools, ...executableTools];
+      }
+      if (discoveredTools.length > executableTools.length) {
+        console.error(
+          `📦 已发现 ${discoveredTools.length} 个工具定义；未绑定执行器，仅作为本地元数据展示`
+        );
       }
     }
 
@@ -382,7 +402,7 @@ export class AgentLoop extends AgentEventEmitter {
       Number.isFinite(projectionIntervalRaw) && projectionIntervalRaw > 0
         ? projectionIntervalRaw
         : 5000;
-    const dreamLLM = process.env.QLING_MEMORY_DREAM_LLM_ENABLED !== "false";
+    const dreamLLM = resolveMemoryDreamLlmEnabled();
     const dreamThresholdRaw = Number(process.env.QLING_MEMORY_DREAM_TURN_THRESHOLD ?? "24");
     const dreamThreshold =
       Number.isFinite(dreamThresholdRaw) && dreamThresholdRaw > 0
@@ -868,9 +888,14 @@ export class AgentLoop extends AgentEventEmitter {
           await this.workflowRuntime.addToolResult(result);
         }
 
+        // Phase 3.0: 工具结果入上下文前卫生处理（默认折叠超长 output）
+        const rawToolContent = JSON.stringify(result);
+        const hygienicContent = prepareToolResultContent(rawToolContent, {
+          maxChars: resolveToolResultMaxChars(),
+        });
         this.messages.push({
           role: "tool",
-          content: JSON.stringify(result),
+          content: hygienicContent,
           tool_call_id: tc.id,
         });
       }

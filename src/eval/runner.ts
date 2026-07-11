@@ -28,10 +28,15 @@ export async function runEvalSuite(options: RunEvalOptions = {}): Promise<EvalRe
           workspaceDir,
           env: process.env,
         });
+        const status = outcome.skip
+          ? "skip"
+          : outcome.ok
+            ? "pass"
+            : "fail";
         results.push({
           id: task.id,
           title: task.title,
-          status: outcome.ok ? "pass" : "fail",
+          status,
           detail: outcome.detail,
           durationMs: Date.now() - t0,
         });
@@ -65,10 +70,14 @@ export async function runEvalSuite(options: RunEvalOptions = {}): Promise<EvalRe
   };
 }
 
-export function formatEvalReport(report: EvalReport): string[] {
+export function formatEvalReport(
+  report: EvalReport,
+  options: { title?: string } = {}
+): string[] {
+  const title = options.title ?? "🧪 Qling eval:smoke";
   const lines = [
     "",
-    "🧪 Qling eval:smoke",
+    title,
     "-----------------------------------------",
     `summary: pass=${report.pass} fail=${report.fail} skip=${report.skip} total=${report.total} (${report.durationMs}ms)`,
   ];
@@ -80,7 +89,17 @@ export function formatEvalReport(report: EvalReport): string[] {
     }
   }
   lines.push("-----------------------------------------");
-  lines.push(report.fail === 0 ? "✅ eval:smoke passed" : "❌ eval:smoke failed");
+  if (report.fail === 0) {
+    if (report.skip > 0 && report.pass === 0) {
+      lines.push("✅ eval finished (all skipped)");
+    } else if (/smoke/i.test(title)) {
+      lines.push("✅ eval:smoke passed");
+    } else {
+      lines.push("✅ eval passed");
+    }
+  } else {
+    lines.push( /smoke/i.test(title) ? "❌ eval:smoke failed" : "❌ eval failed");
+  }
   lines.push("");
   return lines;
 }

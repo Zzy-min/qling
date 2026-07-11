@@ -107,6 +107,9 @@ export function buildRestrictionsSection(): PromptSection {
 - bash：执行命令、安装、构建、运行；调用本机 opencli 也用 bash
 - read：查看文件内容后再决定怎么写
 - write：创建或覆盖文件
+- search：内容/文件名搜索
+- code_symbols：按符号名检索函数/类/类型（轻量静态提取）
+- lsp：可选 TS 语义查询（definition/hover/references；须 QLING_LSP=1）
 - todo：规划步骤、跟踪进度
 - skill：遇到不熟悉的工具/API/框架时，用 skill 加载对应知识文件
 - **调用外部工具前必须做关联分析**（任务目标 ↔ 工具能力 ↔ 参数/站点）；分析通过后再调用
@@ -123,6 +126,8 @@ export function buildRestrictionsSection(): PromptSection {
 - 小红书：用 opencli xiaohongshu；note/comments/download 必须传 search/feed 返回的「含 xsec_token 的完整 URL」，禁止只传裸 note-id
 - 不确定子命令时：opencli list -f json 或 opencli <site> --help；需登录时先 opencli <site> whoami / login
 - browser_fetch 适合文档站，不保证能过抖音/小红书风控；平台结构化数据优先 opencli 站点适配器
+- browser_act（点击/填表）默认关闭；仅当 QLING_BROWSER_ACT=1 且非强反爬场景；优先 opencli browser <session>
+- 外联路由详见包内 docs/web-routing.md；先选对通道再调用
 
 【安全限制】
 - 危险命令（rm -rf /、格式化磁盘等）会被自动拒绝
@@ -186,11 +191,22 @@ export function buildSkillsSection(skills: SkillMeta[]): PromptSection {
       cached: false,
     };
   }
-  const lines = skills.map((s) => `- ${s.name}: ${s.description || "(无描述)"}`);
+  // Progressive skills：system 仅索引（name/desc/tags/triggers），禁止注入正文
+  const DESC_MAX = 160;
+  const lines = skills.map((s) => {
+    let desc = (s.description || "(无描述)").replace(/\s+/g, " ").trim();
+    if (desc.length > DESC_MAX) desc = desc.slice(0, DESC_MAX - 1) + "…";
+    const tags = s.tags?.length ? ` tags=[${s.tags.join(",")}]` : "";
+    const triggers = s.triggers?.length ? ` triggers=[${s.triggers.join(",")}]` : "";
+    return `- ${s.name}: ${desc}${tags}${triggers}`;
+  });
   return {
     id: SECTION_IDS.SKILLS,
     title: "可用技能",
-    content: `【可用技能】（用 skill name="xxx" 加载）\n${lines.join("\n")}`,
+    content:
+      `【可用技能 · 渐进索引】仅名称与描述；**不要假设已掌握正文**。` +
+      `需要步骤时必须 skill name="<名>" 或 /skill <名> 加载全文。\n` +
+      lines.join("\n"),
     cacheable: false,
     dynamic: true,
     cached: false,

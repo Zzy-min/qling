@@ -104,6 +104,7 @@ export function parseFrontmatter(raw: string, filePath: string): SkillMeta {
     name: fallbackName,
     description: "",
     tags: [],
+    triggers: [],
     path: filePath,
   };
 
@@ -119,10 +120,19 @@ export function parseFrontmatter(raw: string, filePath: string): SkillMeta {
     const parsed = YAML.parse(yamlBlock) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") return fallback;
 
+    const triggersRaw = parsed.triggers ?? parsed.trigger;
+    let triggers: string[] = [];
+    if (Array.isArray(triggersRaw)) {
+      triggers = triggersRaw.map(String).filter(Boolean);
+    } else if (typeof triggersRaw === "string" && triggersRaw.trim()) {
+      triggers = triggersRaw.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    }
+
     return {
       name: typeof parsed.name === "string" && parsed.name ? parsed.name : fallbackName,
       description: typeof parsed.description === "string" ? parsed.description : "",
       tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
+      triggers,
       path: filePath,
     };
   } catch {

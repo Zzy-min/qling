@@ -45,6 +45,8 @@ export interface WorkflowDefinition {
 export interface WorkflowCheckpoint {
   runId: string;
   workflowId: string;
+  /** Definition required to restore state transitions after process restart. */
+  workflowDefinition?: WorkflowDefinition;
   sessionId: string;
   status: "running" | "paused" | "completed" | "failed" | "awaiting_approval";
   currentState: string;

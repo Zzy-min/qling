@@ -1,5 +1,95 @@
 # Changelog
 
+## Unreleased
+
+### Phase 3.0 — Harness Lean（续调研落地）
+
+- **工具结果上下文卫生**：入会话前折叠超长 tool output（默认 `QLING_TOOL_RESULT_MAX_CHARS=6000`，`0` 关闭）；保留头尾与元数据。
+- **`/context` Harness 层**：展示 history / 工具输出 / 其他的本地字符占比（非 provider token）。
+- 模块：`src/context-tool-hygiene.ts`。
+
+### Phase 3.1 — Progressive Skills + 安全扫描
+
+- **渐进索引**：system skills 节仅 name/description/tags/triggers；正文仍 `skill` 按需加载。
+- **静态安全扫描**：`QLING_SKILL_SCAN=on|warn|off`；critical/high 默认拒绝加载。
+- **生命周期 skills**：`lifecycle-spec|plan|build|test|review|ship`（中文原创）。
+- 文档：`docs/skills.md` 更新；生态续调研 spec/plan：
+  - `docs/superpowers/specs/20260710-agent-ecosystem-refresh-and-phase3-roadmap-spec.md`
+  - `docs/superpowers/plans/20260710-phase3-harness-lean-skills-orchestration-plan.md`
+
+### Phase 3.2 — 角色化 Sub-agent
+
+- **`role=explore|implement|review`**：工具白名单隔离；始终禁止嵌套 `subtask`。
+- **回传契约**：父上下文只收摘要 / files_touched / evidence，不整段上浮子会话。
+- **`/agents`**：默认展示角色说明 + mission；`/agents roles` / `/agents missions` 可分看。
+- 模块：`src/agents/roles.ts`；`src/agent/subtask.ts` / `src/tools/subtask.ts` 接线。
+
+### Phase 3.4 — Eval harness 指标（smoke 增量）
+
+- `eval:smoke` 新增：工具输出折叠、explore 只读、回传契约、skill 扫描、角色别名等本地任务。
+
+### Phase 3.3 — 浏览器 / 外联路由
+
+- **`docs/web-routing.md`**：opencli / url_fetch / browser_fetch / browser_act 决策树。
+- **`browser_act` 工具**：有限 goto/click/type/wait_for/extract/press；**默认关闭**（`QLING_BROWSER_ACT=1` 启用）；共用网络 Guard；Plan Mode 禁止。
+- opencli skill 与 system Restrictions 同步分工说明。
+
+### Phase 3.3.1 — browser_act 跨步会话
+
+- **`session` 保活**：`open` / `close` / `status` + 同 session 上 click/type/extract。
+- 空闲回收：`QLING_BROWSER_ACT_IDLE_TTL_MS`（默认 10min）；上限 `QLING_BROWSER_ACT_MAX_SESSIONS`（默认 3）。
+- 模块：`src/tools/browser-act-session.ts`。
+
+### Phase 3.2.1 — explore 并行（默认关）
+
+- `subtask tasks=["…","…"]` + `role=explore|review`，须 `QLING_SUBTASK_PARALLEL=1`。
+- implement 禁止并行；上限 `QLING_SUBTASK_PARALLEL_MAX`（默认 3）。
+- 模块：`src/agent/subtask-parallel.ts`。
+
+### Phase 3.5 — Mission 进度通知
+
+- 使命状态变更可推送 Telegram / Slack（需已配置 channel token + chat/channel id）。
+- `QLING_MISSION_NOTIFY=off` 可关；`QLING_MISSION_TELEGRAM_CHAT_ID` / `QLING_MISSION_SLACK_CHANNEL_ID` 可选覆盖。
+
+### Phase 3.5.1 — 通知结构化卡片
+
+- 默认 `QLING_MISSION_NOTIFY_STYLE=rich`：Telegram HTML、Slack Block Kit；`plain` 回退纯文本。
+- 状态 emoji 前缀；失败带错误摘要。
+
+### Phase 3.5.2 — 使命日志推送 + Doctor Phase3
+
+- **日志推送**：`appendLog` 可推送通道；`QLING_MISSION_NOTIFY_LOGS=off|milestone|all`（默认 milestone）。
+- **`qling doctor`**：展示 browser_act / subtask_parallel / mission_notify 开关摘要。
+- **可选 e2e**：`QLING_BROWSER_ACT_E2E=1` + `QLING_BROWSER_ACT=1` 跑真实 Playwright 冒烟（默认 skip）。
+
+### Phase 4.0–4.2 — 路线 + LLM eval + code_symbols
+
+- **路线**：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
+- **可选 LLM 评测**：`npm run eval:llm`（需 `QLING_EVAL_LLM=1` + API key；默认 skip，不进 ci:check）
+- **工具 `code_symbols`**：工作区符号名检索（静态提取，非完整 LSP）；explore/implement/review 可用
+- eval:smoke 增加 code_symbols 本地任务
+
+### Phase 4.3 — 可选 TypeScript 语义查询（lsp）
+
+- **工具 `lsp`**：`definition` / `hover` / `references` / `document_symbols`
+- **默认关闭**：`QLING_LSP=1` 启用；动态加载 `typescript`（缺包时明确报错）
+- 进程内 LanguageService（非 stdio 多语言 LSP 协议）；`doctor` 展示 phase4:lsp
+- 通用符号扫描仍用 `code_symbols`
+
+### Phase 4.4 — 模块分层与包边界
+
+- **文档**：`docs/architecture-layers.md`（目标分层、禁止边、拆包门槛）
+- **扫描**：`npm run dep:layers` → `scripts/dep-layers.mjs`（`--json` / `--write-doc` / `--strict`）
+- **诚实债务**：记录 adapters→cli、eval/runtime 等反向依赖；strict 暂不进 ci:check
+
+### 审计收尾 — 本地优先与恢复边界
+
+- Memory Dream LLM 改为仅在 `QLING_MEMORY_DREAM_LLM_ENABLED=true|1|on|yes` 时启用，SDK 直接构造默认不额外调用模型。
+- 远程 discovery 默认拒绝未签名清单，并接入 network Guard、禁止自动重定向、限制 1 MiB 响应；需审批 source 在无审批回调时 fail-closed。
+- Discovery 工具清单与运行时可执行工具分离，未绑定 handler/MCP transport 的 metadata 不再向模型宣称可调用。
+- Workflow checkpoint 持久化状态机定义，恢复后迁移继续有效；非法 `runId` 和缺失定义的旧 checkpoint 明确拒绝。
+- `browser_act` 在创建会话前完成 URL Guard 检查，拒绝目标不再留下空白 Playwright 会话。
+
 ## v1.0.0 (2026-07-09)
 
 ### opencli 小红书路由补强
@@ -10,9 +100,9 @@
 ### Agent 任务执行基本规则
 
 - 常驻 system prompt（Workflow / Restrictions / Tone）固化三条规则：
-  1. 调用外部工具前先做工具与任务的关联分析  
-  2. 成功后总结正确可复现流程  
-  3. 单流程失败或未准确执行时实事求是承认  
+  1. 调用外部工具前先做工具与任务的关联分析
+  2. 成功后总结正确可复现流程
+  3. 单流程失败或未准确执行时实事求是承认
 
 ### Agent 路由（opencli）
 

@@ -7,6 +7,10 @@ import {
   formatProviderTokenLine,
   type TokenUsageSource,
 } from "./token-usage.js";
+import {
+  estimateContextLayers,
+  type ContextLayerEstimate,
+} from "./context-tool-hygiene.js";
 
 export interface ContextReport {
   sessionId: string;
@@ -19,6 +23,8 @@ export interface ContextReport {
   tokenSourceDescription: string;
   recommendation: string;
   compactions: number;
+  /** 本地字符层估计（非 provider token） */
+  layers: ContextLayerEstimate | null;
   workspaceDir: string;
   stateDir: string;
   cacheDir: string;
@@ -113,6 +119,9 @@ export async function buildContextReport(
   const tokenSource = normalizeTokenSource(stats.tokenSource);
   const messageCount = Array.isArray(messages) ? messages.length : Number(stats.messageCount ?? 0);
   const compactions = Number(stats.compactions ?? stats.compactionCount ?? 0);
+  const layers = Array.isArray(messages) && messages.length > 0
+    ? estimateContextLayers(messages)
+    : null;
 
   return {
     sessionId: stats.sessionId || agentLoop.getSessionId?.() || "-",
@@ -125,6 +134,7 @@ export async function buildContextReport(
     tokenSourceDescription: describeTokenSource(tokenSource),
     recommendation: describeRecommendation({ tokenSource, compactions, messageCount }),
     compactions,
+    layers,
     workspaceDir: context.workspaceDir || agentLoop.getWorkspaceDir?.() || process.cwd(),
     stateDir,
     cacheDir,
@@ -150,6 +160,7 @@ export async function buildLocalContextReport(options: LocalContextReportOptions
     tokenSourceDescription: describeTokenSource(tokenSource),
     recommendation: describeRecommendation({ tokenSource, compactions: 0, messageCount: 0 }),
     compactions: 0,
+    layers: null,
     workspaceDir: options.workspaceDir,
     stateDir: options.stateDir,
     cacheDir: options.cacheDir || join(options.stateDir, "cache"),
@@ -188,6 +199,21 @@ export function formatContextReport(report: ContextReport): string[] {
           ["Token 说明", report.tokenSourceDescription],
           ["建议", report.recommendation],
         ],
+      },
+      {
+        heading: "Harness 层（本地字符估计）",
+        rows: report.layers
+          ? [
+              ["对话 history", `${report.layers.historyChars.toLocaleString()} 字符 (${report.layers.historyPct}%)`],
+              ["工具输出", `${report.layers.toolOutputChars.toLocaleString()} 字符 (${report.layers.toolOutputPct}%)`],
+              ["其他", `${report.layers.otherChars.toLocaleString()} 字符 (${report.layers.otherPct}%)`],
+              ["合计字符", report.layers.totalChars.toLocaleString()],
+              ["工具消息数", report.layers.toolMessageCount],
+              ["说明", "非 provider token；用于观察 harness 膨胀。超长工具结果默认折叠（QLING_TOOL_RESULT_MAX_CHARS）。"],
+            ]
+          : [
+              ["状态", "当前无会话消息快照"],
+            ],
       },
       {
         heading: "本地路径",

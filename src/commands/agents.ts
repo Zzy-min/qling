@@ -5,6 +5,7 @@ import { renderAgentsView } from "../cli/mission-views.js";
 import type { Mission } from "../mission/types.js";
 import { SlashCommand } from "./types.js";
 import type { SlashCommandContext } from "./runtime.js";
+import { formatRolesHelp } from "../agents/roles.js";
 
 function resolveStateDir(context: SlashCommandContext): string {
   const loop = context.agentLoop as Record<string, any>;
@@ -40,9 +41,22 @@ async function listLocalMissionsReadOnly(stateDir: string): Promise<Mission[]> {
 export const agentsCommand: SlashCommand = {
   name: "/agents",
   aliases: ["/代理"],
-  description: "查看本地后台 mission 分组视图",
-  usage: "/agents",
-  execute: async (_args, context) => {
+  description: "查看子代理角色说明与本地后台 mission 分组",
+  usage: "/agents [roles|missions]",
+  execute: async (args, context) => {
+    const sub = String(args ?? "").trim().toLowerCase();
+    if (sub === "roles" || sub === "角色" || sub === "role") {
+      context.writeLine(formatRolesHelp());
+      return;
+    }
+    if (sub === "missions" || sub === "使命" || sub === "mission") {
+      const missions = await listLocalMissionsReadOnly(resolveStateDir(context));
+      context.writeLine(renderAgentsView(missions));
+      return;
+    }
+    // 默认：角色 + mission 摘要
+    context.writeLine(formatRolesHelp());
+    context.writeLine("");
     const missions = await listLocalMissionsReadOnly(resolveStateDir(context));
     context.writeLine(renderAgentsView(missions));
   },

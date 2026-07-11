@@ -28,6 +28,17 @@ test("package.json has npm publish metadata for Phase 1.4", async () => {
   assert.ok(pkg.files.includes("LICENSE"));
 });
 
+test("package lifecycle builds exactly once through prepare", async () => {
+  const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+
+  assert.equal(pkg.scripts?.prepare, "npm run build");
+  assert.equal(
+    pkg.scripts?.prepack,
+    undefined,
+    "prepack duplicates prepare and causes npm pack to clean/build dist twice"
+  );
+});
+
 test("install docs and packaging drafts exist", async () => {
   const install = await readFile(join(root, "docs", "install.md"), "utf8");
   assert.match(install, /bootstrap/);

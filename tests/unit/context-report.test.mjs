@@ -62,6 +62,9 @@ test("context report includes local session statistics and paths", async () => {
   assert.match(report.sessionsDir, /sessions$/);
   assert.equal("maxTokens" in report, false);
   assert.equal("tokenUsagePercent" in report, false);
+  assert.ok(report.layers);
+  assert.equal(report.layers.messageCount, 2);
+  assert.ok(report.layers.historyChars > 0);
 });
 
 test("context report handles missing saved sessions", async () => {
@@ -80,6 +83,7 @@ test("context report formatter is readable and local-first", async () => {
   assert.match(text, /轻灵 · 本地上下文/);
   assert.match(text, /会话/);
   assert.match(text, /Token（官方 usage）/);
+  assert.match(text, /Harness 层|工具输出|本地字符/);
   assert.match(text, /本地路径/);
   assert.match(text, /session-test/);
   assert.match(text, /Token 来源\s*: provider/);

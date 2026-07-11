@@ -7,15 +7,62 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { existsSync } from "fs";
 import axios from "axios";
-import { DiscoveryManifest, DiscoverySource, DiscoveredItem } from "./discovery-types.js";
-import { ToolDefinition } from "./types.js";
+import type { DiscoveryManifest, DiscoverySource, DiscoveredItem } from "./discovery-types.js";
+import type { ToolDefinition } from "./types.js";
+import { guardConfigFromEnv, type GuardConfig } from "./config.js";
+import { appendGuardAudit, checkUrlFetchPolicy } from "./guard.js";
+
+export interface DiscoveryRegistryOptions {
+  allowUnsigned?: boolean;
+  guardConfig?: GuardConfig;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}
+
+const ENABLED_VALUES = new Set(["1", "true", "on", "yes"]);
+
+function isExplicitlyEnabled(raw: unknown): boolean {
+  return ENABLED_VALUES.has(String(raw ?? "").trim().toLowerCase());
+}
+
+function assertValidManifest(value: unknown): asserts value is DiscoveryManifest {
+  if (!value || typeof value !== "object") {
+    throw new Error("manifest must be an object");
+  }
+  const manifest = value as Partial<DiscoveryManifest>;
+  for (const key of ["id", "name", "version"] as const) {
+    if (typeof manifest[key] !== "string" || !manifest[key]!.trim()) {
+      throw new Error(`manifest.${key} must be a non-empty string`);
+    }
+  }
+  if (!new Set(["skill", "mcp", "bundle"]).has(String(manifest.type))) {
+    throw new Error("manifest.type must be skill, mcp, or bundle");
+  }
+  if (manifest.tools !== undefined) {
+    if (!Array.isArray(manifest.tools)) {
+      throw new Error("manifest.tools must be an array");
+    }
+    for (const tool of manifest.tools) {
+      if (!tool || typeof tool !== "object" || typeof tool.name !== "string" || !tool.name.trim()) {
+        throw new Error("manifest tool name must be a non-empty string");
+      }
+    }
+  }
+}
 
 export class DiscoveryRegistry {
   private items: Map<string, DiscoveredItem> = new Map();
   private sources: DiscoverySource[] = [];
+  private allowUnsigned: boolean;
+  private guardConfig: GuardConfig;
+  private env: NodeJS.ProcessEnv | Record<string, string | undefined>;
 
-  constructor(sources: DiscoverySource[] = []) {
+  constructor(sources: DiscoverySource[] = [], options: DiscoveryRegistryOptions = {}) {
     this.sources = sources;
+    this.env = options.env ?? process.env;
+    this.allowUnsigned =
+      options.allowUnsigned ?? isExplicitlyEnabled(this.env.QLING_DISCOVERY_ALLOW_UNSIGNED);
+    this.guardConfig =
+      options.guardConfig ?? guardConfigFromEnv(this.env as NodeJS.ProcessEnv);
   }
 
   /**
@@ -31,6 +78,9 @@ export class DiscoveryRegistry {
    */
   async syncSource(source: DiscoverySource): Promise<void> {
     try {
+      if (source.requireApproval) {
+        throw new Error("source requires approval, but no discovery approval callback is configured");
+      }
       if (source.type === "local") {
         await this.syncLocal(source);
       } else {
@@ -63,9 +113,36 @@ export class DiscoveryRegistry {
 
   private async syncRemote(source: DiscoverySource): Promise<void> {
     try {
-      const resp = await axios.get(source.uri, { timeout: 10000 });
-      const manifest = resp.data as DiscoveryManifest;
-      // TODO: 签名校验
+      if (!this.allowUnsigned) {
+        throw new Error(
+          "unsigned remote discovery is disabled; set QLING_DISCOVERY_ALLOW_UNSIGNED=true only for a trusted source"
+        );
+      }
+      let target: URL;
+      try {
+        target = new URL(source.uri);
+      } catch {
+        throw new Error(`invalid remote manifest URL: ${source.uri}`);
+      }
+      const decision = await checkUrlFetchPolicy(target, this.guardConfig, this.env);
+      if (!decision.allowed) {
+        await appendGuardAudit(this.guardConfig, {
+          tool: "dynamic_discovery",
+          action: "deny",
+          category: decision.category,
+          target: target.toString(),
+          reason: decision.reason,
+        });
+        throw new Error(decision.reason ?? "network guard denied remote manifest");
+      }
+      const resp = await axios.get(source.uri, {
+        timeout: 10_000,
+        maxRedirects: 0,
+        maxContentLength: 1024 * 1024,
+        maxBodyLength: 1024 * 1024,
+      });
+      const manifest = resp.data;
+      assertValidManifest(manifest);
       this.registerItem(source.id, manifest);
     } catch (err) {
       throw new Error(`Remote fetch failed: ${(err as Error).message}`);
@@ -73,6 +150,7 @@ export class DiscoveryRegistry {
   }
 
   private registerItem(sourceId: string, manifest: DiscoveryManifest): void {
+    assertValidManifest(manifest);
     const id = manifest.id;
     this.items.set(id, {
       id,
@@ -94,6 +172,14 @@ export class DiscoveryRegistry {
       }
     }
     return tools;
+  }
+
+  /**
+   * Manifest tool entries are metadata only until an executable handler or
+   * MCP transport has been bound. Never advertise metadata-only tools to the model.
+   */
+  getExecutableTools(): ToolDefinition[] {
+    return [];
   }
 
   /**

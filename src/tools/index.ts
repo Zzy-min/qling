@@ -15,15 +15,48 @@ import { runUrlFetch, urlFetchTool } from "./url-fetch.js";
 import { runSubtask, subtaskTool } from "./subtask.js";
 import { runVisionAnalyze, visionAnalyzeTool } from "./vision-analyze.js";
 import { runBrowserFetch, browserFetchTool } from "./browser-fetch.js";
+import { runBrowserAct, browserActTool } from "./browser-act.js";
+import { runCodeSymbols, codeSymbolsTool } from "./code-symbols.js";
+import { runLsp, lspTool } from "./lsp.js";
 import { runPatch, patchTool } from "./patch.js";
 import { toolError } from "./error-utils.js";
 import { isMCPTool, parseMCPToolName } from "../mcp/bridge.js";
 import type { MCPRegistry } from "../mcp/registry.js";
 
-export { bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool, visionAnalyzeTool, browserFetchTool, patchTool };
+export {
+  bashTool,
+  readTool,
+  writeTool,
+  todoTool,
+  skillTool,
+  searchTool,
+  plannerTool,
+  urlFetchTool,
+  subtaskTool,
+  visionAnalyzeTool,
+  browserFetchTool,
+  browserActTool,
+  codeSymbolsTool,
+  lspTool,
+  patchTool,
+};
 
 export const ALL_TOOLS: ToolDefinition[] = [
-  bashTool, readTool, writeTool, todoTool, skillTool, searchTool, plannerTool, urlFetchTool, subtaskTool, visionAnalyzeTool, browserFetchTool, patchTool
+  bashTool,
+  readTool,
+  writeTool,
+  todoTool,
+  skillTool,
+  searchTool,
+  plannerTool,
+  urlFetchTool,
+  subtaskTool,
+  visionAnalyzeTool,
+  browserFetchTool,
+  browserActTool,
+  codeSymbolsTool,
+  lspTool,
+  patchTool,
 ];
 
 // Runtime MCP registry reference
@@ -69,6 +102,9 @@ const handlers: Record<string, ToolHandler> = {
   subtask: runSubtask as ToolHandler,
   vision_analyze: runVisionAnalyze as ToolHandler,
   browser_fetch: runBrowserFetch as ToolHandler,
+  browser_act: runBrowserAct as ToolHandler,
+  code_symbols: runCodeSymbols as ToolHandler,
+  lsp: runLsp as ToolHandler,
   patch: runPatch as ToolHandler,
 };
 

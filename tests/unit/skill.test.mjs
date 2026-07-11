@@ -4,7 +4,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,7 +32,17 @@ describe("parseFrontmatter", () => {
     assert.equal(meta.name, "docker");
     assert.equal(meta.description, "Docker commands");
     assert.deepEqual(meta.tags, ["devops", "container"]);
+    assert.deepEqual(meta.triggers, []);
     assert.equal(meta.path, "/test/docker.md");
+  });
+
+  it("parses triggers array and comma string", () => {
+    const raw = "---\nname: x\ndescription: d\ntriggers: [a, b]\n---\n\nBody";
+    const meta = parseFrontmatter(raw, "/test/x.md");
+    assert.deepEqual(meta.triggers, ["a", "b"]);
+    const raw2 = "---\nname: y\ntriggers: foo, bar\n---\n";
+    const meta2 = parseFrontmatter(raw2, "/test/y.md");
+    assert.deepEqual(meta2.triggers, ["foo", "bar"]);
   });
 
   it("uses filename as fallback name when frontmatter has no name", () => {
@@ -214,5 +224,13 @@ describe("runSkill", () => {
     const result = await runSkill({});
     assert.equal(result.is_error, true);
     assert.match(result.output, /SKILL_MISSING_NAME/);
+  });
+});
+
+describe("built-in opencli skill documentation", () => {
+  it("documents browser_act cross-step sessions accurately", async () => {
+    const content = await readFile(join(process.cwd(), "skills", "opencli", "SKILL.md"), "utf8");
+    assert.doesNotMatch(content, /browser_act（须 QLING_BROWSER_ACT=1，无跨步会话）/);
+    assert.match(content, /browser_act.*session.*保活|browser_act.*跨步会话/is);
   });
 });

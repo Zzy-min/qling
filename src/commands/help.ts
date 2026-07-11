@@ -29,7 +29,7 @@ export const HELP_LINES = [
   "/loop daemon [interval] [prompt] - 创建 daemon-backed durable loop",
   "/tasks [cancel <id>|clear] - 查看或取消当前 session 的 loop 任务",
   "/tasks daemon [cancel <id>|clear] - 查看或取消 daemon runner 的 loop 任务",
-  "/agents, /代理         - 查看本地后台 mission 分组视图",
+  "/agents, /代理         - 子代理角色说明 + 本地 mission 分组（roles|missions）",
   "/mission, /使命        - 查看或控制本地 mission",
   "/permissions [status|allow|deny|ask] - 查看或切换工具权限默认策略",
   "/permissions explain <tool> - 解释指定工具的本地权限决策",
