@@ -38,7 +38,7 @@ test("/verify command status/set/clear/run", async () => {
     await verifyCommand.execute(["status"], context);
     let joinedOut = outputs.join("\n");
     assert.match(joinedOut, /当前验证命令 : \(未设置\)/);
-    assert.match(joinedOut, /自动自愈状态 : 已关闭/);
+    assert.match(joinedOut, /自动恢复状态 : 已关闭/);
     outputs.length = 0;
 
     // 2. Set command
@@ -51,7 +51,8 @@ test("/verify command status/set/clear/run", async () => {
     await verifyCommand.execute(["status"], context);
     joinedOut = outputs.join("\n");
     assert.match(joinedOut, /当前验证命令 : npm run build/);
-    assert.match(joinedOut, /自动自愈状态 : 已开启/);
+    assert.match(joinedOut, /自动恢复状态 : 已开启/);
+    assert.match(joinedOut, /同因最多 2 次，策略预算 4 次/);
     outputs.length = 0;
 
     // 4. Run passing verification

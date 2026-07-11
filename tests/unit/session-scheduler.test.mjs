@@ -127,3 +127,34 @@ test("session scheduler filters execution by runner", async () => {
   assert.equal(result.triggered, 1);
   assert.deepEqual(daemonCalls, [durableTask.id]);
 });
+
+test("session scheduler backs off failures and stops after four attempts", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-scheduler-failure-"));
+  let now = 0;
+  const scheduler = new SessionScheduler({
+    stateDir,
+    sessionId: "session-failure",
+    runner: "daemon",
+    clock: () => now,
+    onDue: async () => { throw new Error("build failed"); },
+  });
+  await scheduler.init();
+  const task = await scheduler.createLoopTask({
+    prompt: "失败任务",
+    intervalMs: 1_000,
+    mode: "fixed",
+    runner: "daemon",
+  });
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    now = attempt === 1 ? 1_001 : (await scheduler.listTasks())[0].backoffUntil;
+    const result = await scheduler.runDueTasksOnce();
+    assert.equal(result.triggered, 0);
+  }
+
+  const failed = (await scheduler.listTasks()).find((item) => item.id === task.id);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.attemptCount, 4);
+  assert.equal(failed.consecutiveFailures, 4);
+  assert.match(failed.lastError.message, /build failed/);
+});

@@ -4,7 +4,7 @@ import * as path from "path";
 
 export type SessionTaskKind = "loop";
 export type SessionTaskMode = "fixed" | "default";
-export type SessionTaskStatus = "active" | "running" | "completed" | "canceled";
+export type SessionTaskStatus = "active" | "running" | "blocked" | "failed" | "completed" | "canceled";
 export type SessionTaskRunner = "session" | "daemon";
 
 export interface SessionTask {
@@ -20,6 +20,10 @@ export interface SessionTask {
   updatedAt: number;
   lastRunAt?: number;
   nextRunAt: number;
+  attemptCount?: number;
+  consecutiveFailures?: number;
+  lastError?: { message: string; timestamp: number };
+  backoffUntil?: number;
 }
 
 export interface SessionSchedulerOptions {
@@ -150,13 +154,13 @@ export class SessionScheduler {
     const tasks = Array.from(this.tasks.values()).sort((a, b) => a.nextRunAt - b.nextRunAt);
 
     for (const task of tasks) {
-      if (task.status === "canceled" || task.status === "completed") {
+      if (["canceled", "completed", "failed", "blocked"].includes(task.status)) {
         continue;
       }
       if ((task.runner ?? "session") !== this.runner) {
         continue;
       }
-      const isDue = task.pending || task.nextRunAt <= now;
+      const isDue = task.pending || (task.nextRunAt <= now && (task.backoffUntil ?? 0) <= now);
       if (!isDue) continue;
 
       if (this.busy) {
@@ -170,20 +174,43 @@ export class SessionScheduler {
 
       task.pending = false;
       task.status = "running";
+      task.attemptCount = (task.attemptCount ?? 0) + 1;
       task.updatedAt = now;
       await this.saveTasks();
 
       try {
         await this.onDue(cloneTask(task));
         triggered++;
-      } finally {
         const currentTask = this.tasks.get(task.id);
         if (currentTask && currentTask.status !== "canceled") {
           currentTask.status = "active";
+          currentTask.consecutiveFailures = 0;
+          currentTask.lastError = undefined;
+          currentTask.backoffUntil = undefined;
           currentTask.lastRunAt = now;
           currentTask.nextRunAt = now + currentTask.intervalMs;
           currentTask.updatedAt = this.clock();
         }
+      } catch (error) {
+        const currentTask = this.tasks.get(task.id);
+        if (currentTask && currentTask.status !== "canceled") {
+          const failures = (currentTask.consecutiveFailures ?? 0) + 1;
+          const failedAt = this.clock();
+          currentTask.consecutiveFailures = failures;
+          currentTask.lastError = { message: sanitizeError(error), timestamp: failedAt };
+          currentTask.lastRunAt = now;
+          currentTask.updatedAt = failedAt;
+          if (failures >= 4) {
+            currentTask.status = "failed";
+            currentTask.backoffUntil = undefined;
+          } else {
+            const delay = Math.min(60_000, 1_000 * 2 ** (failures - 1));
+            currentTask.status = "active";
+            currentTask.backoffUntil = failedAt + delay;
+            currentTask.nextRunAt = currentTask.backoffUntil;
+          }
+        }
+      } finally {
         await this.saveTasks();
       }
     }
@@ -222,4 +249,9 @@ export class SessionScheduler {
       .map(cloneTask);
     await fs.writeFile(this.stateFile, JSON.stringify(payload, null, 2), "utf-8");
   }
+}
+
+function sanitizeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\b(?:sk|api)[-_][a-z0-9_-]{8,}\b/gi, "[redacted]").slice(0, 500);
 }

@@ -34,10 +34,10 @@ export const verifyCommand: SlashCommand = {
         context.writeLine("-----------------------------------------");
         if (cmd) {
           context.writeLine(`当前验证命令 : ${cmd}`);
-          context.writeLine(`自动自愈状态 : 已开启 (写操作后自动触发，上限 3 轮)`);
+          context.writeLine(`自动恢复状态 : 已开启 (同因最多 2 次，策略预算 4 次)`);
         } else {
           context.writeLine("当前验证命令 : (未设置)");
-          context.writeLine("自动自愈状态 : 已关闭");
+          context.writeLine("自动恢复状态 : 已关闭");
         }
         context.writeLine("-----------------------------------------");
         context.writeLine("");

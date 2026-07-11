@@ -53,11 +53,16 @@ export class DurableSessionSupervisor {
         if (this.runningSessions.has(sessionId)) {
           continue;
         }
-        const handledGoal = await this.tryRunDurableGoal(sessionId);
-        if (handledGoal) {
-          continue;
+        try {
+          const handledGoal = await this.tryRunDurableGoal(sessionId);
+          if (handledGoal) {
+            continue;
+          }
+          await this.tryRunDurableLoopTasks(sessionId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.log(`[durable-session] session=${sessionId} failed: ${message.slice(0, 500)}`);
         }
-        await this.tryRunDurableLoopTasks(sessionId);
       }
     } finally {
       this.ticking = false;
@@ -111,7 +116,9 @@ export class DurableSessionSupervisor {
       task.runner === "daemon" &&
       task.status !== "canceled" &&
       task.status !== "completed" &&
-      (task.pending || task.nextRunAt <= now)
+      task.status !== "failed" &&
+      task.status !== "blocked" &&
+      (task.pending || (task.nextRunAt <= now && (task.backoffUntil ?? 0) <= now))
     );
     if (!hasDue) {
       return false;
