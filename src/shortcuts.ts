@@ -5,6 +5,7 @@ export const SHORTCUT_LINES = [
   "界面入口 : /help slash 查看本地命令；/privacy 查看边界；/context 查看上下文；/statusline 查看状态线；Tab agents 打开本地 agents 视图",
   "Enter    : 发送当前输入",
   "Tab      : 空输入时打开本地 /agents mission 视图；slash 前缀补全最佳命令；其他非空输入会保留草稿并提示补全未启用",
+  "Shift+Tab: 循环 Agent/ask → Plan → Agent/allow (Always Agree) → Agent/ask；保留当前草稿",
   "Slash    : 输入 / 或 /sk 显示本地命令候选，Tab 补全最佳候选，不自动执行",
   "Ctrl+N   : 插入换行，继续编辑多行 prompt",
   "Ctrl+R   : 用当前输入搜索本会话内历史；未命中会提示并保留草稿",

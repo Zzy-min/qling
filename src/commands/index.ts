@@ -14,6 +14,7 @@ import { sessionsCommand } from "./sessions.js";
 import { resumeCommand } from "./resume.js";
 import { checkpointCommand } from "./checkpoint.js";
 import { permissionsCommand } from "./permissions.js";
+import { modeCommand } from "./mode.js";
 import { statuslineCommand } from "./statusline.js";
 import { doctorCommand } from "./doctor.js";
 import { contextCommand } from "./context.js";
@@ -67,6 +68,7 @@ export const COMMANDS: SlashCommand[] = [
   usageCommand,
   modelCommand,
   planCommand,
+  modeCommand,
   expandCommand,
   diffCommand,
   commitCommand,

@@ -720,6 +720,9 @@ export class StreamUI {
         } else if (seq === "\t") {
           partial = "";
           this.handleTab();
+        } else if (seq === "\x1b[Z") {
+          partial = "";
+          this.handleShiftTab();
         } else if (seq === "\x03") {
           partial = "";
           this.handleCtrlC();
@@ -837,6 +840,15 @@ export class StreamUI {
     }
 
     this.appendFeedbackAndRedraw(S.y("Tab agents 仅在空输入时打开；当前草稿已保留，补全未启用"));
+  }
+
+  private handleShiftTab(): void {
+    this.lastEmptyCtrlCAt = 0;
+    this.moveAfterInputFrame();
+    process.stdout.write("\n");
+    if (this.inputCallback) {
+      this.inputCallback("/mode cycle");
+    }
   }
 
   private handleCtrlC(): void {

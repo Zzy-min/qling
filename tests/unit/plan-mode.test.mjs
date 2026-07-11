@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { HookManager, PLAN_MODE_DENY_TOOLS } from "../../dist/pipeline/hooks.js";
 import { planCommand } from "../../dist/commands/claude-style.js";
+import { modeCommand } from "../../dist/commands/mode.js";
 
 function createHookManager(defaultDecision = "allow") {
   return new HookManager(
@@ -123,4 +124,49 @@ test("/plan status reports mode", async () => {
     },
   });
   assert.match(lines.join("\n"), /plan/);
+});
+
+test("/mode cycle rotates agent ask, plan ask, and agent allow", async () => {
+  let plan = false;
+  let permission = "ask";
+  const lines = [];
+  const context = {
+    writeLine: (line) => lines.push(String(line)),
+    writeError: (line) => lines.push(String(line)),
+    agentLoop: {
+      isPlanMode: () => plan,
+      setPlanMode: (enabled) => { plan = Boolean(enabled); },
+      getPermissionMode: () => permission,
+      setPermissionMode: (mode) => { permission = mode; },
+    },
+  };
+
+  await modeCommand.execute(["cycle"], context);
+  assert.deepEqual({ plan, permission }, { plan: true, permission: "ask" });
+
+  await modeCommand.execute(["cycle"], context);
+  assert.deepEqual({ plan, permission }, { plan: false, permission: "allow" });
+
+  await modeCommand.execute(["cycle"], context);
+  assert.deepEqual({ plan, permission }, { plan: false, permission: "ask" });
+  assert.match(lines.join("\n"), /Always Agree/);
+});
+
+test("/mode cycle normalizes deny mode into plan ask", async () => {
+  let plan = false;
+  let permission = "deny";
+  const context = {
+    writeLine: () => {},
+    writeError: () => {},
+    agentLoop: {
+      isPlanMode: () => plan,
+      setPlanMode: (enabled) => { plan = Boolean(enabled); },
+      getPermissionMode: () => permission,
+      setPermissionMode: (mode) => { permission = mode; },
+    },
+  };
+
+  await modeCommand.execute(["cycle"], context);
+
+  assert.deepEqual({ plan, permission }, { plan: true, permission: "ask" });
 });

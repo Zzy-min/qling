@@ -9,6 +9,7 @@ export const HELP_LINES = [
   "/init [--force]         - 生成轻灵本地项目指南",
   "/model [list|use <p>|m] - 查看/列出预设/切换模型或 Provider",
   "/plan [on|off|status|..] - Plan Mode（只读规划，禁写工具）",
+  "/mode [status|cycle]    - 循环 Agent、Plan 与 Always Agree（Shift+Tab）",
   "/expand [on|off|status]  - 切换长工具输出展开（同 Ctrl+O）",
   "/plan [description]     - 创建普通会话计划请求",
   "/usage, /cost, /stats   - 查看 provider 官方 token usage",

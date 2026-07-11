@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### TUI — Shift+Tab 模式循环
+
+- 新增 `Shift+Tab` 快速循环 `Agent/ask → Plan → Agent/allow (Always Agree) → Agent/ask`，切换时保留当前草稿。
+- 新增 `/mode [status|cycle]` 与 `/模式` 本地命令；模式只影响当前进程，Plan Mode 仍优先拒绝写工具。
+- 正确消费 Windows Terminal 的 `ESC [ Z` 序列，不再把尾部 `Z` 错误插入输入框。
+
 ### TUI — Slash/Skill 输入框恢复
 
 - 修复 `/skill`、`/plan` 等本地 slash 命令完成后输入框被队列内外重复恢复、连续绘制两次的问题；输入框现在只在整条输入队列排空后恢复一次。

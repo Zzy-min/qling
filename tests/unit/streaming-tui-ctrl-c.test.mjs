@@ -528,6 +528,25 @@ test("stream ui dispatches tab from raw stdin without inserting tab", async () =
   });
 });
 
+test("stream ui shift+tab cycles agent mode without changing draft", async () => {
+  await withCapturedStdout(async () => {
+    await withCapturedStdinDataHandler(async (getDataHandler) => {
+      const { ui, submitted } = createUi();
+      for (const ch of "保留草稿") ui.input.insertChar(ch);
+
+      ui.running = true;
+      ui.setupInput();
+      const dataHandler = getDataHandler();
+      assert.equal(typeof dataHandler, "function");
+
+      dataHandler("\x1b[Z");
+
+      assert.equal(ui.input.value, "保留草稿");
+      assert.deepEqual(submitted, ["/mode cycle"]);
+    });
+  });
+});
+
 test("stream ui ctrl+o expands and collapses future long tool output", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui } = createUi();

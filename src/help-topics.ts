@@ -58,6 +58,17 @@ const TOPICS: HelpTopic[] = [
     boundary: "Plan Mode 仅当前进程生效；写工具由权限层拒绝；/plan off 恢复 agent 模式。",
   },
   {
+    id: "mode",
+    title: "Agent 执行模式",
+    summary: "查看或循环 Agent/ask、Plan 与 Agent/allow（Always Agree）。",
+    aliases: ["mode", "/mode", "模式", "/模式"],
+    slashUsage: "/mode [status|cycle]",
+    cliUsage: "仅 TUI：Shift+Tab 或 slash 命令",
+    slashExamples: ["/mode", "/mode cycle", "/模式 cycle"],
+    cliExamples: [],
+    boundary: "只影响当前进程；Plan Mode 优先于 allow，仍会拒绝写工具；不写默认配置。",
+  },
+  {
     id: "diff",
     title: "Git 变更摘要",
     summary: "只读查看当前工作区 Git status/diff 摘要。支持 /diff full 查看完整 diff。",
