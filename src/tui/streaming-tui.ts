@@ -32,6 +32,7 @@ import {
 } from "./shell.js";
 import { formatMarkdownForTerminal } from "./markdown.js";
 import { getPackageVersion } from "../package-version.js";
+import type { RecoveryState } from "../execution/types.js";
 
 // ── ANSI 颜色工具 ───────────────────────────────────────
 
@@ -144,6 +145,7 @@ export class StreamUI {
   private slashCompletionSelectedIndex = 0;
   private inputCursorAnchor: "current" | "bottom" = "current";
   private inputStartRow = 0;
+  private recoveryState: RecoveryState | null = null;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
 
@@ -209,6 +211,31 @@ export class StreamUI {
   setModel(model: string): void {
     const next = String(model ?? "").trim();
     if (next) this.model = next;
+  }
+
+  setRecoveryState(state: RecoveryState | null): void {
+    this.recoveryState = state ? { ...state } : null;
+    if (state?.status === "paused") this.appendRecoveryCard(state);
+  }
+
+  setInputDraft(draft: string): void {
+    this.input.clear();
+    for (const ch of draft) ch === "\n" ? this.input.insertNewline() : this.input.insertChar(ch);
+    this.draftDisplaySource = draft.includes("\n") ? "typed" : null;
+    this.redrawInput();
+  }
+
+  private appendRecoveryCard(state: RecoveryState): void {
+    this.moveAfterInputFrame();
+    const failure = state.lastFailure;
+    process.stdout.write("\n" + [
+      S.y("执行已暂停"),
+      `${DIM("原因")} ${failure?.category ?? "unknown"}: ${failure?.message ?? "-"}`,
+      `${DIM("证据")} ${failure?.fingerprint ?? "-"}  ${DIM("剩余预算")} ${state.remainingStrategyAttempts}`,
+      `${S.p("R")} 重试  ${S.p("S")} 下一策略  ${S.p("E")} 编辑任务  ${S.p("C")} 取消并保存摘要`,
+    ].join("\n") + "\n");
+    this.writeInputValue(true);
+    this.syncCursor();
   }
 
   isExpandLongToolOutput(): boolean {
@@ -652,6 +679,11 @@ export class StreamUI {
 
     this.dataHandler = (chunk: string) => {
       if (!this.running) return;
+      if (this.recoveryState?.status === "paused" && !this.input.value && /^[rsec]$/i.test(chunk)) {
+        const action = ({ r: "retry", s: "next", e: "edit", c: "cancel" } as const)[chunk.toLowerCase() as "r" | "s" | "e" | "c"];
+        this.inputCallback?.(`/recover ${action}`);
+        return;
+      }
       if (chunk === "\x1b") {
         partial = "";
         return;

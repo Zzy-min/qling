@@ -52,6 +52,8 @@ export interface SlashCommandContext {
     toggle: () => boolean;
   };
   setImmediatePrompt?: (prompt: string) => void;
+  setInputDraft?: (draft: string) => void;
+  onRecoveryStateChanged?: (state: unknown | null) => void;
   onModelChanged?: (model: string) => void | Promise<void>;
   writeClipboard?: (text: string) => Promise<void>;
   writeLine: (line?: string) => void;
@@ -73,6 +75,8 @@ export function withDefaultWriters(
     statusLine: context.statusLine,
     toolOutput: context.toolOutput,
     setImmediatePrompt: context.setImmediatePrompt,
+    setInputDraft: context.setInputDraft,
+    onRecoveryStateChanged: context.onRecoveryStateChanged,
     onModelChanged: context.onModelChanged,
     writeClipboard: context.writeClipboard,
     writeLine: context.writeLine ?? ((line = "") => console.log(line)),

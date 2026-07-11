@@ -87,6 +87,8 @@ function createContext(overrides = {}) {
     statusLine: overrides.statusLine,
     writeClipboard: overrides.writeClipboard,
     setImmediatePrompt: overrides.setImmediatePrompt ?? (() => {}),
+    setInputDraft: overrides.setInputDraft ?? (() => {}),
+    onRecoveryStateChanged: overrides.onRecoveryStateChanged ?? (() => {}),
     writeLine: (line = "") => {
       lines.push(String(line));
     },
@@ -2410,4 +2412,43 @@ test("slash chinese checkpoint alias falls back to default checkpoint API", asyn
   assert.equal(handled, true);
   assert.equal(checkpointCalled, true);
   assert.match(lines.join("\n"), /session-default\.json/);
+});
+
+test("slash recover edit restores the original task into the input draft", async () => {
+  let draft = null;
+  const state = {
+    runId: "run_1", sessionId: "session-test", originalTask: "修复构建", status: "paused",
+    strategyAttempts: 2, remainingStrategyAttempts: 2,
+    lastFailure: { category: "no_progress", fingerprint: "fp_1", message: "same failure" },
+  };
+  const { ctx, lines } = createContext({
+    agentLoop: {
+      getRecoveryState: () => state,
+      applyRecoveryAction: () => ({ state, prompt: state.originalTask }),
+    },
+    setInputDraft: (value) => { draft = value; },
+  });
+
+  assert.equal(await handleSlashCommand("/recover edit", ctx), true);
+  assert.equal(draft, "修复构建");
+  assert.match(lines.join("\n"), /edit/);
+});
+
+test("slash recover next queues a distinct recovery prompt", async () => {
+  let prompt = null;
+  const state = {
+    runId: "run_1", sessionId: "session-test", originalTask: "修复构建", status: "recovering",
+    strategyAttempts: 1, remainingStrategyAttempts: 3,
+  };
+  const { ctx } = createContext({
+    agentLoop: {
+      getRecoveryState: () => ({ ...state, status: "paused" }),
+      applyRecoveryAction: () => ({ state }),
+    },
+    setImmediatePrompt: (value) => { prompt = value; },
+  });
+
+  assert.equal(await handleSlashCommand("/recover next", ctx), true);
+  assert.match(prompt, /下一条不同的恢复策略/);
+  assert.match(prompt, /修复构建/);
 });

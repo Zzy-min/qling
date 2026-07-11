@@ -35,6 +35,8 @@ import { hooksCommand } from "./hooks.js";
 import { agentsCommand } from "./agents.js";
 import { missionCommand } from "./mission.js";
 import { verifyCommand } from "./verify.js";
+import { recoverCommand } from "./recover.js";
+import { traceCommand } from "./trace.js";
 import { SlashCommandContext, withDefaultWriters } from "./runtime.js";
 import { formatFocusedHelp } from "../help-topics.js";
 import { formatLocalGuidancePanel } from "../cli/guidance-panel.js";
@@ -93,6 +95,8 @@ export const COMMANDS: SlashCommand[] = [
   knowledgeCommand,
   connectCommand,
   verifyCommand,
+  recoverCommand,
+  traceCommand,
   dreamCommand,
   distillCommand,
   storageCommand,

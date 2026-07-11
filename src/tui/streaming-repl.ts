@@ -142,6 +142,15 @@ export class StreamingREPL {
       const status = verdict === "PASS" ? "pass" : verdict === "FAIL" ? "fail" : "warn";
       this.ui.appendValidation(status, details);
     });
+
+    this.agent.on("repair", (reason: string, action: string, retryCount: number) => {
+      this.ui.appendRepair(reason, action, retryCount);
+    });
+
+    this.agent.on("recovery_paused", (state: any) => {
+      this.ui.stopProgress();
+      this.ui.setRecoveryState(state);
+    });
   }
 
   // 将工具参数转换为可读命令字符串
@@ -219,6 +228,8 @@ export class StreamingREPL {
       setImmediatePrompt: (prompt: string) => {
         this.immediatePrompt = prompt;
       },
+      setInputDraft: (draft: string) => this.ui.setInputDraft(draft),
+      onRecoveryStateChanged: (state) => this.ui.setRecoveryState(state as any),
       onModelChanged: async (model: string) => {
         (this.ui as any).setModel?.(model);
         await this.refreshStatusLine();
@@ -294,6 +305,11 @@ export class StreamingREPL {
 
           const totalMs = Date.now() - startTime;
           this.ui.appendDone(totalMs);
+
+          if (this.agent.getRecoveryState()?.status === "paused") {
+            currentPrompt = null;
+            break;
+          }
 
         } catch (err) {
           this.ui.stopProgress();

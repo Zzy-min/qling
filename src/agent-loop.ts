@@ -59,6 +59,13 @@ import {
   prepareToolResultContent,
   resolveToolResultMaxChars,
 } from "./context-tool-hygiene.js";
+import { ExecutionEventBus } from "./execution/event-bus.js";
+import { classifyFailure } from "./execution/failure-classifier.js";
+import { RecoveryController } from "./execution/recovery-controller.js";
+import { RunTraceStore } from "./execution/run-trace-store.js";
+import type { ExecutionEvent, RecoveryState } from "./execution/types.js";
+import { StagedVerifier } from "./execution/staged-verifier.js";
+import { createHash } from "node:crypto";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_QLING_DIR = path.join(HOME_DIR, ".qling");
@@ -155,6 +162,10 @@ export class AgentLoop extends AgentEventEmitter {
   private sessionRegistry: SessionRegistry;
   private guardConfig: GuardConfig;
   private verificationCommand: string | null = null;
+  private readonly executionEventBus = new ExecutionEventBus();
+  private readonly recoveryController = new RecoveryController();
+  private runTraceStore: RunTraceStore;
+  private activeRun: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null = null;
 
   // --- v0.3 Getters (Management) ---
   getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
@@ -165,6 +176,31 @@ export class AgentLoop extends AgentEventEmitter {
   getWorkspaceDir(): string { return this.config.runtime?.workspaceDir ?? process.cwd(); }
   getMessagesSnapshot(): Message[] { return this.messages.map((message) => ({ ...message })); }
   getVerificationCommand(): string | null { return this.verificationCommand; }
+  getActiveRun(): Readonly<typeof this.activeRun> { return this.activeRun ? { ...this.activeRun } : null; }
+  getRecoveryState(): RecoveryState | null {
+    try { return this.recoveryController.getRecoveryState(); } catch { return null; }
+  }
+  subscribeExecutionEvents(listener: (event: ExecutionEvent) => void): () => void {
+    return this.executionEventBus.subscribe(listener);
+  }
+  applyRecoveryAction(action: "retry" | "next" | "edit" | "cancel"): {
+    state: RecoveryState;
+    prompt?: string;
+  } {
+    const state = this.recoveryController.applyAction(action);
+    if (action === "cancel" && this.activeRun) {
+      this.executionEventBus.completeRun(this.activeRun.runId, "canceled");
+      this.activeRun = null;
+    }
+    return { state, ...(action === "edit" ? { prompt: state.originalTask } : {}) };
+  }
+  async listRunTraceIds(): Promise<string[]> { return this.runTraceStore.listRunIds(this.sessionId); }
+  async readRunTrace(runId: string): Promise<ExecutionEvent[]> { return this.runTraceStore.readRun(this.sessionId, runId); }
+  async getRecentRunTrace(sessionId = this.sessionId, runId?: string): Promise<ExecutionEvent[]> {
+    const target = runId ?? (await this.runTraceStore.listRunIds(sessionId))[0];
+    if (!target) return [];
+    return (await this.runTraceStore.queryRecent(sessionId, target, { limit: 50 })).events;
+  }
   async setVerificationCommand(cmd: string | null): Promise<void> {
     this.verificationCommand = cmd;
     await this.persistVerificationCommand();
@@ -256,6 +292,11 @@ export class AgentLoop extends AgentEventEmitter {
         process.env.QLING_FILE_STATE_DIR ??
         DEFAULT_QLING_DIR
     );
+    this.runTraceStore = new RunTraceStore({ rootDir: path.join(this.runtimeRootDir, "runs") });
+    this.executionEventBus.subscribe((event) => {
+      void this.runTraceStore.append(event).catch(() => undefined);
+      this.emit("execution", event);
+    });
     this.memoryDir = path.join(this.runtimeRootDir, "memory");
     this.loggingConfig = {
       level: config.logging?.level ?? "info",
@@ -563,12 +604,74 @@ export class AgentLoop extends AgentEventEmitter {
 
   async run(): Promise<string> {
     await this.initPromise;
+    const resumable = this.activeRun && this.getRecoveryState()?.status === "recovering";
+    const originalTask = resumable ? this.activeRun!.originalTask : this.findLastUserMessage();
+    const runId = resumable
+      ? this.activeRun!.runId
+      : `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    if (!resumable) {
+      this.activeRun = { runId, sessionId: this.sessionId, originalTask, startedAt: Date.now() };
+      this.recoveryController.startRun({ runId, sessionId: this.sessionId, originalTask });
+      this.executionEventBus.startRun({ runId, sessionId: this.sessionId });
+    }
+    let transportAttempts = 0;
+
+    while (true) {
+      try {
+        const response = await this.executeRunInternal();
+        if (this.getRecoveryState()?.status === "paused") return response;
+        this.executionEventBus.completeRun(runId, "succeeded");
+        this.activeRun = null;
+        return response;
+      } catch (error) {
+        this.executionEventBus.completeAttempt(runId, "failed");
+        const failure = classifyFailure(error, { provider: true });
+        if (failure.category === "provider_transient" && transportAttempts < 3) {
+          transportAttempts++;
+          const delay = Math.min(4_000, 250 * 2 ** (transportAttempts - 1)) + Math.floor(Math.random() * 100);
+          this.executionEventBus.emit({
+            runId,
+            sessionId: this.sessionId,
+            type: "recovery_started",
+            status: "recovering",
+            stage: "provider",
+            category: failure.category,
+            fingerprint: failure.fingerprint,
+            recoveryAction: "transport_retry",
+          });
+          this.emit("repair", failure.message, "provider transport retry", transportAttempts);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        const decision = this.recoveryController.recordFailure(failure, {});
+        this.executionEventBus.emit({
+          runId,
+          sessionId: this.sessionId,
+          type: "failure",
+          status: decision.action === "pause" ? "paused" : "recovering",
+          stage: "agent",
+          category: decision.category,
+          fingerprint: failure.fingerprint,
+          recoveryAction: decision.action,
+        });
+        this.emit("recovery_paused", this.recoveryController.getRecoveryState(), decision);
+        if (decision.action === "pause") return this.formatRecoveryPause(failure.message, decision.reason);
+        this.emit("repair", failure.message, decision.reason, this.recoveryController.getRecoveryState().strategyAttempts);
+        continue;
+      }
+    }
+  }
+
+  private async executeRunInternal(): Promise<string> {
+    await this.initPromise;
     const toolSignatureCounts = new Map<string, number>();
     const toolRepeatLimit = Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6);
-    let selfHealingCount = 0;
 
     for (let i = 0; i < this.config.maxIterations; i++) {
       this.turnCount++;
+      const runId = this.activeRun?.runId ?? `run_untracked_${this.turnCount}`;
+      const attemptId = `attempt_${runId}_${this.turnCount}`;
+      this.executionEventBus.startAttempt({ runId, sessionId: this.sessionId, attemptId });
 
       // 保存本轮用户消息（在 assistant/tool 消息 push 之前）
       let lastUserMsg = "";
@@ -627,6 +730,7 @@ export class AgentLoop extends AgentEventEmitter {
         // 知识观察：回合结束
         await this.knowledgeAdapter.onTurnEnd(this.turnCount);
         this.logTurnTelemetry({ turn: this.turnCount, toolCalls: 0, toolFailures: 0 });
+        this.executionEventBus.completeAttempt(runId, "succeeded");
         return content;
       }
 
@@ -747,6 +851,7 @@ export class AgentLoop extends AgentEventEmitter {
 
         // 知识观察：工具调用前
         this.knowledgeAdapter.onToolCall(tc);
+        this.executionEventBus.startTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name });
         this.emit("tool_start", tc.name, tc.arguments);
         let result: ToolResult = prepared.immediateResult ?? {
           tool_call_id: tc.id,
@@ -798,6 +903,7 @@ export class AgentLoop extends AgentEventEmitter {
         }
         // 知识观察：工具结果后
         this.knowledgeAdapter.onToolResult(result, tc.name);
+        this.executionEventBus.completeTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name, failed: result.is_error });
         this.emit("tool_result", tc.name, result.output, result.is_error ?? false);
 
         // v0.5 M1: Knowledge Graph Linking (Automatic)
@@ -904,29 +1010,49 @@ export class AgentLoop extends AgentEventEmitter {
       const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "patch" || t.call.name === "bash");
       if (hasWrites) {
         if (this.verificationCommand) {
-          console.error(`\n🔍 正在运行自动验证: ${this.verificationCommand}`);
-          const { code, stdout, stderr } = await this.runVerificationCommand(this.verificationCommand);
-          if (code !== 0) {
-            if (selfHealingCount < 3) {
-              selfHealingCount++;
-              const truncatedStdout = stdout.length > 2000 ? stdout.slice(-2000) : stdout;
-              const truncatedStderr = stderr.length > 2000 ? stderr.slice(-2000) : stderr;
-              const errorContent = `【自动验证失败】运行验证命令 \`${this.verificationCommand}\` 失败。\n` +
-                `[stdout]\n${truncatedStdout}\n` +
-                `[stderr]\n${truncatedStderr}\n` +
-                `请分析上述报错信息，并使用 patch 或其它工具修正它。(自愈尝试: ${selfHealingCount}/3)`;
-
-              this.messages.push({ role: "user", content: errorContent });
-              console.error(`❌ 自动验证失败，触发第 ${selfHealingCount} 轮自愈调试...`);
-              continue;
-            } else {
-              console.error(`❌ 自动自愈达到 3 轮上限，验证命令仍然失败。`);
-              return `❌ [自动验证失败] 已达到最多 3 轮自愈上限，验证命令仍然失败。\n最后报错信息:\n${stderr || stdout}`;
+          const stagedVerifier = new StagedVerifier({ execute: (command) => this.runVerificationCommand(command) });
+          const verification = await stagedVerifier.run([{ name: "configured", command: this.verificationCommand }]);
+          if (!verification.ok) {
+            const failure = classifyFailure(new Error(`verification command failed: ${this.verificationCommand}`), {
+              tool: "verify",
+              verificationCommand: this.verificationCommand,
+            });
+            const progress = {
+              diffHash: await this.getWorkspaceDiffHash(),
+              failingTests: verification.failingTests,
+            };
+            const decision = this.recoveryController.recordFailure(failure, progress);
+            const state = this.recoveryController.getRecoveryState();
+            this.executionEventBus.emit({
+              runId: state.runId,
+              sessionId: state.sessionId,
+              type: "verification_failed",
+              status: decision.action === "pause" ? "paused" : "recovering",
+              stage: verification.failedStage,
+              tool: "verify",
+              category: decision.category,
+              fingerprint: failure.fingerprint,
+              progress,
+              recoveryAction: decision.action,
+            });
+            if (decision.action === "pause") {
+              this.executionEventBus.completeAttempt(runId, "failed");
+              this.emit("recovery_paused", state, decision);
+              return this.formatRecoveryPause(verification.stderr || verification.stdout, decision.reason);
             }
-          } else {
-            console.error("✅ 自动验证成功！");
-            selfHealingCount = 0; // Reset counter on success
+            const stdout = verification.stdout.slice(-2_000);
+            const stderr = verification.stderr.slice(-2_000);
+            this.messages.push({
+              role: "user",
+              content: `【定向验证失败】阶段=${verification.failedStage} 命令=\`${this.verificationCommand}\`\n` +
+                `失败测试=${verification.failingTests.join(", ") || "unknown"}\n[stdout]\n${stdout}\n[stderr]\n${stderr}\n` +
+                "仅修复当前失败集合；不得重复无关的全量验证。",
+            });
+            this.emit("repair", failure.message, "targeted_verification_repair", state.strategyAttempts);
+            this.executionEventBus.completeAttempt(runId, "recovering");
+            continue;
           }
+          this.emit("verification", "PASS", `验证通过: ${this.verificationCommand}`);
         } else {
           await this.verifyLastOperation();
         }
@@ -970,9 +1096,34 @@ export class AgentLoop extends AgentEventEmitter {
         toolCalls: turnToolCalls,
         toolFailures: turnToolFailures,
       });
+      this.executionEventBus.completeAttempt(runId, "succeeded");
     }
 
     return "⚠️ 达到最大迭代次数，任务未完成。";
+  }
+
+  private findLastUserMessage(): string {
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      if (this.messages[index].role === "user") return this.messages[index].content;
+    }
+    return "";
+  }
+
+  private formatRecoveryPause(reason: string, next: string): string {
+    return [
+      "执行已暂停",
+      `原因: ${reason}`,
+      `已尝试: ${this.getRecoveryState()?.strategyAttempts ?? 0} 次恢复策略`,
+      `当前证据: ${this.getRecoveryState()?.lastFailure?.fingerprint ?? "-"}`,
+      `下一步: ${next}；使用 /recover retry|next|edit|cancel`,
+      "边界: 本地摘要轨迹已保存，不包含 prompt 或工具正文。",
+    ].join("\n");
+  }
+
+  private async getWorkspaceDiffHash(): Promise<string> {
+    const result = await this.runVerificationCommand("git diff --no-ext-diff --binary");
+    const content = result.code === 0 ? result.stdout : "git-unavailable";
+    return createHash("sha256").update(content).digest("hex").slice(0, 20);
   }
 
   getModel(): string {

@@ -87,6 +87,27 @@ test("stream ui ctrl+c clears non-empty input with local restore hint", async ()
   });
 });
 
+test("stream ui recovery action bar intercepts R only while paused and input is empty", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    await withCapturedStdinDataHandler(async (getHandler) => {
+      const { ui, submitted } = createUi();
+      ui.start();
+      ui.setRecoveryState({
+        runId: "run_1", sessionId: "session_1", originalTask: "fix", status: "paused",
+        strategyAttempts: 2, remainingStrategyAttempts: 2,
+        lastFailure: { category: "no_progress", message: "same failure", fingerprint: "fp_1" },
+      });
+      getHandler()("r");
+      await new Promise((resolve) => setImmediate(resolve));
+      ui.stop();
+
+      assert.deepEqual(submitted, ["/recover retry"]);
+      assert.match(getOutput(), /执行已暂停/);
+      assert.match(getOutput(), /下一策略/);
+    });
+  });
+});
+
 test("stream ui ctrl+z restores draft cleared by ctrl+c", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
