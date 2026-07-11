@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,6 +43,29 @@ test("run trace store reads recent events with a bounded tail scan", async () =>
     assert.equal(result.events.at(-1).eventId, "evt_199");
     assert.ok(result.scannedBytes <= 1_024);
     assert.equal(result.truncated, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("run trace store queries the latest 50 of 10000 events below 200ms", async () => {
+  const root = await mkdtemp(join(tmpdir(), "qling-trace-perf-"));
+  try {
+    const store = new RunTraceStore({ rootDir: root });
+    const file = store.getRunPath("session_perf", "run_perf");
+    await mkdir(join(root, "session_perf"), { recursive: true });
+    const lines = Array.from({ length: 10_000 }, (_, index) => JSON.stringify({
+      eventId: `evt_${index}`, runId: "run_perf", sessionId: "session_perf",
+      type: "attempt", timestamp: index, status: "running", fingerprint: `fp_${index}`,
+    })).join("\n") + "\n";
+    await writeFile(file, lines, "utf8");
+
+    const startedAt = performance.now();
+    const result = await store.queryRecent("session_perf", "run_perf", { limit: 50, maxScanBytes: 1024 * 1024 });
+    const durationMs = performance.now() - startedAt;
+    assert.equal(result.events.length, 50);
+    assert.equal(result.events.at(-1).eventId, "evt_9999");
+    assert.ok(durationMs < 200, `query took ${durationMs.toFixed(1)}ms`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
