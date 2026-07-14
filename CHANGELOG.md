@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+## v1.2.1 (2026-07-15)
+
 ### Official distribution + strict layers + self-contained portable
 
 - **分层**：清零反向依赖；`ci:check` 启用 `dep:layers --strict`；`installSlashPorts` + `DurableSessionSupervisor` 上提 `agent/`。
 - **便携包**：`build:portable-win` 内嵌 Node 运行时（`runtime/node.exe`），无需本机安装 Node。
-- **Scoop/winget**：manifest 指向 GitHub Release portable zip；多文件 winget 清单 `packaging/winget/manifests/`；官方 PR 流程见 `packaging/PR-OFFICIAL.md`。
+- **Scoop/winget**：manifest 指向 GitHub Release portable zip；多文件 winget 清单；官方 PR 按审阅修正 64bit 结构与 hash 格式。
+- **公共 Scoop bucket**：https://github.com/Zzy-min/scoop-qling
 
 ## v1.2.0 (2026-07-14)
 

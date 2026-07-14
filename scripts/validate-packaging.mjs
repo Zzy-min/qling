@@ -19,14 +19,23 @@ const scoop = JSON.parse(scoopRaw);
 if (scoop.version !== version) {
   errors.push(`scoop version ${scoop.version} != package ${version}`);
 }
-if (!String(scoop.url || "").includes(version)) {
-  errors.push(`scoop url does not pin ${version}: ${scoop.url}`);
+const scoopUrl =
+  scoop.architecture?.["64bit"]?.url || scoop.url || "";
+const scoopHash =
+  scoop.architecture?.["64bit"]?.hash || scoop.hash || "";
+if (!String(scoopUrl).includes(version)) {
+  errors.push(`scoop url does not pin ${version}: ${scoopUrl}`);
 }
-const hash = String(scoop.hash || "");
-if (!hash || /TODO|REPLACE|PLACEHOLDER/i.test(hash)) {
+if (!scoop.architecture?.["64bit"]) {
+  errors.push("scoop should nest url/hash under architecture.64bit (Extras style)");
+}
+if (!scoopHash || /TODO|REPLACE|PLACEHOLDER/i.test(String(scoopHash))) {
   errors.push("scoop hash still placeholder — run build:portable-win + sync-winget-sha");
-} else if (!/^(sha256:)?[a-f0-9]{64}$/i.test(hash)) {
-  errors.push(`scoop hash looks invalid: ${hash}`);
+} else if (!/^(sha256:)?[a-f0-9]{64}$/i.test(String(scoopHash))) {
+  errors.push(`scoop hash looks invalid: ${scoopHash}`);
+}
+if (/sha256:/i.test(String(scoopHash))) {
+  errors.push("scoop hash should be plain hex (no sha256: prefix) for Extras");
 }
 if (!String(scoop.bin || "").includes("qling")) {
   errors.push("scoop bin should expose qling");
@@ -70,7 +79,8 @@ const bucket = join(root, "packaging", "scoop-bucket", "qling.json");
 if (existsSync(bucket)) {
   const b = JSON.parse(await readFile(bucket, "utf8"));
   if (b.version !== version) errors.push("scoop-bucket version mismatch");
-  if (b.hash !== scoop.hash) errors.push("scoop-bucket hash out of sync with scoop/qling.json");
+  const bHash = b.architecture?.["64bit"]?.hash || b.hash;
+  if (bHash !== scoopHash) errors.push("scoop-bucket hash out of sync with scoop/qling.json");
 }
 
 if (errors.length) {
@@ -80,6 +90,6 @@ if (errors.length) {
 }
 
 console.log(`validate-packaging OK (version ${version})`);
-console.log("  scoop:", scoop.url);
-console.log("  scoop.hash:", hash.slice(0, 20) + "…");
+console.log("  scoop:", scoopUrl);
+console.log("  scoop.hash:", String(scoopHash).slice(0, 20) + "…");
 console.log("  winget: Zzy-min.qling @", version);

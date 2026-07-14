@@ -59,7 +59,8 @@ test("install docs and packaging drafts exist", async () => {
 
   const scoop = await readFile(join(root, "packaging", "scoop", "qling.json"), "utf8");
   assert.match(scoop, versionRe);
-  assert.match(scoop, /sha256:[a-f0-9]{64}/i);
+  assert.match(scoop, /"hash"\s*:\s*"[a-f0-9]{64}"/i);
+  assert.match(scoop, /architecture[\s\S]*64bit/i);
   assert.match(scoop, /qling-win-x64\.zip|qling\.cmd/);
 
   const winget = await readFile(join(root, "packaging", "winget", "Zzy-min.qling.yaml"), "utf8");

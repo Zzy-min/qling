@@ -39,36 +39,18 @@ for (const file of targets) {
   console.log("updated", file);
 }
 
-// Scoop: prefer portable zip when available
-const scoopPaths = [
-  join(root, "packaging", "scoop", "qling.json"),
-  join(root, "packaging", "scoop-bucket", "qling.json"),
-];
-for (const scoopPath of scoopPaths) {
-  if (!existsSync(scoopPath)) continue;
-  const j = JSON.parse(await readFile(scoopPath, "utf8"));
-  j.version = version;
-  j.url = `https://github.com/Zzy-min/qling/releases/download/v${version}/qling-win-x64.zip`;
-  j.hash = `sha256:${sha}`;
-  j.extract_dir = "qling-win-x64";
-  j.bin = "qling.cmd";
-  delete j.env_add_path;
-  j.notes = [
-    "Portable zip embeds Node.js runtime (no system Node required).",
-    "Source: https://github.com/Zzy-min/qling",
-    "API keys must be set as user environment variables (never commit secrets).",
-  ];
-  j.checkver = { github: "https://github.com/Zzy-min/qling" };
-  j.autoupdate = {
-    url: "https://github.com/Zzy-min/qling/releases/download/v$version/qling-win-x64.zip",
-  };
-  j.post_install = [
-    "Write-Host 'qling installed. Run: qling doctor && qling setup' -ForegroundColor Cyan",
-  ];
-  // Scoop portable zip does not depend on system nodejs when runtime is embedded
-  delete j.depends;
-  await writeFile(scoopPath, JSON.stringify(j, null, 2) + "\n", "utf8");
-  console.log("updated", scoopPath);
+// Scoop: rewrite Extras-compatible 64bit manifest
+const { spawnSync } = await import("node:child_process");
+const scoopScript = join(root, "scripts", "write-scoop-manifest.mjs");
+const r = spawnSync(process.execPath, [scoopScript], { cwd: root, encoding: "utf8" });
+process.stdout.write(r.stdout || "");
+process.stderr.write(r.stderr || "");
+if (r.status !== 0) process.exit(r.status || 1);
+
+// Multi-file winget for this version dir (create if missing)
+const multiDir = join(root, "packaging", "winget", "manifests", "Zzy-min", "qling", version);
+if (!existsSync(multiDir)) {
+  console.warn("note: multi-file winget dir missing for", version, "- create under packaging/winget/manifests");
 }
 
 console.log(`sync-winget-sha OK version=${version} sha=${sha.slice(0, 16)}… bundledNode=${meta.bundledNode}`);
