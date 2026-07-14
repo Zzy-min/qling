@@ -44,14 +44,33 @@ test("install docs and packaging drafts exist", async () => {
   assert.match(install, /bootstrap/);
   assert.match(install, /Scoop|scoop/i);
   assert.match(install, /winget/i);
+  assert.match(install, /validate:packaging/);
 
   const en = await readFile(join(root, "README.en.md"), "utf8");
   assert.match(en, /Local-first|local-first/i);
   assert.match(en, /qling setup/);
+  assert.match(en, /eval:tasks/);
+  assert.match(en, /fix-failing-test|example skills/i);
 
   const scoop = await readFile(join(root, "packaging", "scoop", "qling.json"), "utf8");
   assert.match(scoop, /DRAFT|draft|TODO/i);
+  assert.match(scoop, /1\.1\.0/);
 
   const winget = await readFile(join(root, "packaging", "winget", "Zzy-min.qling.yaml"), "utf8");
   assert.match(winget, /PackageIdentifier:\s*Zzy-min\.qling/);
+  assert.match(winget, /PackageVersion:\s*1\.1\.0/);
+});
+
+test("sprint4 ecosystem scripts and skills examples exist", async () => {
+  const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assert.equal(typeof pkg.scripts?.["eval:tasks"], "string");
+  assert.equal(typeof pkg.scripts?.["validate:packaging"], "string");
+  assert.match(pkg.scripts["ci:check"], /eval-tasks/);
+
+  const examples = await readFile(join(root, "skills", "examples", "README.md"), "utf8");
+  assert.match(examples, /fix-failing-test/);
+  assert.match(examples, /add-function/);
+  assert.match(examples, /pr-summary/);
+
+  await readFile(join(root, "docs", "demo.md"), "utf8");
 });

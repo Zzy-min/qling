@@ -8,7 +8,16 @@
 4. 项目 `.qling/skills/`（若存在）
 5. 可选 `HERMES_HOME/skills`
 
-内置：`opencli`（平台数据必读）、`qling`、`examples/repo-triage`、以及 **lifecycle-*** 生命周期六件套。
+内置：`opencli`（平台数据必读）、`qling`、**lifecycle-*** 生命周期六件套，以及 `skills/examples/` 示例包：
+
+| 示例 skill | 用途 |
+|------------|------|
+| `repo-triage` | 陌生仓库快速摸底 |
+| `fix-failing-test` | 修失败单测 |
+| `add-function` | 增量加导出函数 |
+| `pr-summary` | 写 PR / 发布摘要 |
+
+详见 `skills/examples/README.md`。
 
 ## 渐进加载（Progressive Skills）
 

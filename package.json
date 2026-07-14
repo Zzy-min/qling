@@ -83,10 +83,12 @@
     "test:smoke": "npm run build && node --test \"tests/smoke/**/*.test.mjs\"",
     "eval:smoke": "npm run build && node scripts/eval-smoke.mjs",
     "eval:recovery": "npm run build && node scripts/eval-recovery.mjs",
+    "eval:tasks": "npm run build && node scripts/eval-tasks.mjs",
     "eval:llm": "npm run build && node scripts/eval-llm.mjs",
+    "validate:packaging": "node scripts/validate-packaging.mjs",
     "dep:layers": "node scripts/dep-layers.mjs",
     "dep:layers:json": "node scripts/dep-layers.mjs --json",
-    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs"
+    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/validate-packaging.mjs"
   },
   "dependencies": {
     "axios": "^1.7.0",

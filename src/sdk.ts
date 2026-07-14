@@ -49,6 +49,7 @@ export {
   type RunEvalOptions,
 } from "./eval/runner.js";
 export { buildEvalSmokeTasks } from "./eval/tasks.js";
+export { buildEvalRepoTasks, materializeBrokenFixture } from "./eval/repo-tasks.js";
 export { ALL_TOOLS, buildToolRegistry, dispatch } from "./tools/index.js";
 export {
   getPackageVersion,

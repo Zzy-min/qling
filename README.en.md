@@ -3,12 +3,13 @@
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](CHANGELOG.md)
+[![Release](https://img.shields.io/github/v/release/Zzy-min/qling?display_name=tag&sort=semver)](https://github.com/Zzy-min/qling/releases)
 
 **Qling** is a **local-first** AI Agent CLI workbench. It keeps sessions, tools, skills, permissions, diagnostics, long-running missions, and recovery controls in one auditable terminal console.
 
 > One line: Qling turns the agent into a local workbench—not a black-box chat window.
 
-**Chinese docs:** [README.md](README.md) · **Install details:** [docs/install.md](docs/install.md)
+**Chinese docs:** [README.md](README.md) · **Install:** [docs/install.md](docs/install.md) · **Skills:** [docs/skills.md](docs/skills.md) · **Demo notes:** [docs/demo.md](docs/demo.md)
 
 ## Why Qling
 
@@ -16,15 +17,23 @@
 |---|---|
 | Local-first | Sessions, checkpoints, exports, memory, and diagnostics stay on disk; `qling privacy` shows boundaries. |
 | Chinese UX | TUI, help, and slash aliases target Chinese terminals (English works too). |
-| Recoverable | `/checkpoint`, `/resume`, daemon + mission state machines. |
+| Recoverable | `/checkpoint`, `/resume`, `/recover`, staged verification, execution traces. |
 | Governed tools | Permission matrix, approval gate, content filter, audit log. |
 | Honest boundaries | Unsupported cloud features are explained—never faked. |
+
+## What's new in 1.1
+
+- Deterministic recovery strategies + staged verification (`eval:recovery`)
+- Leaner agent core: LLM client, tool orchestration, main loop, system prompt extracted from the monolith
+- Coding precision: atomic patch writes, repo-map/search budgets, bilingual tool-output fold, CJK width
+- Windows unit CI alongside full Ubuntu `ci:check`
+- Sprint 4 ecosystem: `eval:tasks` fixtures, packaging validators, example skills pack
 
 ## Requirements
 
 - Node.js ≥ 18
 - npm ≥ 9
-- Optional: Playwright Chromium for `browser_fetch`
+- Optional: Playwright Chromium for `browser_fetch` / `browser_act`
 
 ## Install
 
@@ -36,27 +45,37 @@ cd qling
 npm run bootstrap
 # optional browser tools:
 npm run bootstrap -- --with-browser
-```
-
-Link the CLI globally:
-
-```bash
 npm link
-qling
+qling --version
 ```
 
 ### From npm
 
+Package name is scoped: **`@qlingzzy/qling`** (CLI binary remains `qling`):
+
 ```bash
 npm install -g @qlingzzy/qling
-# CLI binary is still: qling
 qling bootstrap
 qling setup
 ```
 
-### Windows notes
+From GitHub without npm registry:
 
-See [docs/install.md](docs/install.md) for PowerShell env vars, Scoop draft, and winget draft.
+```bash
+npm install -g github:Zzy-min/qling
+```
+
+> `better-sqlite3` is a native module. On Windows install [VS Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) if prebuilds are unavailable.
+
+### Windows: Scoop / winget drafts
+
+Drafts live under `packaging/` and are **not** in official catalogs yet:
+
+```powershell
+npm run validate:packaging
+```
+
+See [docs/install.md](docs/install.md) for PowerShell env vars, Scoop notes, and winget submission checklist.
 
 ## Minimal config
 
@@ -76,7 +95,7 @@ Interactive wizard (does **not** write secrets into `.env`):
 qling setup
 ```
 
-Any OpenAI-compatible endpoint works via `QLING_LLM_ENDPOINT` + `QLING_LLM_MODEL`.
+Any OpenAI-compatible endpoint works via `QLING_LLM_ENDPOINT` + `QLING_LLM_MODEL`. Local models: `/model use ollama`.
 
 ## Four commands to try
 
@@ -105,24 +124,70 @@ qling privacy           # data retention paths
 /model list    provider presets
 /model use ollama
 /plan on       read-only plan mode
+/skill list    progressive skills index
 /expand        expand long tool output
+/recover       execution recovery controls
+/verify        verification command / stages
 /doctor        environment check
 /privacy       data boundaries
+```
+
+Shift+Tab cycles agent modes in the TUI.
+
+## Skills
+
+Progressive skills: short index in the system prompt; full body loaded on demand via `skill` tool or `/skill`.
+
+Bundled examples (`skills/examples/`):
+
+| Skill | Use when |
+|-------|----------|
+| `repo-triage` | Onboarding an unfamiliar repo |
+| `fix-failing-test` | Red unit tests |
+| `add-function` | Small exported API addition |
+| `pr-summary` | PR / release notes from git |
+
+Also: `opencli`, lifecycle suite (`lifecycle-spec` … `lifecycle-ship`), template at `skills/templates/SKILL.md`.
+
+Details: [docs/skills.md](docs/skills.md).
+
+## Eval & quality gates
+
+```bash
+npm test                 # unit
+npm run test:smoke
+npm run eval:smoke       # local policy/presets smoke
+npm run eval:recovery    # recovery planner fixtures
+npm run eval:tasks       # 10 coding repo fixtures (no LLM)
+npm run validate:packaging
+npm run ci:check         # CI entry (ubuntu); windows runs unit
+# optional with key:
+QLING_EVAL_LLM=1 npm run eval:llm
 ```
 
 ## Design principles
 
 - **Local-first** — valuable state stays on the machine.
 - **Slash-first** — discover controls from `/`.
-- **Recoverable** — checkpoint / resume / recap.
+- **Recoverable** — checkpoint / resume / recover / verify.
 - **Honest boundaries** — no fake success for unsupported features.
 - **Terminal-native** — enhance TUI without heavy GUI deps.
 
+## Packaging status (honest)
+
+| Channel | Status |
+|---------|--------|
+| Source + bootstrap | Ready |
+| npm `@qlingzzy/qling` | Ready when published (`npm login` required on publisher machine) |
+| Scoop | Draft manifest only |
+| winget | Draft YAML only |
+| Portable zip / single binary | Not yet |
+
 ## Version
 
-- Current: `1.0.0`
+- Package: `1.1.0` (see latest tag on GitHub for hotfixes)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
-- Roadmap specs: `docs/superpowers/specs/`
+- Specs / plans: `docs/superpowers/`
 
 ## License
 

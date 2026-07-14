@@ -401,10 +401,12 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 
 ## 版本与变更
 
-- 当前版本：`1.1.0`
+- 当前版本：`1.1.0`（Sprint 4 分发/生态见 CHANGELOG Unreleased）
 - 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
 - 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)
 - Skills：见 [docs/skills.md](docs/skills.md)
+- 演示路径：见 [docs/demo.md](docs/demo.md)
+- 评测：`npm run eval:smoke` / `eval:recovery` / `eval:tasks`
 - 网页/平台路由：见 [docs/web-routing.md](docs/web-routing.md)
 - SDK：见 [docs/sdk.md](docs/sdk.md)
 - 本地评测：`npm run eval:smoke`（无 LLM）；可选 `QLING_EVAL_LLM=1 npm run eval:llm`
