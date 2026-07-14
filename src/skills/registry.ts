@@ -108,7 +108,7 @@ export function parseFrontmatter(raw: string, filePath: string): SkillMeta {
     path: filePath,
   };
 
-  const lines = raw.split("\n");
+  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   const firstIdx = lines.findIndex((l) => l.trim() === "---");
   if (firstIdx < 0) return fallback;
 

@@ -24,6 +24,10 @@ function normalizeMessage(value: string): string {
     .trim();
 }
 
+function portableBasename(value: string): string {
+  return value.includes("\\") ? path.win32.basename(value) : path.posix.basename(value);
+}
+
 export function classifyFailure(error: unknown, context: FailureContext = {}): FailureClassification {
   const message = errorMessage(error);
   const lower = message.toLowerCase();
@@ -59,7 +63,7 @@ export function classifyFailure(error: unknown, context: FailureContext = {}): F
 }
 
 export function createFailureFingerprint(failure: Omit<FailureClassification, "fingerprint">): string {
-  const target = failure.targetPath ? path.basename(failure.targetPath).toLowerCase() : "";
+  const target = failure.targetPath ? portableBasename(failure.targetPath).toLowerCase() : "";
   const stable = [
     failure.category,
     failure.tool ?? "",
