@@ -1,14 +1,14 @@
 # 官方目录提交指南
 
-## 状态（2026-07-15 / v1.2.1）
+## 状态（2026-07-15 / v1.2.2）
 
 | 渠道 | 状态 |
 |------|------|
 | 公共 Scoop bucket | https://github.com/Zzy-min/scoop-qling （**推荐 / 立即可用**） |
 | Scoop Extras PR | https://github.com/ScoopInstaller/Extras/pull/18307 — **已关闭**（维护者：未达 Extras 收录门槛，建议自建 bucket） |
-| winget-pkgs PR | https://github.com/microsoft/winget-pkgs/pull/402294 — **OPEN**，CLA 已通过，manifest **1.2.1** |
-| 便携 zip | https://github.com/Zzy-min/qling/releases/download/v1.2.1/qling-win-x64.zip （内嵌 Node） |
-| npm | `@qlingzzy/qling@1.2.1` |
+| winget-pkgs PR | https://github.com/microsoft/winget-pkgs/pull/402294 — **OPEN**，CLA 已通过，manifest **1.2.2**，等待验证与审核 |
+| 便携 zip | https://github.com/Zzy-min/qling/releases/download/v1.2.2/qling-win-x64.zip （内嵌 Node，远端 SHA256 `4447130fad0a1e51cf23dc3da707ed23bb1f3087c6338ef4e029ffcd8dc89f0f`） |
+| npm | `@qlingzzy/qling@1.2.2` |
 
 ### Scoop Extras 说明（诚实）
 
@@ -31,8 +31,8 @@
 npm run build:portable-win
 npm run sync:winget-sha   # 同时更新 scoop hash（zip）
 
-# 2) 上传 zip 到 GitHub Release（覆盖）
-gh release upload v$(node -p "require('./package.json').version") dist-portable/qling-win-x64.zip --clobber
+# 2) 为新版本创建 GitHub Release；不要覆盖已发布版本的同名资产
+gh release create v$(node -p "require('./package.json').version") dist-portable/qling-win-x64.zip
 
 # 3) Fork + PR
 gh repo fork ScoopInstaller/Extras --clone --fork-name scoop-extras-qling
@@ -63,7 +63,7 @@ packaging/winget/manifests/Zzy-min/qling/<version>/
 ```powershell
 npm run build:portable-win
 npm run sync:winget-sha
-gh release upload v1.2.0 dist-portable/qling-win-x64.zip --clobber
+gh release create v$(node -p "require('./package.json').version") dist-portable/qling-win-x64.zip
 
 gh repo fork microsoft/winget-pkgs --clone --fork-name winget-pkgs-qling
 # copy manifests tree under manifests/z/Zzy-min/qling/<version>/
@@ -73,6 +73,6 @@ gh repo fork microsoft/winget-pkgs --clone --fork-name winget-pkgs-qling
 本地校验（可选 winget 客户端）：
 
 ```powershell
-winget validate packaging/winget/manifests/Zzy-min/qling/1.2.0
-winget install --manifest packaging/winget/manifests/Zzy-min/qling/1.2.0
+winget validate packaging/winget/manifests/Zzy-min/qling/1.2.2
+winget install --manifest packaging/winget/manifests/Zzy-min/qling/1.2.2
 ```
