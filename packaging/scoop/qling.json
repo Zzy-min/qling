@@ -11,7 +11,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/Zzy-min/qling/releases/download/v1.2.1/qling-win-x64.zip",
-            "hash": "7c410780b96036850a35582bb099c0b4d12db5f34a23d1e81e25949f1e3623f6",
+            "hash": "8a594053e28f1f11ad34d9e5f28c16eae02cd2a964f1bc4c28cd3b8ab16c3d46",
             "extract_dir": "qling-win-x64"
         }
     },

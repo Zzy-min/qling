@@ -8,7 +8,8 @@
  *   qling-win-x64/
  *     runtime/node.exe   # bundled Node (same major as build host by default)
  *     package/           # npm pack contents
- *     qling.cmd          # launcher → runtime\node.exe package\dist\index.js
+ *     qling.exe          # WinGet portable entry (Framework csc launcher)
+ *     qling.cmd          # Scoop / shell-friendly launcher
  *     README.txt
  */
 import { spawnSync, execFileSync } from "node:child_process";
@@ -126,6 +127,55 @@ if not defined NODE_EXE (
 `;
 await writeFile(join(STAGE, "qling.cmd"), launcher, "utf8");
 
+// Native .exe launcher for WinGet portable (scripted .cmd/.bat not allowed)
+const launcherCs = join(ROOT, "packaging", "win-launcher", "qling-launcher.cs");
+const launcherExe = join(STAGE, "qling.exe");
+if (!existsSync(launcherCs)) {
+  console.error(`[portable] missing launcher source: ${launcherCs}`);
+  process.exit(1);
+}
+const cscCandidates = [
+  process.env.QLING_CSC,
+  join(
+    process.env.WINDIR || "C:\\Windows",
+    "Microsoft.NET",
+    "Framework64",
+    "v4.0.30319",
+    "csc.exe"
+  ),
+  join(
+    process.env.WINDIR || "C:\\Windows",
+    "Microsoft.NET",
+    "Framework",
+    "v4.0.30319",
+    "csc.exe"
+  ),
+].filter(Boolean);
+const csc = cscCandidates.find((p) => existsSync(p));
+if (!csc) {
+  console.error(
+    "[portable] csc.exe not found (need .NET Framework 4.x). Set QLING_CSC to override."
+  );
+  process.exit(1);
+}
+const cscResult = spawnSync(
+  csc,
+  [
+    "/nologo",
+    "/target:exe",
+    "/platform:anycpu",
+    "/optimize+",
+    `/out:${launcherExe}`,
+    launcherCs,
+  ],
+  { encoding: "utf8" }
+);
+if (cscResult.status !== 0 || !existsSync(launcherExe)) {
+  console.error("[portable] csc failed:", cscResult.stdout, cscResult.stderr);
+  process.exit(1);
+}
+console.log(`[portable] compiled qling.exe via ${csc}`);
+
 const readme = `Qling ${version} — Windows portable layout
 ========================================
 
@@ -135,11 +185,14 @@ Runtime:
   ${nodeNote}
 
 Run:
+  .\\qling.exe --version
   .\\qling.cmd --version
-  .\\qling.cmd doctor
-  .\\qling.cmd setup
+  .\\qling.exe doctor
+  .\\qling.exe setup
 
 Notes:
+  - qling.exe is the WinGet portable entry point (native launcher).
+  - qling.cmd remains for Scoop and interactive shells.
   - better-sqlite3 native binary is compiled for the Node ABI used at pack time.
   - Prefer matching the bundled Node major version if you replace runtime\\node.exe.
 
