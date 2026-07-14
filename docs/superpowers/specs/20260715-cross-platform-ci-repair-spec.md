@@ -18,6 +18,7 @@ The `ci` workflow fails on both supported runners even though the focused tests 
 - Normalize line endings at the frontmatter parsing boundary.
 - Select `path.win32.basename` for drive-letter or backslash paths and `path.posix.basename` otherwise.
 - Add host-independent regression tests for CRLF frontmatter and Windows paths.
+- Persist session task JSON through a same-directory temporary file and atomic rename so concurrent readers never observe partial JSON.
 
 ## Non-goals
 
@@ -31,4 +32,3 @@ The `ci` workflow fails on both supported runners even though the focused tests 
 - The focused unit tests pass locally.
 - `npm run ci:check`, `node scripts/eval-recovery.mjs`, `npm audit`, and `git diff --check` pass.
 - A fresh GitHub Actions run for the pushed fix passes on Windows and Linux before the CI issue is called resolved.
-

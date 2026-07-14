@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import { existsSync } from "fs";
 import * as path from "path";
+import { randomUUID } from "node:crypto";
 
 export type SessionTaskKind = "loop";
 export type SessionTaskMode = "fixed" | "default";
@@ -247,7 +248,13 @@ export class SessionScheduler {
     const payload = Array.from(this.tasks.values())
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(cloneTask);
-    await fs.writeFile(this.stateFile, JSON.stringify(payload, null, 2), "utf-8");
+    const tempFile = `${this.stateFile}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.writeFile(tempFile, JSON.stringify(payload, null, 2), "utf-8");
+    try {
+      await fs.rename(tempFile, this.stateFile);
+    } finally {
+      await fs.rm(tempFile, { force: true }).catch(() => undefined);
+    }
   }
 }
 
