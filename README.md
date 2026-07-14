@@ -10,6 +10,8 @@
 
 > 一句话：轻灵让 Agent 像一个本地工作台，而不是一个黑盒聊天窗口。
 
+> 想试用或参与改进？从 [v1.2.2 Release](https://github.com/Zzy-min/qling/releases/tag/v1.2.2) 或 npm 开始；真实工作流反馈、复现步骤和改进建议都欢迎提交到 [Issues](https://github.com/Zzy-min/qling/issues)。
+
 ## 为什么是轻灵
 
 | 维度 | 轻灵的做法 |
