@@ -80,9 +80,10 @@ try {
 // into the staged package, then rebuild the native dependency with lifecycle
 // scripts enabled only for that dependency.
 const stagedPackage = join(STAGE, "package");
+await copyFile(join(ROOT, "package-lock.json"), join(stagedPackage, "package-lock.json"));
 runChecked(
   process.platform === "win32" ? "npm.cmd" : "npm",
-  ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+  ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
   stagedPackage,
   "install staged production dependencies"
 );
