@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Phase 7.0 — Sprint 4 分发与生态（进行中）
+
+## v1.1.0 (2026-07-14)
+
+1.1 聚焦：**可证明的执行韧性**、**可维护的内核分层**、**编码/TUI 精度** 与 **Windows CI**。
+
+### Highlights
+
+- 执行韧性：确定性恢复策略、`/recover`、验证闭环、脱敏 trace、`eval:recovery`
+- 架构：从 `agent-loop` 抽出 LLM 客户端、工具编排、主循环、system prompt、session 持久、验证闭环
+- 编码精度：patch 原子写、repo-map/search 预算、工具输出折叠与 CJK 宽度
+- CI：ubuntu 全量 + windows unit
+
 ### Phase 6.0 — Sprint 3 编码精度 / TUI / Windows CI
 
 - **patch 原子写**：`writeFileAtomic`（temp + rename，Windows 回退直写），降低半截写入风险。
@@ -10,71 +23,33 @@
 - **TUI**：工具输出折叠 footer 中英双语；底部提示含 Shift+Tab / `/mode`；CJK `visibleWidth` 回归测试。
 - **CI**：ubuntu 全量 `ci:check` + `windows-latest` 跑 unit（`npm run test`）。
 
-### Phase 5.2 — 巨石拆分预备（零行为目标）
+### Phase 5.2 — 巨石拆分预备
 
-- **LLM 客户端抽出**：`src/providers/llm-client.ts`（`LlmHttpClient`）承载 chat/completions + 重试拦截器；`/model` 会话切换会 `reconfigure` 客户端。
-- **记忆 lifecycle 抽出**：`src/memory/lifecycle.ts` 的 `runAutoDream` 承接 auto-dream。
-- **Dashboard 解耦**：`AgentLoop` 对 `dashboard-server` 改为动态 import，消除 agent-runtime → adapters 静态反向边。
-- **工具编排抽出**：`src/agent/tool-orchestrator.ts` 承接参数解析、重复限制、pipeline 执行、内容过滤与结果卫生；`AgentLoop` 仅注入依赖并调度。
-- **验证闭环抽出**：`src/execution/verification-loop.ts` + `recovery-messages.ts` 承接写后 StagedVerifier / advisory / progress / verify 配置落盘。
-- **Session 持久抽出**：`src/session/session-persistence.ts` 承接快照 build/apply；`AgentLoop` 仅 hydrate 运行时字段。
-- **主循环 / system prompt 抽出**：`src/agent/main-loop.ts`（外层 transport 恢复 + 内层 turn 迭代）、`src/agent/system-prompt.ts`（组装 prompt + 内省评估）。
+- **LLM 客户端抽出**：`src/providers/llm-client.ts`（`LlmHttpClient`）
+- **记忆 lifecycle 抽出**：`src/memory/lifecycle.ts` 的 `runAutoDream`
+- **Dashboard 解耦**：对 `dashboard-server` 动态 import
+- **工具编排抽出**：`src/agent/tool-orchestrator.ts`
+- **验证闭环抽出**：`src/execution/verification-loop.ts` + `recovery-messages.ts`
+- **Session 持久抽出**：`src/session/session-persistence.ts`
+- **主循环 / system prompt 抽出**：`src/agent/main-loop.ts`、`src/agent/system-prompt.ts`
 
 ### Phase 5.1 — 验证闭环统一 + Doctor
 
-- **单一恢复验证入口**：写操作恢复只走 `StagedVerifier`；`resolveVerificationStages()` 合并 `QLING_VERIFY_STAGES` / `QLING_VERIFY_TYPECHECK_CMD` / `QLING_VERIFY_TEST_CMD` / `QLING_VERIFY_FULL_CMD` 与 `/verify set`。
-- **Progress 证据增强**：验证失败写入 `changedFiles`（basename）、`attemptedStrategies`、`currentStrategy` 与 fingerprint。
-- **VerificationAgent 降级**：标 deprecated；默认规则旁路、不驱动恢复；`QLING_VERIFY_LLM=1` 才启用旧 LLM 旁路。
-- **Doctor Phase5**：`recovery_budget` / `run_traces` / `verifier_stages` / `verify_llm_advisory`。
-- **Metrics**：`pausedRuns`、`averageTimeToPauseMs`。
+- 写操作恢复只走 `StagedVerifier`；多阶段 env 配置
+- Progress 含 `changedFiles` / 策略字段
+- Doctor Phase5：`recovery_budget` / `run_traces` / `verifier_stages` / `verify_llm_advisory`
+- Metrics：`pausedRuns`、`averageTimeToPauseMs`
 
 ### Phase 5.0 — 执行韧性收口
 
-- **确定性恢复策略表**：`RecoveryStrategyPlanner` 为每类失败给出可执行策略或硬停；`RecoveryController` 记录 `currentStrategy` / `attemptedStrategies`。
-- **动作语义**：`/recover retry` 复用当前策略；`next` 消耗下一条；`edit` 恢复草稿并结束执行卡片；`cancel` 随时可取消；非 paused 时 retry/next/edit 明确拒绝。
-- **AgentLoop 定向恢复**：自动恢复写入策略指令；`compact_context_once` 实际调用一次上下文压缩；验证失败路径带策略与失败测试证据。
-- **TUI 阶段可见性**：订阅 execution events，阶段变化时输出单行状态（含 category / strategy）。
-- **评测**：`eval:recovery` 覆盖 hard-stop、context 单次压缩、策略 next、进度改善与 metrics 重放。
+- `RecoveryStrategyPlanner` + 暂停动作语义
+- TUI 订阅 execution events
+- `eval:recovery` 扩充
 
-### TUI — Shift+Tab 模式循环
+### TUI / Dashboard / Phase 3–4（延续）
 
-- 新增 `Shift+Tab` 快速循环 `Agent/ask → Plan → Agent/allow (Always Agree) → Agent/ask`，切换时保留当前草稿。
-- 新增 `/mode [status|cycle]` 与 `/模式` 本地命令；模式只影响当前进程，Plan Mode 仍优先拒绝写工具。
-- 正确消费 Windows Terminal 的 `ESC [ Z` 序列，不再把尾部 `Z` 错误插入输入框。
-
-### TUI — Slash/Skill 输入框恢复
-
-- 修复 `/skill`、`/plan` 等本地 slash 命令完成后输入框被队列内外重复恢复、连续绘制两次的问题；输入框现在只在整条输入队列排空后恢复一次。
-
-### Dashboard — 本地任务工作台
-
-- **统一任务中心**：Mission、session loop task 与当前 Workflow 使用同一状态模型，活跃任务优先并支持筛选、搜索和按需详情。
-- **首屏性能**：新增单请求快照、750ms 服务端缓存、稳定 ETag/304；指标倒序读取最多扫描 1 MiB，任务正文与日志按需加载。
-- **安全控制**：Mission 根据 daemon 健康状态开放暂停、恢复、取消和重试；Loop 仅允许取消，Workflow 保持只读。
-- **本地边界**：Dashboard 仅监听 `127.0.0.1`，启用 CSP 与基础安全头，移除通配 CORS，未知 API 返回 JSON 404。
-- **可维护前端**：浏览器客户端、页面与样式从服务端拆分并纳入 TypeScript 构建，修复旧内嵌脚本无法解析而停留在“加载中”的问题。
-
-### Phase 3.0 — Harness Lean（续调研落地）
-
-- **工具结果上下文卫生**：入会话前折叠超长 tool output（默认 `QLING_TOOL_RESULT_MAX_CHARS=6000`，`0` 关闭）；保留头尾与元数据。
-- **`/context` Harness 层**：展示 history / 工具输出 / 其他的本地字符占比（非 provider token）。
-- 模块：`src/context-tool-hygiene.ts`。
-
-### Phase 3.1 — Progressive Skills + 安全扫描
-
-- **渐进索引**：system skills 节仅 name/description/tags/triggers；正文仍 `skill` 按需加载。
-- **静态安全扫描**：`QLING_SKILL_SCAN=on|warn|off`；critical/high 默认拒绝加载。
-- **生命周期 skills**：`lifecycle-spec|plan|build|test|review|ship`（中文原创）。
-- 文档：`docs/skills.md` 更新；生态续调研 spec/plan：
-  - `docs/superpowers/specs/20260710-agent-ecosystem-refresh-and-phase3-roadmap-spec.md`
-  - `docs/superpowers/plans/20260710-phase3-harness-lean-skills-orchestration-plan.md`
-
-### Phase 3.2 — 角色化 Sub-agent
-
-- **`role=explore|implement|review`**：工具白名单隔离；始终禁止嵌套 `subtask`。
-- **回传契约**：父上下文只收摘要 / files_touched / evidence，不整段上浮子会话。
-- **`/agents`**：默认展示角色说明 + mission；`/agents roles` / `/agents missions` 可分看。
-- 模块：`src/agents/roles.ts`；`src/agent/subtask.ts` / `src/tools/subtask.ts` 接线。
+- Shift+Tab 模式循环、Slash 输入框修复、Dashboard 任务工作台
+- Harness lean、progressive skills、角色 sub-agent、browser_act、LSP 可选等（详见下方历史与 v1.0.0）
 
 ### Phase 3.4 — Eval harness 指标（smoke 增量）
 

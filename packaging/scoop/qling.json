@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "轻灵 Qling — local-first Chinese AI Agent CLI workbench",
   "homepage": "https://github.com/Zzy-min/qling",
   "license": "MIT",
@@ -7,12 +7,13 @@
     "DRAFT manifest — not published to an official Scoop bucket.",
     "Requires Node.js >= 18 on PATH.",
     "Replace url/hash with a pinned npm tarball or GitHub Release asset before publishing.",
-    "API keys must be set as user environment variables (never commit secrets)."
+    "API keys must be set as user environment variables (never commit secrets).",
+    "Until a portable zip exists, prefer: npm install -g @qlingzzy/qling@1.1.0"
   ],
   "depends": [
     "nodejs"
   ],
-  "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-1.0.0.tgz",
+  "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-1.1.0.tgz",
   "hash": "TODO_REPLACE_WITH_SHA256_OF_TGZ",
   "extract_dir": "package",
   "bin": "bin\\qling.cmd",

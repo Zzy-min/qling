@@ -2,7 +2,7 @@
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](CHANGELOG.md)
 
 **Qling** is a **local-first** AI Agent CLI workbench. It keeps sessions, tools, skills, permissions, diagnostics, long-running missions, and recovery controls in one auditable terminal console.
 
