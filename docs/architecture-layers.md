@@ -171,11 +171,13 @@ npm run dep:layers
 
 ## 8. 下一步治理顺序（建议）
 
-1. 抽出 `SlashCommandContext` → 切断 adapters→cli
-2. `eval/` 改挂 adapters 或独立 `eval` 层
-3. `SkillMeta` 下沉 foundation
-4. agent-loop 与 dashboard 解耦
+1. ~~agent-loop 与 dashboard 解耦~~（2026-07-14：动态 import，静态边已断）
+2. 抽出 `SlashCommandContext` → 切断 adapters→cli
+3. `eval/` 改挂 adapters 或独立 `eval` 层
+4. `SkillMeta` 下沉 foundation
 5. 再考虑 monorepo workspaces
+
+**已落地拆分（Phase 5.2）**：`providers/llm-client.ts`（foundation）、`memory/lifecycle.ts`（domain）。`forbiddenCount` 20→19。
 
 ---
 
@@ -183,3 +185,4 @@ npm run dep:layers
 
 - Phase 4 总路线：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
 - 扫描脚本：`scripts/dep-layers.mjs`
+- Phase 5.2 收口：`docs/superpowers/reviews/20260714-phase52-agent-loop-extract-closeout.md`
