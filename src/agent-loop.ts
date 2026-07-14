@@ -188,7 +188,7 @@ export class AgentLoop extends AgentEventEmitter {
     prompt?: string;
   } {
     const state = this.recoveryController.applyAction(action);
-    if (action === "cancel" && this.activeRun) {
+    if ((action === "cancel" || action === "edit") && this.activeRun) {
       this.executionEventBus.completeRun(this.activeRun.runId, "canceled");
       this.activeRun = null;
     }
@@ -644,6 +644,7 @@ export class AgentLoop extends AgentEventEmitter {
           continue;
         }
         const decision = this.recoveryController.recordFailure(failure, {});
+        const recoveryState = this.recoveryController.getRecoveryState();
         this.executionEventBus.emit({
           runId,
           sessionId: this.sessionId,
@@ -652,11 +653,12 @@ export class AgentLoop extends AgentEventEmitter {
           stage: "agent",
           category: decision.category,
           fingerprint: failure.fingerprint,
-          recoveryAction: decision.action,
+          recoveryAction: decision.recommendedStrategy ?? decision.action,
         });
-        this.emit("recovery_paused", this.recoveryController.getRecoveryState(), decision);
+        this.emit("recovery_paused", recoveryState, decision);
         if (decision.action === "pause") return this.formatRecoveryPause(failure.message, decision.reason);
-        this.emit("repair", failure.message, decision.reason, this.recoveryController.getRecoveryState().strategyAttempts);
+        await this.applyRecoveryStrategy(failure, decision.recommendedStrategy);
+        this.emit("repair", failure.message, decision.recommendedStrategy ?? decision.reason, recoveryState.strategyAttempts);
         continue;
       }
     }
@@ -1033,7 +1035,7 @@ export class AgentLoop extends AgentEventEmitter {
               category: decision.category,
               fingerprint: failure.fingerprint,
               progress,
-              recoveryAction: decision.action,
+              recoveryAction: decision.recommendedStrategy ?? decision.action,
             });
             if (decision.action === "pause") {
               this.executionEventBus.completeAttempt(runId, "failed");
@@ -1042,13 +1044,16 @@ export class AgentLoop extends AgentEventEmitter {
             }
             const stdout = verification.stdout.slice(-2_000);
             const stderr = verification.stderr.slice(-2_000);
+            const strategy = decision.recommendedStrategy ?? "targeted_verification_repair";
             this.messages.push({
               role: "user",
-              content: `【定向验证失败】阶段=${verification.failedStage} 命令=\`${this.verificationCommand}\`\n` +
-                `失败测试=${verification.failingTests.join(", ") || "unknown"}\n[stdout]\n${stdout}\n[stderr]\n${stderr}\n` +
-                "仅修复当前失败集合；不得重复无关的全量验证。",
+              content:
+                `【定向验证失败】阶段=${verification.failedStage} 命令=\`${this.verificationCommand}\`\n` +
+                `失败测试=${verification.failingTests.join(", ") || "unknown"}\n` +
+                `恢复策略=${strategy}\n[stdout]\n${stdout}\n[stderr]\n${stderr}\n` +
+                this.formatRecoveryInstruction(failure, strategy).split("\n").slice(1).join("\n"),
             });
-            this.emit("repair", failure.message, "targeted_verification_repair", state.strategyAttempts);
+            this.emit("repair", failure.message, strategy, state.strategyAttempts);
             this.executionEventBus.completeAttempt(runId, "recovering");
             continue;
           }
@@ -1114,10 +1119,50 @@ export class AgentLoop extends AgentEventEmitter {
       "执行已暂停",
       `原因: ${reason}`,
       `已尝试: ${this.getRecoveryState()?.strategyAttempts ?? 0} 次恢复策略`,
+      `当前策略: ${this.getRecoveryState()?.currentStrategy ?? "-"}`,
       `当前证据: ${this.getRecoveryState()?.lastFailure?.fingerprint ?? "-"}`,
       `下一步: ${next}；使用 /recover retry|next|edit|cancel`,
       "边界: 本地摘要轨迹已保存，不包含 prompt 或工具正文。",
     ].join("\n");
+  }
+
+  private formatRecoveryInstruction(failure: { category: string; message: string }, strategy?: string): string {
+    const instructions: Record<string, string> = {
+      repair_tool_arguments: "检查工具参数 schema，修正参数后只重试这一次工具调用。",
+      return_tool_schema: "不要继续执行工具；说明缺失或非法字段，并给出正确参数示例。",
+      inspect_command_environment: "先检查 PATH、package scripts 和当前平台可用命令，再选择一个有证据支持的替代命令。",
+      use_supported_command: "改用工作区内已有的 package script 或轻灵已注册工具，不要盲目重复原命令。",
+      inspect_tool_error: "分析工具错误的直接原因，只修改当前失败目标。",
+      retry_tool_once: "在确认参数和目标未变化后，仅重试当前工具一次。",
+      narrow_tool_scope: "缩小工具操作范围到当前失败目标，避免重复无关操作。",
+      return_tool_diagnostics: "停止重复调用，返回可验证的诊断信息和下一步建议。",
+      targeted_verification_repair: "仅修复当前失败测试集合，不重复无关的全量验证。",
+      narrow_verification_scope: "缩小验证范围到受影响文件和失败测试，先取得可观测进展。",
+      compact_context_once: "仅执行一次上下文压缩，保留用户原文、工具链和错误证据，然后继续任务。",
+      transport_retry: "提供方瞬时错误已退避；不要改变任务目标，直接继续。",
+    };
+    return `【定向恢复】失败类别=${failure.category}；失败原因=${failure.message}\n` +
+      `恢复策略=${strategy ?? "暂无"}\n${instructions[strategy ?? ""] ?? "停止重复动作，基于最新证据选择下一步。"}`;
+  }
+
+  private async applyRecoveryStrategy(
+    failure: { category: string; message: string },
+    strategy?: string
+  ): Promise<void> {
+    if (strategy === "compact_context_once") {
+      const result = await this.compactSessionNow();
+      this.messages.push({
+        role: "user",
+        content:
+          this.formatRecoveryInstruction(failure, strategy) +
+          `\n上下文压缩结果: before=${result.beforeCount} after=${result.afterCount} changed=${result.changed}`,
+      });
+      return;
+    }
+    this.messages.push({
+      role: "user",
+      content: this.formatRecoveryInstruction(failure, strategy),
+    });
   }
 
   private async getWorkspaceDiffHash(): Promise<string> {

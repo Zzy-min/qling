@@ -2431,7 +2431,7 @@ test("slash recover edit restores the original task into the input draft", async
 
   assert.equal(await handleSlashCommand("/recover edit", ctx), true);
   assert.equal(draft, "修复构建");
-  assert.match(lines.join("\n"), /edit/);
+  assert.match(lines.join("\n"), /原任务草稿|执行卡片已结束|edit/);
 });
 
 test("slash recover next queues a distinct recovery prompt", async () => {

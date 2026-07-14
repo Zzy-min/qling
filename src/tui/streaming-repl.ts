@@ -35,6 +35,7 @@ export class StreamingREPL {
   private readonly inputQueue: SerialInputQueue;
   private closed = false;
   private onClose: (() => void) | null = null;
+  private lastExecutionStatus = "";
 
   constructor(
     agent?: AgentLoop,
@@ -108,6 +109,21 @@ export class StreamingREPL {
   // ── 事件连接 ────────────────────────────────────────
 
   private wireAgentEvents(): void {
+    const subscribe = (this.agent as any).subscribeExecutionEvents;
+    if (typeof subscribe === "function") {
+      subscribe.call(this.agent, (event: any) => {
+        const strategy = event.recoveryAction ? ` · ${event.recoveryAction}` : "";
+        const status = `${event.stage ?? "run"}:${event.status ?? event.type}${strategy}`;
+        if (status === this.lastExecutionStatus) return;
+        this.lastExecutionStatus = status;
+        const tool = event.tool ? ` · ${event.tool}` : "";
+        const category = event.category ? ` · ${event.category}` : "";
+        this.ui.appendValidation(
+          event.status === "failed" || event.status === "paused" ? "warn" : "pass",
+          `执行阶段: ${event.stage ?? "run"} · ${event.status ?? event.type}${tool}${category}${strategy}`
+        );
+      });
+    }
     this.agent.on("tool_start", (name: string, args: Record<string, unknown>) => {
       const cmd = this.argsToCommand(name, args);
       this.ui.appendToolStart(name, cmd);

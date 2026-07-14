@@ -72,6 +72,8 @@ export interface RecoveryState {
   status: "running" | "recovering" | "paused" | "failed" | "canceled";
   strategyAttempts: number;
   remainingStrategyAttempts: number;
+  currentStrategy?: string;
+  attemptedStrategies: string[];
   lastFailure?: FailureClassification;
   lastProgress?: ProgressSnapshot;
 }

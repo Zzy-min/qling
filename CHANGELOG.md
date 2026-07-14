@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Phase 5.0 — 执行韧性收口
+
+- **确定性恢复策略表**：`RecoveryStrategyPlanner` 为每类失败给出可执行策略或硬停；`RecoveryController` 记录 `currentStrategy` / `attemptedStrategies`。
+- **动作语义**：`/recover retry` 复用当前策略；`next` 消耗下一条；`edit` 恢复草稿并结束执行卡片；`cancel` 随时可取消；非 paused 时 retry/next/edit 明确拒绝。
+- **AgentLoop 定向恢复**：自动恢复写入策略指令；`compact_context_once` 实际调用一次上下文压缩；验证失败路径带策略与失败测试证据。
+- **TUI 阶段可见性**：订阅 execution events，阶段变化时输出单行状态（含 category / strategy）。
+- **评测**：`eval:recovery` 覆盖 hard-stop、context 单次压缩、策略 next、进度改善与 metrics 重放。
+
 ### TUI — Shift+Tab 模式循环
 
 - 新增 `Shift+Tab` 快速循环 `Agent/ask → Plan → Agent/allow (Always Agree) → Agent/ask`，切换时保留当前草稿。
