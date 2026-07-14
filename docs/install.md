@@ -89,13 +89,19 @@ qling
 ### D1. 本仓库自建 bucket（推荐试用）
 
 ```powershell
-cd path\to\qling
-scoop bucket add qling "$PWD\packaging\scoop-bucket"
-scoop install qling/qling
+# 公共 bucket（推荐）
+scoop bucket add qling https://github.com/Zzy-min/scoop-qling
+scoop install qling
+
+# 或从本仓库本地路径
+# scoop bucket add qling "$PWD\packaging\scoop-bucket"
+# scoop install qling/qling
+
 qling --version
 ```
 
-说明见 `packaging/scoop-bucket/README.md`。清单含真实 npm tarball SHA256；若原生模块 shim 不理想，manifest 会提示改用 npm 全局安装。
+便携包内嵌 Node 运行时，**无需系统安装 Node**。公共 bucket：https://github.com/Zzy-min/scoop-qling  
+官方 Extras PR：https://github.com/ScoopInstaller/Extras/pull/18307
 
 ### D2. 校验与同步
 

@@ -1,5 +1,14 @@
 # 官方目录提交指南
 
+## 状态（2026-07-14）
+
+| 渠道 | 状态 |
+|------|------|
+| 公共 Scoop bucket | https://github.com/Zzy-min/scoop-qling |
+| Scoop Extras PR | https://github.com/ScoopInstaller/Extras/pull/18307 |
+| winget-pkgs PR | https://github.com/microsoft/winget-pkgs/pull/402294 |
+| 便携 zip | https://github.com/Zzy-min/qling/releases/download/v1.2.0/qling-win-x64.zip （内嵌 Node） |
+
 ## Scoop Extras
 
 目标仓库：https://github.com/ScoopInstaller/Extras
