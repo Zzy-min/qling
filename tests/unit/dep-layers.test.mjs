@@ -44,3 +44,13 @@ test("scanLayers returns structure", async () => {
   assert.ok(Array.isArray(r.edges));
   assert.ok(typeof r.forbiddenCount === "number");
 });
+
+test("agent-loop no longer statically depends on dashboard-server (adapters)", async () => {
+  const r = await scanLayers();
+  const bad = r.forbidden.filter(
+    (edge) => edge.from === "agent-loop.ts" && edge.to === "dashboard-server.ts"
+  );
+  assert.deepEqual(bad, []);
+  assert.equal(layerOf("providers/llm-client.ts"), "foundation");
+  assert.equal(layerOf("memory/lifecycle.ts"), "domain");
+});

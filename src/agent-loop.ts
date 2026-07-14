@@ -3,7 +3,6 @@
 // Token 计数仅采用 provider 官方 usage 字段。
 // ============================================================
 
-import axios from "axios";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
@@ -12,15 +11,13 @@ import { existsSync } from "fs";
 import { dispatch, ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry, buildSystemPrompt, buildRepoMapSection } from "./pipeline/sections.js";
-import { MemoryStore, extractDreamMemories } from "./memory.js";
+import { MemoryStore } from "./memory.js";
 import {
-  extractProviderUsage,
   resolveRoundTokenUsage,
-  type ChatUsage,
   type TokenUsageSource,
 } from "./token-usage.js";
 import { WriteAheadLog } from "./memory/wal.js";
-import { extractDreamMemoriesLLM } from "./memory/memory-llm-dream.js";
+import { runAutoDream } from "./memory/lifecycle.js";
 import { MCPRegistry } from "./mcp/registry.js";
 import { mcpToolsToNativeDefinitions } from "./mcp/bridge.js";
 import { ApprovalGate, ApprovalRequiredError } from "./guard/approval.js";
@@ -31,11 +28,10 @@ import type { MCPServerConfig } from "./types.js";
 import { VerificationAgent } from "./pipeline/verification.js";
 import { ContextCompactor } from "./context-compactor.js";
 import { KnowledgeAgentAdapter } from "./knowledge-agent.js";
-import type { AgentConfig, Message, RawToolCall, ToolCall, ToolResult } from "./types.js";
+import type { AgentConfig, Message, ToolCall, ToolResult } from "./types.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
 import { WorkflowBuilder } from "./workflow-types.js";
 import { checkToolConsistency } from "./pipeline/consistency-checker.js";
-import { DashboardServer } from "./dashboard-server.js";
 import { DiscoveryRegistry } from "./discovery-registry.js";
 import { DiscoverySource } from "./discovery-types.js";
 import { MissionManager } from "./mission/manager.js";
@@ -54,6 +50,7 @@ import {
   apiKeyRequiredForEndpoint,
   isLoopbackEndpoint,
 } from "./providers/presets.js";
+import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
 import { maybeAutoCommitAfterWrite } from "./git/auto-commit.js";
 import {
   prepareToolResultContent,
@@ -71,6 +68,12 @@ import {
 } from "./execution/verification-stages.js";
 import type { ProgressSnapshot } from "./execution/types.js";
 import { createHash } from "node:crypto";
+
+/** Minimal surface so agent-runtime does not statically import adapters/dashboard. */
+interface DashboardHandle {
+  start(): Promise<void>;
+  stop(): void;
+}
 
 const HOME_DIR = os.homedir();
 const DEFAULT_QLING_DIR = path.join(HOME_DIR, ".qling");
@@ -107,12 +110,6 @@ interface TurnTelemetry {
   toolFailures: number;
 }
 
-interface ChatResponse {
-  content: string;
-  tool_calls?: RawToolCall[];
-  usage?: ChatUsage;
-}
-
 export class AgentEventEmitter {
   private handlers = new Map<string, Set<Function>>();
 
@@ -131,7 +128,7 @@ export class AgentEventEmitter {
 
 export class AgentLoop extends AgentEventEmitter {
   // --- 核心组件 ---
-  private client: ReturnType<typeof axios.create>;
+  private llmClient: LlmHttpClient;
   private messages: Message[] = [];
   private config: AgentConfig;
   private turnCount = 0;
@@ -157,7 +154,7 @@ export class AgentLoop extends AgentEventEmitter {
   private approvalGate: ApprovalGate;
   private metricsCollector: MetricsCollector | null = null;
   private metricsFlushTimer: ReturnType<typeof setInterval> | null = null;
-  private dashboardServer: DashboardServer | null = null;
+  private dashboardServer: DashboardHandle | null = null;
   private discoveryRegistry: DiscoveryRegistry;
   private missionManager: MissionManager;
   private telemetry: AgentTelemetry | null = null;
@@ -375,37 +372,16 @@ export class AgentLoop extends AgentEventEmitter {
     });
     this.missionManager = new MissionManager(this.runtimeRootDir);
 
-    // HTTP client + retry interceptor
-    this.client = axios.create({
-      baseURL: endpoint,
-      headers: {
-        Authorization: "Bearer " + this.config.apiKey,
-        "Content-Type": "application/json",
+    // HTTP client（foundation: providers/llm-client）
+    this.llmClient = new LlmHttpClient({
+      endpoint,
+      apiKey: this.config.apiKey,
+      timeoutMs: this.resolveLlmRequestTimeout(),
+      provider: this.config.provider,
+      onRetry: () => {
+        this.retryCountTotal++;
       },
-      timeout: this.resolveLlmRequestTimeout(),
     });
-
-    this.client.interceptors.response.use(
-      (response) => response,
-      async (err) => {
-        const cfg = err.config;
-        const maxRetries = 3;
-        cfg.__retryCount = cfg.__retryCount ?? 0;
-        // 只在 429 / 500-503 / ECONNRESET / ETIMEDOUT 时重试
-        const status = err.response?.status;
-        const shouldRetry =
-          (!err.response || status === 429 || (status >= 500 && status <= 503)) &&
-          cfg.__retryCount < maxRetries;
-        if (shouldRetry) {
-          cfg.__retryCount++;
-          this.retryCountTotal++;
-          const delay = Math.min(1000 * Math.pow(2, cfg.__retryCount - 1), 10_000);
-          await new Promise((r) => setTimeout(r, delay));
-          return this.client(cfg);
-        }
-        return Promise.reject(err);
-      }
-    );
 
     // 初始化系统（存储 promise，在 run() 中 await）
     this.initPromise = this.init();
@@ -533,18 +509,20 @@ export class AgentLoop extends AgentEventEmitter {
           console.error("[Metrics] enabled, dir=" + metricsDir);
         }
 
-        // v0.3 Dashboard Server
+        // v0.3 Dashboard Server — dynamic import keeps agent-runtime free of adapters static edge
         if (dashboardEnabled) {
-          this.dashboardServer = new DashboardServer({
-            port: Number(process.env.QLING_DASHBOARD_PORT) || 9999,
-            collector: this.metricsCollector,
-            workflowRuntime: this.workflowRuntime,
-            agentLoop: this,
-          });
           try {
+            const { DashboardServer } = await import("./dashboard-server.js");
+            this.dashboardServer = new DashboardServer({
+              port: Number(process.env.QLING_DASHBOARD_PORT) || 9999,
+              collector: this.metricsCollector,
+              workflowRuntime: this.workflowRuntime,
+              agentLoop: this,
+            });
             await this.dashboardServer.start();
           } catch (serverErr: any) {
             console.warn(`⚠️ Dashboard 启动跳过: ${serverErr.message}`);
+            this.dashboardServer = null;
           }
         }
       } catch (err) {
@@ -1246,6 +1224,17 @@ export class AgentLoop extends AgentEventEmitter {
       if (ensured) this.config.apiKey = ensured;
     }
 
+    // Keep HTTP client in sync with session endpoint / key
+    this.llmClient.reconfigure({
+      endpoint: this.config.endpoint ?? "",
+      apiKey: this.config.apiKey,
+      timeoutMs: this.resolveLlmRequestTimeout(),
+      provider: this.config.provider,
+      onRetry: () => {
+        this.retryCountTotal++;
+      },
+    });
+
     return {
       provider: this.config.provider ?? "unknown",
       endpoint: this.config.endpoint ?? "",
@@ -1579,68 +1568,28 @@ export class AgentLoop extends AgentEventEmitter {
     return parts.join("\n\n");
   }
 
-  private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<ChatResponse> {
-    const systemMsg: Message = { role: "system", content: systemPrompt };
-    const payload = {
-      model: this.config.model,
-      messages: [systemMsg, ...this.messages],
-      tools: this.config.tools.map((t) => ({
-        type: "function",
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      })),
-      stream: false,
-      ...overrides,
-    };
-
+  private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<LlmChatResponse> {
     await this.maybeDumpInspect("prompt", {
       turn: this.turnCount,
       model: this.config.model,
       runtime: this.config.runtime ?? null,
       prompt: systemPrompt,
     });
-    await this.maybeDumpInspect("request", payload);
+    await this.maybeDumpInspect("request", {
+      model: this.config.model,
+      systemPrompt,
+      messageCount: this.messages.length,
+      toolCount: this.config.tools.length,
+      overrides,
+    });
 
-    let resp;
-    try {
-      resp = await this.client.post("/chat/completions", payload);
-    } catch (err) {
-      const e = err as any;
-      const detail = JSON.stringify(e.response?.data ?? {}).slice(0, 500);
-      throw new Error(`${this.config.provider} API error: ` + detail);
-    }
-
-    const choice = resp.data.choices?.[0];
-    if (!choice) throw new Error(`${this.config.provider} API error: ` + JSON.stringify(resp.data));
-
-    const msg = choice.message;
-    let rawToolCalls: RawToolCall[] | undefined;
-
-    if (msg.tool_calls && msg.tool_calls.length > 0) {
-      rawToolCalls = msg.tool_calls.map((tc: any) => ({
-        id: tc.id,
-        type: "function" as const,
-        function: {
-          name: tc.function.name,
-          arguments:
-            typeof tc.function.arguments === "string"
-              ? tc.function.arguments
-              : JSON.stringify(tc.function.arguments),
-        },
-      }));
-    }
-
-    // 优先解析 data.usage；若无则尝试整包 data（Ollama 等顶层字段）
-    const usage =
-      extractProviderUsage(resp.data?.usage) ?? extractProviderUsage(resp.data);
-    return {
-      content: msg.content ?? "",
-      tool_calls: rawToolCalls,
-      usage,
-    };
+    return this.llmClient.chatCompletions({
+      model: this.config.model,
+      systemPrompt,
+      messages: this.messages,
+      tools: this.config.tools,
+      overrides,
+    });
   }
 
   /**
@@ -1748,55 +1697,21 @@ export class AgentLoop extends AgentEventEmitter {
 
   private async checkAutoDream(): Promise<void> {
     try {
-      const transcript = this.messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => m.content);
-
-      let memories: string[];
-      let changedCount = 0;
-
-      if (this.memoryDreamLLMEnabled) {
-        memories = await extractDreamMemoriesLLM(
-          transcript,
-          this.turnCount,
-          {
-            enabled: true,
-            model: this.config.model,
-            maxTokens: 300,
-            apiKey: this.config.apiKey,
-            endpoint: this.config.endpoint ?? "https://api.deepseek.com",
-          }
-        );
-
-        const { consolidateMemoriesLLM } = await import("./memory/consolidation.js");
-        const existing = this.memoryStore.exportPersisted();
-        const ops = await consolidateMemoriesLLM(memories, existing, {
-          apiKey: this.config.apiKey,
-          endpoint: this.config.endpoint ?? "https://api.deepseek.com",
-          model: this.config.model,
-        });
-
-        this.memoryStore.applyOperations(ops, "workspace");
-        changedCount = ops.filter((op) => op.action !== "NOOP").length;
-      } else {
-        memories = await extractDreamMemories(
-          { turnCount: this.turnCount, transcript },
-          { enabled: true, turnThreshold: this.memoryDreamTurnThreshold, transcriptWindow: 4 }
-        );
-        const existingContents = new Set(this.memoryStore.exportPersisted().map((e) => e.content));
-        const newMems = memories.filter((m) => !existingContents.has(m));
-        for (const mem of newMems) {
-          this.memoryStore.add(mem, "auto-dream", 0.6);
-        }
-        changedCount = newMems.length;
-      }
-
+      const changedCount = await runAutoDream({
+        messages: this.messages,
+        turnCount: this.turnCount,
+        memoryStore: this.memoryStore,
+        memoryDreamLLMEnabled: this.memoryDreamLLMEnabled,
+        memoryDreamTurnThreshold: this.memoryDreamTurnThreshold,
+        memoryMaxEntries: this.memoryMaxEntries,
+        model: this.config.model,
+        apiKey: this.config.apiKey,
+        endpoint: this.config.endpoint ?? "https://api.deepseek.com",
+      });
       if (changedCount > 0) {
-        this.memoryStore.compactPersisted(this.memoryMaxEntries);
-        await this.memoryStore.saveToDisk();
         console.error("[AutoDream] " + changedCount + " 项长期记忆已整理并保存");
       }
-    } catch (err) {
+    } catch {
       // ignore
     }
   }

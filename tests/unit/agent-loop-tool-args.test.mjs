@@ -233,7 +233,7 @@ test("agent-loop: llm request timeout uses QLING_LLM_REQUEST_TIMEOUT_MS", async 
   });
 
   try {
-    assert.equal(agent.client.defaults.timeout, 4321);
+    assert.equal(agent.llmClient.getTimeoutMs(), 4321);
   } finally {
     await agent.shutdown();
     restoreEnv(prev);
@@ -262,14 +262,12 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
 
   try {
     agent.checkAutoDream = async () => {};
-    agent.client.post = async () => ({
-      data: {
-        choices: [{ message: { content: "done" } }],
-        usage: {
-          prompt_tokens: 111,
-          completion_tokens: 210,
-          total_tokens: 321,
-        },
+    agent.llmClient.chatCompletions = async () => ({
+      content: "done",
+      usage: {
+        promptTokens: 111,
+        completionTokens: 210,
+        totalTokens: 321,
       },
     });
 
@@ -309,10 +307,8 @@ test("agent-loop: session token stats stay unknown when provider usage is missin
 
   try {
     agent.checkAutoDream = async () => {};
-    agent.client.post = async () => ({
-      data: {
-        choices: [{ message: { content: "done" } }],
-      },
+    agent.llmClient.chatCompletions = async () => ({
+      content: "done",
     });
 
     agent.addUserMessage("no usage fields");

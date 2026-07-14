@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Phase 5.2 — 巨石拆分预备（零行为目标）
+
+- **LLM 客户端抽出**：`src/providers/llm-client.ts`（`LlmHttpClient`）承载 chat/completions + 重试拦截器；`/model` 会话切换会 `reconfigure` 客户端。
+- **记忆 lifecycle 抽出**：`src/memory/lifecycle.ts` 的 `runAutoDream` 承接 auto-dream。
+- **Dashboard 解耦**：`AgentLoop` 对 `dashboard-server` 改为动态 import，消除 agent-runtime → adapters 静态反向边。
+
 ### Phase 5.1 — 验证闭环统一 + Doctor
 
 - **单一恢复验证入口**：写操作恢复只走 `StagedVerifier`；`resolveVerificationStages()` 合并 `QLING_VERIFY_STAGES` / `QLING_VERIFY_TYPECHECK_CMD` / `QLING_VERIFY_TEST_CMD` / `QLING_VERIFY_FULL_CMD` 与 `/verify set`。
