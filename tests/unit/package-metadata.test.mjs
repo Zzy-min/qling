@@ -54,12 +54,12 @@ test("install docs and packaging drafts exist", async () => {
 
   const scoop = await readFile(join(root, "packaging", "scoop", "qling.json"), "utf8");
   assert.match(scoop, /DRAFT|draft/i);
-  assert.match(scoop, /1\.1\.0/);
+  assert.match(scoop, /1\.1\.1/);
   assert.match(scoop, /sha256:[a-f0-9]{64}/i);
 
   const winget = await readFile(join(root, "packaging", "winget", "Zzy-min.qling.yaml"), "utf8");
   assert.match(winget, /PackageIdentifier:\s*Zzy-min\.qling/);
-  assert.match(winget, /PackageVersion:\s*1\.1\.0/);
+  assert.match(winget, /PackageVersion:\s*1\.1\.1/);
 });
 
 test("sprint4 ecosystem scripts and skills examples exist", async () => {
