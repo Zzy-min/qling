@@ -162,10 +162,15 @@ export class StreamUI {
     this.model = model;
     this.tools = tools;
     this.now = options.now ?? (() => Date.now());
-    this.slashUiPromise = resolveSlashUiPorts(options.slashUi).then((ports) => {
-      this.slashUi = ports;
-      return ports;
-    });
+    if (options.slashUi) {
+      this.slashUi = options.slashUi;
+      this.slashUiPromise = Promise.resolve(options.slashUi);
+    } else {
+      this.slashUiPromise = resolveSlashUiPorts().then((ports) => {
+        this.slashUi = ports;
+        return ports;
+      });
+    }
   }
 
   start(): void {

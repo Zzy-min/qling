@@ -3,8 +3,19 @@ import assert from "node:assert/strict";
 import stringWidth from "string-width";
 
 import { StreamUI } from "../../dist/tui/streaming-tui.js";
+import {
+  findSlashCompletion,
+  formatSlashCommandPanel,
+  formatGroupedSlashPanel,
+} from "../../dist/commands/index.js";
 
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+const testSlashUi = {
+  findSlashCompletion,
+  formatSlashCommandPanel,
+  formatGroupedSlashPanel,
+};
 
 async function withCapturedStdout(fn) {
   const originalWrite = process.stdout.write;
@@ -23,7 +34,7 @@ async function withCapturedStdout(fn) {
 }
 
 function createUi(now = () => 1_000) {
-  const ui = new StreamUI("test-model", 0, { now });
+  const ui = new StreamUI("test-model", 0, { now, slashUi: testSlashUi });
   const submitted = [];
   ui.onInput(async (cmd) => {
     submitted.push(cmd);
