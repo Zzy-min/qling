@@ -1,5 +1,6 @@
 # Schema ref: https://github.com/microsoft/winget-pkgs
-# Multi-file submission lives under packaging/winget/manifests/Zzy-min/qling/<ver>/
+# Multi-file submission: packaging/winget/manifests/Zzy-min/qling/<ver>/
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.12.0.schema.json
 PackageIdentifier: Zzy-min.qling
 PackageVersion: 1.2.1
 PackageLocale: en-US
@@ -32,8 +33,8 @@ Installers:
       - RelativeFilePath: qling-win-x64\qling.cmd
         PortableCommandAlias: qling
     InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.2.1/qling-win-x64.zip
-    InstallerSha256: 7c410780b96036850a35582bb099c0b4d12db5f34a23d1e81e25949f1e3623f6
+    InstallerSha256: 7C410780B96036850A35582BB099C0B4D12DB5F34A23D1E81E25949F1E3623F6
     Commands:
       - qling
 ManifestType: singleton
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
