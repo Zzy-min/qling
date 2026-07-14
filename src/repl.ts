@@ -5,8 +5,11 @@
 
 import * as readline from "readline";
 import { AgentLoop } from "./agent-loop.js";
-import { handleSlashCommand } from "./commands/index.js";
 import type { SlashCommandContext } from "./slash-context.js";
+import {
+  resolveSlashHandler,
+  type SlashCommandHandler,
+} from "./slash-ports.js";
 import { SessionGoalController } from "./session/goal-controller.js";
 import { SessionGoalManager } from "./session/session-goal-manager.js";
 import { SessionScheduler, type SessionTask } from "./session/session-scheduler.js";
@@ -28,17 +31,20 @@ export class Repl {
   private controllersSessionId: string | null = null;
   private immediatePrompt: string | null = null;
   private runningScheduledTask = false;
+  private readonly handleSlashCommandOverride?: SlashCommandHandler;
 
   constructor(
     agent?: AgentLoop,
     options: {
       resumeSession?: string;
       continueSession?: boolean;
+      handleSlashCommand?: SlashCommandHandler;
     } = {}
   ) {
     this.agent = agent ?? new AgentLoop();
     this.startupResumeTarget = options.resumeSession;
     this.startupContinue = options.continueSession ?? false;
+    this.handleSlashCommandOverride = options.handleSlashCommand;
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -143,6 +149,7 @@ export class Repl {
     if (trimmedInput.startsWith("/")) {
       await this.ensureLocalSessionControllers();
       this.immediatePrompt = null;
+      const handleSlashCommand = await resolveSlashHandler(this.handleSlashCommandOverride);
       const handledSlashCommand = await handleSlashCommand(trimmedInput, this.createSlashContext());
       if (handledSlashCommand) {
         if (this.immediatePrompt) {

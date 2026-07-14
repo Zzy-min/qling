@@ -14,7 +14,7 @@ import dotenv from "dotenv";
 import { SessionScheduler } from "./session/session-scheduler.js";
 import { SessionGoalController } from "./session/goal-controller.js";
 import { SessionGoalManager } from "./session/session-goal-manager.js";
-import { DurableSessionSupervisor } from "./session/durable-session-supervisor.js";
+import { DurableSessionSupervisor } from "./agent/durable-session-supervisor.js";
 import { formatDaemonVersion } from "./package-version.js";
 
 const HOME_DIR = os.homedir();

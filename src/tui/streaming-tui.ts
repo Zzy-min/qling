@@ -17,7 +17,10 @@
 
 import * as readline from "readline";
 import { default as stringWidth } from "string-width";
-import { findSlashCompletion, formatSlashCommandPanel, formatGroupedSlashPanel } from "../commands/index.js";
+import {
+  resolveSlashUiPorts,
+  type SlashUiPorts,
+} from "../slash-ports.js";
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
@@ -148,19 +151,26 @@ export class StreamUI {
   private recoveryState: RecoveryState | null = null;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
+  private slashUi: SlashUiPorts | null = null;
+  private readonly slashUiPromise: Promise<SlashUiPorts>;
 
   constructor(
     model: string = "deepseek-chat",
     tools: number = 0,
-    options: { now?: () => number } = {}
+    options: { now?: () => number; slashUi?: SlashUiPorts } = {}
   ) {
     this.model = model;
     this.tools = tools;
     this.now = options.now ?? (() => Date.now());
+    this.slashUiPromise = resolveSlashUiPorts(options.slashUi).then((ports) => {
+      this.slashUi = ports;
+      return ports;
+    });
   }
 
   start(): void {
     this.running = true;
+    void this.slashUiPromise;
     this.printHeader();
     this.printInputBar();
     this.setupInput();
@@ -598,15 +608,25 @@ export class StreamUI {
 
   private formatCurrentSlashCompletionHints(): string[] {
     if (!this.isSlashCompletionActive(this.input.value)) return [];
-    const matches = findSlashCompletion(this.input.value, 8);
+    const ports = this.slashUi;
+    if (!ports) {
+      void this.slashUiPromise;
+      return [];
+    }
+    const matches = ports.findSlashCompletion(this.input.value, 8);
     if (matches.length > 0 && this.slashCompletionSelectedIndex >= matches.length) {
       this.slashCompletionSelectedIndex = 0;
     }
     const inputVal = this.input.value || "";
     if (inputVal === "/" || inputVal === "") {
-      return formatGroupedSlashPanel(process.stdout.columns || 80);
+      return ports.formatGroupedSlashPanel(process.stdout.columns || 80);
     }
-    return formatSlashCommandPanel(inputVal, this.slashCompletionSelectedIndex, process.stdout.columns || 80, 8);
+    return ports.formatSlashCommandPanel(
+      inputVal,
+      this.slashCompletionSelectedIndex,
+      process.stdout.columns || 80,
+      8
+    );
   }
 
   private isSlashCompletionPrefix(value: string): boolean {
@@ -620,7 +640,12 @@ export class StreamUI {
 
   private acceptSlashCompletion(): boolean {
     if (!this.isSlashCompletionPrefix(this.input.value)) return false;
-    const matches = findSlashCompletion(this.input.value, 8);
+    const ports = this.slashUi;
+    if (!ports) {
+      void this.slashUiPromise;
+      return false;
+    }
+    const matches = ports.findSlashCompletion(this.input.value, 8);
     const completion = matches[this.slashCompletionSelectedIndex] ?? matches[0];
     if (!completion) return false;
     this.input.value = completion.name + " ";
@@ -634,7 +659,12 @@ export class StreamUI {
 
   private moveSlashCompletionSelection(delta: number): boolean {
     if (!this.isSlashCompletionPrefix(this.input.value)) return false;
-    const matches = findSlashCompletion(this.input.value, 8);
+    const ports = this.slashUi;
+    if (!ports) {
+      void this.slashUiPromise;
+      return false;
+    }
+    const matches = ports.findSlashCompletion(this.input.value, 8);
     if (matches.length <= 1) return false;
     this.slashCompletionSelectedIndex =
       (this.slashCompletionSelectedIndex + delta + matches.length) % matches.length;

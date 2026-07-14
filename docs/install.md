@@ -127,7 +127,7 @@ npm run validate:packaging
 Select-String -Path packaging/winget/Zzy-min.qling.yaml -Pattern 'PackageVersion|InstallerUrl|InstallerSha256'
 ```
 
-正式提交 [winget-pkgs](https://github.com/microsoft/winget-pkgs) 仍需 PR；在此之前可用 zip 解压 + `qling.cmd`（需本机 Node ≥ 18）。
+正式提交 [winget-pkgs](https://github.com/microsoft/winget-pkgs) 仍需 PR；在此之前可用 zip 解压 + `qling.cmd`（便携 zip 已内嵌 Node 运行时（亦可使用系统 Node））。
 
 ## 配置与安全
 

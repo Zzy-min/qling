@@ -11,9 +11,13 @@
 
 import { AgentLoop } from "../agent-loop.js";
 import { StreamUI } from "./streaming-tui.js";
-import { handleSlashCommand } from "../commands/index.js";
 import { SessionScheduler, type SessionTask } from "../session/session-scheduler.js";
 import { SlashCommandContext } from "../slash-context.js";
+import {
+  resolveSlashHandler,
+  type SlashCommandHandler,
+  type SlashUiPorts,
+} from "../slash-ports.js";
 import { SessionGoalManager } from "../session/session-goal-manager.js";
 import { SessionGoalController } from "../session/goal-controller.js";
 import type { SavedSessionSummary } from "../session/session-registry.js";
@@ -36,21 +40,25 @@ export class StreamingREPL {
   private closed = false;
   private onClose: (() => void) | null = null;
   private lastExecutionStatus = "";
+  private readonly handleSlashCommandOverride?: SlashCommandHandler;
 
   constructor(
     agent?: AgentLoop,
     options: {
       resumeSession?: string;
       continueSession?: boolean;
+      handleSlashCommand?: SlashCommandHandler;
+      slashUi?: SlashUiPorts;
     } = {}
   ) {
     this.agent = agent ?? new AgentLoop();
     const model = this.agent.getModel();
     const toolsCount = this.agent.getToolCount();
-    this.ui = new StreamUI(model, toolsCount);
+    this.ui = new StreamUI(model, toolsCount, { slashUi: options.slashUi });
     this.daemonSessionApi = new DaemonSessionApi();
     this.startupResumeTarget = options.resumeSession;
     this.startupContinue = options.continueSession ?? false;
+    this.handleSlashCommandOverride = options.handleSlashCommand;
     this.inputQueue = new SerialInputQueue({
       maxPending: 20,
       onQueued: ({ pendingCount }) => {
@@ -450,6 +458,7 @@ export class StreamingREPL {
 
     // v0.4 Slash Commands
     this.immediatePrompt = null;
+    const handleSlashCommand = await resolveSlashHandler(this.handleSlashCommandOverride);
     const handled = await handleSlashCommand(input, this.createSlashContext());
     if (handled) {
       // plan/model/permissions 等变更后刷新 chrome + statusline

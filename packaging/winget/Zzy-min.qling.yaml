@@ -1,6 +1,5 @@
-# DRAFT — not submitted to winget-pkgs.
-# Replace InstallerUrl / InstallerSha256 with real release assets before PR.
 # Schema ref: https://github.com/microsoft/winget-pkgs
+# Multi-file submission lives under packaging/winget/manifests/Zzy-min/qling/<ver>/
 PackageIdentifier: Zzy-min.qling
 PackageVersion: 1.2.0
 PackageLocale: en-US
@@ -15,7 +14,8 @@ LicenseUrl: https://github.com/Zzy-min/qling/blob/main/LICENSE
 ShortDescription: Local-first Chinese AI Agent CLI workbench
 Description: >
   Qling (轻灵) is a local-first AI Agent CLI with streaming TUI, tools, MCP,
-  permissions, missions/daemon, and recoverable sessions.
+  permissions, missions/daemon, and recoverable sessions. Portable zip embeds
+  a Node.js runtime so no separate Node install is required.
 Moniker: qling
 Tags:
   - ai
@@ -24,13 +24,15 @@ Tags:
   - tui
   - local-first
   - developer-tools
-# Prefer documenting npm install until a portable zip/msi exists:
-#   winget will need a real installer package for official submission.
 Installers:
   - Architecture: x64
-    InstallerType: portable
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: qling-win-x64\qling.cmd
+        PortableCommandAlias: qling
     InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.2.0/qling-win-x64.zip
-    InstallerSha256: feae513b8d287137d8ac86df77a26a8c4751b04524dd85a8119d2ef6b46a4fef
+    InstallerSha256: 5a41e35c38efd9a4574bdaeee538016383b24f27ac4fdb8a03a1c3d15c3a51c4
     Commands:
       - qling
 ManifestType: singleton

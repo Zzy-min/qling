@@ -70,6 +70,7 @@ export function layerOf(rel) {
     p.startsWith("tools/") ||
     p.startsWith("execution/") ||
     p === "slash-context.ts" ||
+    p === "slash-ports.ts" ||
     p === "repl.ts"
   ) {
     return "agent-runtime";

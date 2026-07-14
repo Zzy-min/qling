@@ -92,7 +92,8 @@
     "dep:layers:write-baseline": "node scripts/dep-layers.mjs --write-baseline",
     "sync:scoop-bucket": "node scripts/sync-scoop-bucket.mjs",
     "build:portable-win": "node scripts/build-portable-win.mjs",
-    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --baseline"
+    "sync:winget-sha": "node scripts/sync-winget-sha.mjs",
+    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
   },
   "dependencies": {
     "axios": "^1.7.0",

@@ -4,32 +4,21 @@
   "homepage": "https://github.com/Zzy-min/qling",
   "license": "MIT",
   "notes": [
-    "DRAFT manifest — not in an official Scoop bucket yet (private/local bucket only).",
-    "Requires Node.js >= 18 on PATH (better-sqlite3 may need VS Build Tools).",
-    "hash is SHA256 of the npm tarball for @qlingzzy/qling@1.2.0 (registry.npmjs.org).",
-    "npm tarball has no Windows bin shim; post_install falls back to npm global install.",
-    "API keys must be set as user environment variables (never commit secrets).",
-    "Preferred path: npm install -g @qlingzzy/qling@1.2.0 --registry https://registry.npmjs.org/"
+    "Portable zip embeds Node.js runtime (no system Node required).",
+    "Source: https://github.com/Zzy-min/qling",
+    "API keys must be set as user environment variables (never commit secrets)."
   ],
-  "depends": [
-    "nodejs"
-  ],
-  "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-1.2.0.tgz",
-  "hash": "sha256:531e786c6a453dbf891ed84c476dea582b3a326b53d5d83c116c6fd96bd200dc",
-  "extract_dir": "package",
-  "bin": "dist\\index.js",
-  "env_add_path": [
-    "current\\node_modules\\.bin"
-  ],
+  "url": "https://github.com/Zzy-min/qling/releases/download/v1.2.0/qling-win-x64.zip",
+  "hash": "sha256:5a41e35c38efd9a4574bdaeee538016383b24f27ac4fdb8a03a1c3d15c3a51c4",
+  "extract_dir": "qling-win-x64",
+  "bin": "qling.cmd",
   "post_install": [
-    "Write-Host 'npm package extracted; if qling is missing from PATH, run:' -ForegroundColor Yellow",
-    "Write-Host '  npm install -g @qlingzzy/qling@1.2.0 --registry https://registry.npmjs.org/' -ForegroundColor Cyan",
-    "Write-Host 'Then: qling bootstrap && qling setup' -ForegroundColor Cyan"
+    "Write-Host 'qling installed. Run: qling doctor && qling setup' -ForegroundColor Cyan"
   ],
   "checkver": {
     "github": "https://github.com/Zzy-min/qling"
   },
   "autoupdate": {
-    "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-$version.tgz"
+    "url": "https://github.com/Zzy-min/qling/releases/download/v$version/qling-win-x64.zip"
   }
 }

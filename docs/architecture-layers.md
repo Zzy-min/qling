@@ -126,9 +126,10 @@ flowchart TB
 
 **CI 策略**：
 
-- `npm run dep:layers:baseline`（`--baseline`）进 **ci:check**：只拒绝 baseline 之外的**新**反向边
-- 基线文件：`docs/dependency-layers.baseline.json`
-- `--strict`（零债务）仍不进 CI，待剩余边清零后再开
+- `npm run dep:layers` + **`--strict`** 已进入 `ci:check`（**0** 条反向边）
+- 历史 baseline 文件可保留作审计参考：`docs/dependency-layers.baseline.json`
+- slash 分发：cli 通过 `installSlashPorts` 注入；runtime/presentation 不静态 import `commands/*`
+- `DurableSessionSupervisor` 已上提到 `src/agent/`（agent-runtime）
 
 ---
 

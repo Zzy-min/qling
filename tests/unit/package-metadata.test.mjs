@@ -58,9 +58,9 @@ test("install docs and packaging drafts exist", async () => {
   assert.match(en, /fix-failing-test|example skills/i);
 
   const scoop = await readFile(join(root, "packaging", "scoop", "qling.json"), "utf8");
-  assert.match(scoop, /DRAFT|draft/i);
   assert.match(scoop, versionRe);
   assert.match(scoop, /sha256:[a-f0-9]{64}/i);
+  assert.match(scoop, /qling-win-x64\.zip|qling\.cmd/);
 
   const winget = await readFile(join(root, "packaging", "winget", "Zzy-min.qling.yaml"), "utf8");
   assert.match(winget, /PackageIdentifier:\s*Zzy-min\.qling/);
@@ -74,7 +74,7 @@ test("sprint4 ecosystem scripts and skills examples exist", async () => {
   assert.equal(typeof pkg.scripts?.["dep:layers:baseline"], "string");
   assert.equal(typeof pkg.scripts?.["build:portable-win"], "string");
   assert.match(pkg.scripts["ci:check"], /eval-tasks/);
-  assert.match(pkg.scripts["ci:check"], /dep-layers/);
+  assert.match(pkg.scripts["ci:check"], /dep-layers\.mjs --strict/);
 
   const examples = await readFile(join(root, "skills", "examples", "README.md"), "utf8");
   assert.match(examples, /fix-failing-test/);

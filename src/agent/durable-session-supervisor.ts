@@ -5,9 +5,9 @@ import * as path from "path";
 import { AgentLoop } from "../agent-loop.js";
 import { applyConfigToProcessEnv, loadQlingConfig } from "../config.js";
 import { buildToolRegistry } from "../tools/index.js";
-import { SessionGoalController } from "./goal-controller.js";
-import { SessionGoalManager } from "./session-goal-manager.js";
-import { SessionScheduler } from "./session-scheduler.js";
+import { SessionGoalController } from "../session/goal-controller.js";
+import { SessionGoalManager } from "../session/session-goal-manager.js";
+import { SessionScheduler } from "../session/session-scheduler.js";
 
 export interface DurableSessionSupervisorOptions {
   stateDir: string;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Official distribution + strict layers + self-contained portable
+
+- **分层**：清零反向依赖；`ci:check` 启用 `dep:layers --strict`；`installSlashPorts` + `DurableSessionSupervisor` 上提 `agent/`。
+- **便携包**：`build:portable-win` 内嵌 Node 运行时（`runtime/node.exe`），无需本机安装 Node。
+- **Scoop/winget**：manifest 指向 GitHub Release portable zip；多文件 winget 清单 `packaging/winget/manifests/`；官方 PR 流程见 `packaging/PR-OFFICIAL.md`。
+
 ## v1.2.0 (2026-07-14)
 
 ### Phase 8.0 — Sprint 5 分层治理 + 分发资产

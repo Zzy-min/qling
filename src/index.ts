@@ -17,6 +17,13 @@ import axios from "axios";
 import { AgentLoop } from "./agent-loop.js";
 import { Repl } from "./repl.js";
 import { StreamingREPL } from "./tui/streaming-repl.js";
+import { installSlashPorts } from "./slash-ports.js";
+import {
+  handleSlashCommand,
+  findSlashCompletion,
+  formatSlashCommandPanel,
+  formatGroupedSlashPanel,
+} from "./commands/index.js";
 import { buildHelpText, formatCliError, parseCliArgs } from "./cli/startup-contract.js";
 import { runBootstrap } from "./cli/bootstrap.js";
 import { applyConfigToProcessEnv, loadQlingConfig } from "./config.js";
@@ -1269,6 +1276,15 @@ async function main() {
         process.exit(1);
       }
     }
+
+    installSlashPorts({
+      handleSlashCommand,
+      ui: {
+        findSlashCompletion,
+        formatSlashCommandPanel,
+        formatGroupedSlashPanel,
+      },
+    });
 
     if (decision.mode === "chat") {
       const repl = new StreamingREPL(agent, {
