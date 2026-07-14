@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runPatch } from "../../dist/tools/patch.js";
+import { runPatch, writeFileAtomic } from "../../dist/tools/patch.js";
 
 async function withTempDir(fn) {
   const dir = await mkdtemp(join(tmpdir(), "qling-patch-test-"));
@@ -26,6 +26,15 @@ async function withTempDir(fn) {
     await rm(dir, { recursive: true, force: true });
   }
 }
+
+test("writeFileAtomic: replaces target content", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "atomic.txt");
+    await writeFile(file, "old", "utf-8");
+    await writeFileAtomic(file, "new-content");
+    assert.equal(await readFile(file, "utf-8"), "new-content");
+  });
+});
 
 test("patch: unique replacement works successfully", async () => {
   await withTempDir(async (dir) => {

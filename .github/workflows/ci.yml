@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 jobs:
+  # Full gate on Linux (unit + smoke + eval:smoke)
   build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -24,3 +25,23 @@ jobs:
 
       - name: Build + Unit + Smoke
         run: npm run ci:check
+
+  # Windows: unit-focused (author environment; avoid long smoke flakiness)
+  windows-unit:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build + Unit
+        run: npm run test
+        shell: bash

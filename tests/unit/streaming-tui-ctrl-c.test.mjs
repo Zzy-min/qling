@@ -575,7 +575,7 @@ test("stream ui ctrl+o expands and collapses future long tool output", async () 
 
     ui.appendToolSuccess("bash", "long command", longOutput, 100);
     assert.match(getOutput(), /\.\.\. \+5 lines/);
-    assert.match(getOutput(), /Ctrl\+O to expand/);
+    assert.match(getOutput(), /Ctrl\+O (展开|to expand)/);
 
     ui.handleCtrlO();
     ui.appendToolSuccess("bash", "long command", longOutput, 100);

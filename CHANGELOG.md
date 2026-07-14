@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Phase 6.0 — Sprint 3 编码精度 / TUI / Windows CI
+
+- **patch 原子写**：`writeFileAtomic`（temp + rename，Windows 回退直写），降低半截写入风险。
+- **repo map 预算**：`buildRepoMapSection` 支持 `maxSymbols`/`maxChars`（默认 200 / 6000），超限截断并提示。
+- **search 上下文卫生**：默认 limit 40；`truncateSearchLine` 截断过长匹配行。
+- **TUI**：工具输出折叠 footer 中英双语；底部提示含 Shift+Tab / `/mode`；CJK `visibleWidth` 回归测试。
+- **CI**：ubuntu 全量 `ci:check` + `windows-latest` 跑 unit（`npm run test`）。
+
 ### Phase 5.2 — 巨石拆分预备（零行为目标）
 
 - **LLM 客户端抽出**：`src/providers/llm-client.ts`（`LlmHttpClient`）承载 chat/completions + 重试拦截器；`/model` 会话切换会 `reconfigure` 客户端。

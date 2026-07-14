@@ -11,6 +11,8 @@ import {
   formatToolTimelineRow,
   formatTopBar,
   formatWelcomeGuide,
+  padVisible,
+  truncateVisible,
   visibleWidth,
 } from "../../dist/tui/shell.js";
 
@@ -165,4 +167,33 @@ test("tui shell formats enhanced home welcome with snapshot (P1)", () => {
   assert.match(text, /最近会话/);
   assert.doesNotMatch(text, /3 步开始/);
   assert.doesNotMatch(text, /常用入口/);
+});
+
+test("visibleWidth counts CJK fullwidth and ASCII halfwidth", () => {
+  assert.equal(visibleWidth("abc"), 3);
+  assert.equal(visibleWidth("轻灵"), 4);
+  assert.equal(visibleWidth("轻灵Qling"), 4 + 5);
+  assert.equal(visibleWidth("你好世界"), 8);
+});
+
+test("truncateVisible does not split mid-CJK and leaves room for ellipsis", () => {
+  const text = "中文宽度测试ABC";
+  const truncated = truncateVisible(text, 6);
+  assert.ok(visibleWidth(truncated) <= 6);
+  assert.match(truncated, /…$/);
+});
+
+test("padVisible aligns to target width for mixed CJK", () => {
+  const padded = padVisible("轻灵", 10);
+  assert.equal(visibleWidth(padded), 10);
+});
+
+test("formatToolOutputCard footer is bilingual for expand/collapse", () => {
+  const long = Array.from({ length: 20 }, (_, i) => `line-${i}`).join("\n");
+  const collapsed = formatToolOutputCard(long, { expand: false });
+  assert.equal(collapsed.collapsed, true);
+  assert.match(collapsed.footer ?? "", /Ctrl\+O.*展开/);
+  const expanded = formatToolOutputCard(long, { expand: true });
+  assert.equal(expanded.collapsed, false);
+  assert.match(expanded.footer ?? "", /Ctrl\+O.*收起/);
 });

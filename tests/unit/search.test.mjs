@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runSearch } from "../../dist/tools/search.js";
+import { runSearch, truncateSearchLine, SEARCH_DEFAULT_LIMIT } from "../../dist/tools/search.js";
 
 async function withTempDir(fn) {
   const dir = await mkdtemp(join(tmpdir(), "qling-search-test-"));
@@ -26,6 +26,14 @@ async function withTempDir(fn) {
     await rm(dir, { recursive: true, force: true });
   }
 }
+
+test("truncateSearchLine caps long lines with ellipsis", () => {
+  const long = "x".repeat(500);
+  const out = truncateSearchLine(long, 40);
+  assert.equal(out.length, 40);
+  assert.match(out, /…$/);
+  assert.equal(SEARCH_DEFAULT_LIMIT, 40);
+});
 
 test("search: limit=1 truncates high-volume matches without buffer errors", async () => {
   await withTempDir(async (dir) => {

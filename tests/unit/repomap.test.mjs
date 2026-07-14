@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { extractSymbols } from "../../dist/utils/symbol-extractor.js";
 import { CognitiveIndex } from "../../dist/memory/cognitive-index.js";
 import { repomapCommand } from "../../dist/commands/repomap.js";
+import { buildRepoMapSection } from "../../dist/pipeline/sections.js";
 
 test("symbol-extractor: extracts TS/JS symbols successfully", () => {
   const tsContent = `
@@ -103,6 +104,20 @@ test("cognitive-index: upserts and retrieves symbols successfully", async () => 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("buildRepoMapSection respects maxSymbols and maxChars budgets", () => {
+  const symbols = Array.from({ length: 50 }, (_, i) => ({
+    file: `src/f${Math.floor(i / 5)}.ts`,
+    name: `sym${i}`,
+    type: "function",
+    line: i + 1,
+    signature: `function sym${i}()`,
+  }));
+  const section = buildRepoMapSection(symbols, { maxSymbols: 10, maxChars: 500 });
+  assert.match(section.content, /已截断|符号/);
+  assert.ok(section.content.length <= 800);
+  assert.match(section.content, /sym0/);
 });
 
 test("/repomap command output prints scanned symbols", async () => {

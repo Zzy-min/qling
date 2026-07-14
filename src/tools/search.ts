@@ -13,6 +13,11 @@ import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
 
 const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024; // 2MB
+/** Sprint 3: 默认更紧的结果预算，减少上下文膨胀 */
+export const SEARCH_DEFAULT_LIMIT = 40;
+export const SEARCH_MAX_LIMIT = 200;
+/** 单行匹配展示上限（字符，含路径前缀后） */
+export const SEARCH_MAX_LINE_CHARS = 240;
 
 const DEFAULT_IGNORES = new Set([
   "node_modules",
@@ -147,7 +152,8 @@ export async function runSearch(args: {
     return toolError("SEARCH_INVALID_TARGET", `unsupported target: ${target}`);
   }
   const context = clamp(args.context ?? 0, 0, 10);
-  const limit = clamp(args.limit ?? 50, 1, 200);
+  // Sprint 3: tighter limit 40；单行过长截断，避免冲垮上下文
+  const limit = clamp(args.limit ?? SEARCH_DEFAULT_LIMIT, 1, SEARCH_MAX_LIMIT);
   const absPath = resolveToolPath(searchPath, roots, "workspace");
   if (!isWithinAllowedRoots(absPath, roots)) {
     return toolError("SEARCH_OUTSIDE_ALLOWED_ROOT", `${absPath} is outside allowed roots`);
@@ -271,7 +277,9 @@ async function searchWithRipgrep(
         const truncated = parsedLines.length > limit;
         const sliced = parsedLines.slice(0, limit);
         const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
-        const formatted = sliced.map(pl => `${pl.file}:${pl.line}:${pl.content}`).join("\n");
+        const formatted = sliced
+          .map((pl) => truncateSearchLine(`${pl.file}:${pl.line}:${pl.content}`))
+          .join("\n");
         resolve(toolSuccess(`${truncated ? `${limit}+` : parsedLines.length} match(es):\n${formatted}${suffix}`));
         return;
       }
@@ -452,7 +460,9 @@ async function searchWithGitGrep(
           const truncated = parsedLines.length > limit;
           const sliced = parsedLines.slice(0, limit);
           const suffix = truncated ? `\n... (truncated at ${limit} results)` : "";
-          const formatted = sliced.map(pl => `${pl.file}:${pl.line}:${pl.content}`).join("\n");
+          const formatted = sliced
+            .map((pl) => truncateSearchLine(`${pl.file}:${pl.line}:${pl.content}`))
+            .join("\n");
           resolve(toolSuccess(`${truncated ? `${limit}+` : parsedLines.length} match(es):\n${formatted}${suffix}`));
           return;
         }
@@ -719,6 +729,13 @@ function buildRegex(pattern: string, flags = ""): RegExp {
 
 function escapeRegExp(char: string): string {
   return char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Truncate long match lines so search results stay harness-friendly. */
+export function truncateSearchLine(line: string, maxChars = SEARCH_MAX_LINE_CHARS): string {
+  const text = String(line ?? "");
+  if (text.length <= maxChars) return text;
+  return text.slice(0, Math.max(0, maxChars - 1)) + "…";
 }
 
 function clamp(value: number, min: number, max: number): number {

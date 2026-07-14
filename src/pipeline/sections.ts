@@ -226,11 +226,26 @@ export function buildMCPSection(serverInfo?: string): PromptSection {
   };
 }
 
+/** Default budgets keep repo map from dominating context window. */
+export const REPOMAP_DEFAULT_MAX_SYMBOLS = 200;
+export const REPOMAP_DEFAULT_MAX_CHARS = 6_000;
+
 export function buildRepoMapSection(
-  symbols: { file: string; name: string; type: string; line: number; signature: string }[]
+  symbols: { file: string; name: string; type: string; line: number; signature: string }[],
+  options: { maxSymbols?: number; maxChars?: number } = {}
 ): PromptSection {
-  const fileGroups = new Map<string, typeof symbols>();
-  for (const sym of symbols) {
+  const maxSymbols = Math.max(1, options.maxSymbols ?? REPOMAP_DEFAULT_MAX_SYMBOLS);
+  const maxChars = Math.max(500, options.maxChars ?? REPOMAP_DEFAULT_MAX_CHARS);
+
+  const limited =
+    symbols.length > maxSymbols
+      ? [...symbols]
+          .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+          .slice(0, maxSymbols)
+      : symbols;
+
+  const fileGroups = new Map<string, typeof limited>();
+  for (const sym of limited) {
     if (!fileGroups.has(sym.file)) {
       fileGroups.set(sym.file, []);
     }
@@ -239,17 +254,31 @@ export function buildRepoMapSection(
 
   const lines: string[] = [];
   const sortedFiles = Array.from(fileGroups.keys()).sort();
+  let truncatedByChars = false;
   for (const file of sortedFiles) {
     lines.push(`📄 ${file}`);
     const fileSymbols = fileGroups.get(file)!;
     fileSymbols.sort((a, b) => a.line - b.line);
     for (const sym of fileSymbols) {
-      lines.push(`  - [${sym.type}] L${sym.line}: ${sym.name} (${sym.signature})`);
+      const next = `  - [${sym.type}] L${sym.line}: ${sym.name} (${sym.signature})`;
+      const draft = [...lines, next].join("\n");
+      if (draft.length > maxChars) {
+        truncatedByChars = true;
+        break;
+      }
+      lines.push(next);
     }
+    if (truncatedByChars) break;
   }
 
+  const truncatedByCount = symbols.length > maxSymbols;
+  const note =
+    truncatedByCount || truncatedByChars
+      ? `\n\n…已截断：共 ${symbols.length} 符号，展示 ${limited.length}${truncatedByChars ? "（字符预算）" : ""}。可用 search/code_symbols 精确定位。`
+      : "";
+
   const content = lines.length > 0
-    ? `已编制项目符号索引，供全局参考：\n\n${lines.join("\n")}`
+    ? `已编制项目符号索引，供全局参考：\n\n${lines.join("\n")}${note}`
     : "当前没有索引到项目符号。运行 /repomap 命令来索引符号。";
 
   return {

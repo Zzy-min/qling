@@ -282,7 +282,7 @@ export function formatBottomHints(): string {
   const t = getLocalizedText();
   return (
     t.tui?.hints?.bottom ||
-    "Enter 发送 · / 命令 · Ctrl+N 换行 · Ctrl+O 展开工具输出 · Ctrl+C 清空/中断 · /statusline · /expand"
+    "Enter 发送 · / 命令 · Ctrl+N 换行 · Ctrl+O 展开/收起工具输出 · Shift+Tab 模式 · Ctrl+C 清空/中断 · /mode · /expand"
   );
 }
 
@@ -325,7 +325,7 @@ export function formatToolOutputCard(
       collapsed: false,
       footer:
         expand && totalLines > longThreshold
-          ? `... ${totalLines} lines total  (Ctrl+O to collapse)`
+          ? `... ${totalLines} lines total  (Ctrl+O 收起 / collapse)`
           : null,
     };
   }
@@ -353,7 +353,7 @@ export function formatToolOutputCard(
     totalLines,
     hidden,
     collapsed: true,
-    footer: `... ${totalLines} lines total  (Ctrl+O to expand)`,
+    footer: `... ${totalLines} lines total  (Ctrl+O 展开 / expand)`,
   };
 }
 

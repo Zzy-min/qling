@@ -1,5 +1,6 @@
-import { readFile, writeFile } from "fs/promises";
-import { relative } from "path";
+import { randomBytes } from "crypto";
+import { readFile, rename, unlink, writeFile } from "fs/promises";
+import { basename, dirname, join, relative } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import {
@@ -259,15 +260,37 @@ export async function runPatch(args: {
     );
   }
 
-  // Write changes after all validations pass
+  // Atomic write after all validations pass (temp + rename; Windows-safe fallback)
   try {
-    await writeFile(resolvedPath, currentContent, "utf-8");
+    await writeFileAtomic(resolvedPath, currentContent);
     return toolSuccess(
       `✅ Successfully applied ${chunks.length} patch chunk(s) to ${resolvedPath}\n` +
         `${summary}\n\n${diffText}`
     );
   } catch (err: unknown) {
     return toolError("PATCH_WRITE_FAILED", `failed to write file: ${getErrorMessage(err)}`);
+  }
+}
+
+/**
+ * Write via temp file then rename. Falls back to direct write on platforms
+ * where rename cannot replace an existing target (common on Windows).
+ */
+export async function writeFileAtomic(targetPath: string, content: string): Promise<void> {
+  const dir = dirname(targetPath);
+  const tmp = join(
+    dir,
+    `.qling-patch-${basename(targetPath)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`
+  );
+  await writeFile(tmp, content, "utf-8");
+  try {
+    await rename(tmp, targetPath);
+  } catch {
+    try {
+      await writeFile(targetPath, content, "utf-8");
+    } finally {
+      await unlink(tmp).catch(() => undefined);
+    }
   }
 }
 
