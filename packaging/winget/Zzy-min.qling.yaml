@@ -30,7 +30,7 @@ Installers:
   - Architecture: x64
     InstallerType: portable
     InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.2.0/qling-win-x64.zip
-    InstallerSha256: 05ec53123172fc0a70745a858e27b0f9e9a8ab17ae3d1b3726c3f7f9b7c15314
+    InstallerSha256: feae513b8d287137d8ac86df77a26a8c4751b04524dd85a8119d2ef6b46a4fef
     Commands:
       - qling
 ManifestType: singleton
