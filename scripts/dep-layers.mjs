@@ -68,6 +68,8 @@ export function layerOf(rel) {
     p === "agent-loop.ts" ||
     p.startsWith("agent/") ||
     p.startsWith("tools/") ||
+    p.startsWith("execution/") ||
+    p === "slash-context.ts" ||
     p === "repl.ts"
   ) {
     return "agent-runtime";
@@ -76,6 +78,7 @@ export function layerOf(rel) {
     p === "sdk.ts" ||
     p === "daemon.ts" ||
     p === "dashboard-server.ts" ||
+    p.startsWith("dashboard/") ||
     p.endsWith("-report.ts") ||
     p === "doctor.ts" ||
     p === "statusline.ts" ||
@@ -228,7 +231,14 @@ function formatMermaid(layerCounts, edges) {
 
 const asJson = process.argv.includes("--json");
 const strict = process.argv.includes("--strict");
+const baselineMode = process.argv.includes("--baseline");
+const writeBaseline = process.argv.includes("--write-baseline");
 const writeDoc = process.argv.includes("--write-doc");
+const BASELINE_PATH = join(ROOT, "docs", "dependency-layers.baseline.json");
+
+function edgeKey(f) {
+  return `${f.fromLayer}->${f.toLayer}::${f.from}::${f.to}`;
+}
 
 const result = await scanLayers();
 
@@ -268,6 +278,45 @@ if (writeDoc) {
     "utf8"
   );
   console.error(`[dep-layers] wrote ${snap}`);
+}
+
+if (writeBaseline) {
+  await mkdir(dirname(BASELINE_PATH), { recursive: true });
+  const keys = result.forbidden.map(edgeKey).sort();
+  await writeFile(
+    BASELINE_PATH,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        note: "Known reverse-layer edges. --baseline fails only on NEW keys not listed here.",
+        forbiddenCount: keys.length,
+        forbidden: keys,
+      },
+      null,
+      2
+    ) + "\n",
+    "utf8"
+  );
+  console.error(`[dep-layers] wrote baseline ${BASELINE_PATH} (${keys.length} edges)`);
+}
+
+if (baselineMode) {
+  let known = new Set();
+  if (existsSync(BASELINE_PATH)) {
+    const raw = JSON.parse(await readFile(BASELINE_PATH, "utf8"));
+    known = new Set(raw.forbidden || []);
+  }
+  const novel = result.forbidden.filter((f) => !known.has(edgeKey(f)));
+  console.log(
+    `baseline gate: known=${known.size} current=${result.forbiddenCount} novel=${novel.length}`
+  );
+  if (novel.length > 0) {
+    console.error("NEW forbidden edges (not in baseline):");
+    for (const f of novel) {
+      console.error(`  ${f.fromLayer} -> ${f.toLayer}: ${f.from} imports ${f.to}`);
+    }
+    process.exit(1);
+  }
 }
 
 if (strict && result.forbiddenCount > 0) {

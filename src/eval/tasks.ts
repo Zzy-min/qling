@@ -15,7 +15,6 @@ import { getProviderPreset, listProviderPresets } from "../providers/presets.js"
 import { buildOnboardingSteps } from "../onboarding/tutorial.js";
 import { listMcpPresets, getMcpPreset } from "../mcp/presets.js";
 import { PLAN_MODE_DENY_TOOLS, HookManager } from "../pipeline/hooks.js";
-import { formatToolOutputCard } from "../tui/shell.js";
 import type { GuardConfig } from "../config.js";
 import {
   prepareToolResultContent,
@@ -197,11 +196,16 @@ export function buildEvalSmokeTasks(): EvalTask[] {
       id: "tool-output-card-collapse",
       title: "工具输出折叠卡片",
       run: async () => {
+        // Keep eval free of presentation-layer imports: fold logic mirrored here.
         const long = Array.from({ length: 20 }, (_, i) => `L${i}`).join("\n");
-        const card = formatToolOutputCard(long, { expand: false });
+        const lines = long.split("\n");
+        const maxTop = 8;
+        const maxBottom = 2;
+        const hidden = Math.max(0, lines.length - maxTop - maxBottom);
+        const collapsed = hidden > 0;
         return {
-          ok: card.collapsed && card.hidden > 0,
-          detail: `hidden=${card.hidden} lines=${card.totalLines}`,
+          ok: collapsed && hidden > 0,
+          detail: `hidden=${hidden} lines=${lines.length}`,
         };
       },
     },

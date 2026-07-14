@@ -1,6 +1,6 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { resolveSessionExportsDir } from "./session-export.js";
 
 const DEFAULT_EXPORT_COUNT = 10;

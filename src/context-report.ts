@@ -1,6 +1,6 @@
 import { join } from "path";
 import { homedir } from "os";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { formatLocalPanel } from "./output-style.js";
 import { SessionRegistry } from "./session/session-registry.js";
 import {

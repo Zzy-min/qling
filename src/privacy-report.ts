@@ -1,6 +1,6 @@
 import { homedir } from "os";
 import { join } from "path";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { SessionRegistry } from "./session/session-registry.js";
 import { scanRuntimeDotEnvSecrets, type EnvSecretHit } from "./config.js";
 import { getLocalizedText } from "./i18n/index.js";

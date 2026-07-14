@@ -2,26 +2,15 @@
 // 轻灵 - Channel 接口
 // ============================================================
 
+export type { ApprovalRequest, ApprovalResponse } from "../types.js";
+import type { ApprovalRequest, ApprovalResponse } from "../types.js";
+
 export interface ChannelMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
   metadata?: Record<string, unknown>;
-}
-
-export interface ApprovalRequest {
-  id: string;
-  toolName: string;
-  arguments: Record<string, unknown>;
-  reason: string;
-  timestamp: number;
-}
-
-export interface ApprovalResponse {
-  requestId: string;
-  decision: "allow" | "deny";
-  timestamp: number;
 }
 
 export interface Channel {

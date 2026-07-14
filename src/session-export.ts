@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join, resolve } from "path";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 
 interface ExportMessage {
   role?: string;

@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { resolveGitBranch } from "./statusline.js";
 import { sanitizeEndpoint } from "./config-report.js";
 import { buildLocalMcpReport } from "./mcp-report.js";

@@ -2,7 +2,7 @@
 # Replace InstallerUrl / InstallerSha256 with real release assets before PR.
 # Schema ref: https://github.com/microsoft/winget-pkgs
 PackageIdentifier: Zzy-min.qling
-PackageVersion: 1.1.1
+PackageVersion: 1.2.0
 PackageLocale: en-US
 Publisher: Zzy-min
 PublisherUrl: https://github.com/Zzy-min
@@ -29,8 +29,8 @@ Tags:
 Installers:
   - Architecture: x64
     InstallerType: portable
-    InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.1.1/qling-win-x64.zip
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.2.0/qling-win-x64.zip
+    InstallerSha256: 05ec53123172fc0a70745a858e27b0f9e9a8ab17ae3d1b3726c3f7f9b7c15314
     Commands:
       - qling
 ManifestType: singleton

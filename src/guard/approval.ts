@@ -3,7 +3,7 @@
 // Promise 暂停机制 + 超时自动拒绝
 // ============================================================
 
-import type { ApprovalRequest, ApprovalResponse } from "../channels/types.js";
+import type { ApprovalRequest, ApprovalResponse } from "../types.js";
 
 export class ApprovalGate {
   private pending = new Map<

@@ -3,7 +3,7 @@
 // ============================================================
 
 import { PromptSection, PromptSectionRegistry, AgentConfig } from "../types.js";
-import type { SkillMeta } from "../skills/types.js";
+import type { SkillMeta } from "../types.js";
 import { buildToolSpecBoostPrompt } from "./example-generator.js";
 import { getPackageVersion } from "../package-version.js";
 

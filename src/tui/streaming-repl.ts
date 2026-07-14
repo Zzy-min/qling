@@ -13,7 +13,7 @@ import { AgentLoop } from "../agent-loop.js";
 import { StreamUI } from "./streaming-tui.js";
 import { handleSlashCommand } from "../commands/index.js";
 import { SessionScheduler, type SessionTask } from "../session/session-scheduler.js";
-import { SlashCommandContext } from "../commands/runtime.js";
+import { SlashCommandContext } from "../slash-context.js";
 import { SessionGoalManager } from "../session/session-goal-manager.js";
 import { SessionGoalController } from "../session/goal-controller.js";
 import type { SavedSessionSummary } from "../session/session-registry.js";

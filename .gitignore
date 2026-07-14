@@ -27,3 +27,7 @@ Thumbs.db
 
 # Memory persistence (runtime)
 .qling/
+
+dist-portable/
+*.tgz
+

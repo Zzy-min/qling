@@ -273,6 +273,33 @@ export interface LLMDreamConfig {
   endpoint: string;
 }
 
+// --- Skills (foundation: keep metadata free of domain imports) ---
+
+export interface SkillMeta {
+  name: string;
+  description: string;
+  tags: string[];
+  /** 触发关键词/场景，仅进入索引，不进正文 */
+  triggers: string[];
+  path: string;
+}
+
+// --- Approval (shared by guard + channels) ---
+
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  reason: string;
+  timestamp: number;
+}
+
+export interface ApprovalResponse {
+  requestId: string;
+  decision: "allow" | "deny";
+  timestamp: number;
+}
+
 // --- MCP ---
 
 export interface MCPServerConfig {

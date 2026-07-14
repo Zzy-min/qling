@@ -2,7 +2,7 @@
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.1.1-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)](CHANGELOG.md)
 [![Release](https://img.shields.io/github/v/release/Zzy-min/qling?display_name=tag&sort=semver)](https://github.com/Zzy-min/qling/releases)
 
 **Qling** is a **local-first** AI Agent CLI workbench. It keeps sessions, tools, skills, permissions, diagnostics, long-running missions, and recovery controls in one auditable terminal console.
@@ -178,14 +178,14 @@ QLING_EVAL_LLM=1 npm run eval:llm
 | Channel | Status |
 |---------|--------|
 | Source + bootstrap | Ready |
-| npm `@qlingzzy/qling` | **Published** `1.1.1` — install with `--registry https://registry.npmjs.org/` if your default is a mirror |
+| npm `@qlingzzy/qling` | **Published** `1.2.0` — install with `--registry https://registry.npmjs.org/` if your default is a mirror |
 | Scoop | Draft + real tarball SHA256; not in official buckets |
 | winget | Draft YAML only (needs portable zip + SHA256) |
 | Portable zip / single binary | Not yet |
 
 ## Version
 
-- Package: `1.1.1` (see latest tag on GitHub for hotfixes)
+- Package: `1.2.0` (see latest tag on GitHub for hotfixes)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Specs / plans: `docs/superpowers/`
 

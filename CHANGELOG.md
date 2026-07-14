@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v1.2.0 (2026-07-14)
+
+### Phase 8.0 — Sprint 5 分层治理 + 分发资产
+
+- **dep:layers baseline 门禁**：`docs/dependency-layers.baseline.json`；`npm run dep:layers:baseline` 进 `ci:check`（仅拦新增反向边）。
+- **分层债下降**：19 → 5 条已知反向边。
+  - `SlashCommandContext` 抽到 `src/slash-context.ts`
+  - `SkillMeta` / `ApprovalRequest|Response` 下沉 foundation `types.ts`
+  - `execution/*` → agent-runtime，`dashboard/*` → adapters
+  - eval 不再 import presentation
+- **Scoop 自建 bucket**：`packaging/scoop-bucket/` + `npm run sync:scoop-bucket`
+- **Windows 便携包**：`npm run build:portable-win` → `qling-win-x64.zip`（可挂 GitHub Release / winget）
+- **文档**：`docs/architecture-layers.md`、`docs/install.md`、`packaging/README.md` 同步
+
 ## v1.1.1 (2026-07-14)
 
 ### Phase 7.0 — Sprint 4 分发与生态（收口发布）

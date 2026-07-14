@@ -34,7 +34,7 @@ qling --help
 
 `bootstrap` 会：检查 Node/npm → 安装依赖 → 构建 → 创建 `~/.qling/` → 给出 `doctor`/`setup` 下一步。默认**不**安装浏览器、**不**自动开 dashboard。
 
-## 方式 B：npm 全局安装（已发布 1.1.1）
+## 方式 B：npm 全局安装（已发布 1.2.0）
 
 包名因 npm 相似度策略使用作用域 **`@qlingzzy/qling`**（安装后命令仍是 `qling`）。  
 包页：https://www.npmjs.com/package/@qlingzzy/qling
@@ -84,53 +84,50 @@ qling doctor
 qling
 ```
 
-## 方式 D：Scoop 草案（未上架）
+## 方式 D：Scoop（自建 bucket）
 
-清单草稿：`packaging/scoop/qling.json`（版本与 `package.json` 对齐，当前 **1.1.1**）。
+### D1. 本仓库自建 bucket（推荐试用）
 
-本地校验（不安装到官方 bucket）：
+```powershell
+cd path\to\qling
+scoop bucket add qling "$PWD\packaging\scoop-bucket"
+scoop install qling/qling
+qling --version
+```
+
+说明见 `packaging/scoop-bucket/README.md`。清单含真实 npm tarball SHA256；若原生模块 shim 不理想，manifest 会提示改用 npm 全局安装。
+
+### D2. 校验与同步
 
 ```powershell
 npm run validate:packaging
-# 检查 version / url 是否钉死到当前版本
-Get-Content packaging/scoop/qling.json | ConvertFrom-Json | Select-Object version, url, hash
+npm run sync:scoop-bucket   # packaging/scoop → scoop-bucket
 ```
 
-本地试用（需自建 bucket，并先把 `hash` 换成真实 tarball SHA256）：
-
-```powershell
-# 示例：私有 bucket 放好 manifest 后
-scoop install qling
-```
-
-1.1.1 的 npm tarball **已填真实 SHA256**（见 manifest `hash`）。仍未进官方 Scoop bucket：需自建 bucket 或社区 bucket PR。
-
-```powershell
-# 私有 bucket 放入 packaging/scoop/qling.json 后可试装
-# 若 shim 不理想，post_install 会提示改用 npm 全局安装
-scoop install qling
-```
+**仍未**提交到官方 Scoop 目录；社区 PR 需另开。
 
 **推荐**用户路径仍是：`npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/` 或源码 bootstrap。
 
-## 方式 E：winget 草案（未上架）
+## 方式 E：winget / 便携 zip
 
-清单草稿：`packaging/winget/Zzy-min.qling.yaml`（`PackageVersion` 与当前版本对齐）。
+### 构建 Windows 便携包
 
-本地校验：
+```powershell
+npm run build:portable-win
+# → dist-portable/qling-win-x64.zip + portable-meta.json (sha256)
+```
+
+Release 资产示例：`https://github.com/Zzy-min/qling/releases/download/v1.2.0/qling-win-x64.zip`  
+清单：`packaging/winget/Zzy-min.qling.yaml`（含 InstallerSha256）。
+
+### 本地校验
 
 ```powershell
 npm run validate:packaging
 Select-String -Path packaging/winget/Zzy-min.qling.yaml -Pattern 'PackageVersion|InstallerUrl|InstallerSha256'
 ```
 
-正式提交需：
-
-1. 稳定版本的安装包 URL（msi/zip 或 portable；当前示例为 GitHub Release zip）  
-2. 真实 `InstallerSha256`（草案里为全零占位）  
-3. 通过 [winget-pkgs](https://github.com/microsoft/winget-pkgs) 审核  
-
-当前文件仅为**结构样例**，不可直接 `winget install`。发布 zip 前可先用 npm 全局安装路径。
+正式提交 [winget-pkgs](https://github.com/microsoft/winget-pkgs) 仍需 PR；在此之前可用 zip 解压 + `qling.cmd`（需本机 Node ≥ 18）。
 
 ## 配置与安全
 

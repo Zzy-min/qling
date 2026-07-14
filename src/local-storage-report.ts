@@ -1,7 +1,7 @@
 import { lstat, readdir } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { resolveSessionExportsDir } from "./session-export.js";
 
 const DEFAULT_SCAN_LIMIT = 5000;

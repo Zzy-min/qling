@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { getLocalizedText } from "./i18n/index.js";
 
 export interface StatusLineSnapshot {

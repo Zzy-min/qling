@@ -6,7 +6,7 @@
 import * as readline from "readline";
 import { AgentLoop } from "./agent-loop.js";
 import { handleSlashCommand } from "./commands/index.js";
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { SessionGoalController } from "./session/goal-controller.js";
 import { SessionGoalManager } from "./session/session-goal-manager.js";
 import { SessionScheduler, type SessionTask } from "./session/session-scheduler.js";

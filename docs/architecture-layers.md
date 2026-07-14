@@ -1,8 +1,8 @@
 # 轻灵模块分层与包边界（Phase 4.4）
 
-**日期**: 2026-07-10
-**状态**: 现行结构的**目标分层 + 诚实债务清单**（尚未 monorepo 拆包）
-**扫描**: `node scripts/dep-layers.mjs`（可选 `--json` / `--write-doc` / `--strict`）
+**日期**: 2026-07-10 · **更新**: 2026-07-14（Sprint 5 / 1.2）
+**状态**: 目标分层 + **baseline 门禁**（尚未 monorepo 拆包）
+**扫描**: `node scripts/dep-layers.mjs`（`--json` / `--write-doc` / `--strict` / `--baseline` / `--write-baseline`）
 
 ---
 
@@ -106,18 +106,29 @@ flowchart TB
 
 ## 4. 已知反向依赖（技术债）
 
-扫描会报告 `forbidden reverse edges`。常见模式与治理方向：
+扫描会报告 `forbidden reverse edges`。Sprint 5（1.2）已修一批：
+
+| 已修 | 做法 |
+|------|------|
+| adapters → cli（reports） | `SlashCommandContext` → `src/slash-context.ts`（agent-runtime） |
+| core-services → domain（SkillMeta） | `SkillMeta` 下沉 `types.ts`（foundation） |
+| core-services → domain（Approval） | `ApprovalRequest/Response` 下沉 `types.ts` |
+| adapters → presentation（eval） | eval 不再 import `tui/shell` |
+| `execution/*` / `dashboard/*` 归类 | 分别归 agent-runtime / adapters |
+
+剩余模式与治理方向：
 
 | 模式 | 示例 | 建议 |
 |------|------|------|
-| adapters → cli | `doctor.ts` / `*-report.ts` import `commands/runtime` | 将 `SlashCommandContext` 抽到 `foundation` 或 `adapters/types` |
-| domain → agent-runtime | `eval/tasks.ts` import `tools/*` | 将 `eval/` 标为 adapters，或 eval 只测 foundation/domain 纯函数 |
-| agent-runtime → cli | `repl.ts` import `commands/index` | 命令表注入，而非 runtime import commands |
-| agent-runtime → adapters | `agent-loop` import `dashboard-server` | dashboard 改为事件订阅 / 懒加载注入 |
-| core-services → domain | `pipeline/sections` import `skills/types` | `SkillMeta` 下沉 foundation |
-| presentation → cli | tui import commands 建议 | 经 runtime 回调注入 |
+| agent-runtime → cli | `repl.ts` import `commands/index` | 命令表注入 |
+| presentation → cli | tui import `commands/index` | 经 runtime 回调注入 |
+| domain → agent-runtime | `durable-session-supervisor` | 上提 agent 层或注入 factory |
 
-**当前策略**：文档化 + `dep-layers.mjs` 可观测；**`--strict` 暂不进入 ci:check**（待债降到 0 再开）。
+**CI 策略**：
+
+- `npm run dep:layers:baseline`（`--baseline`）进 **ci:check**：只拒绝 baseline 之外的**新**反向边
+- 基线文件：`docs/dependency-layers.baseline.json`
+- `--strict`（零债务）仍不进 CI，待剩余边清零后再开
 
 ---
 

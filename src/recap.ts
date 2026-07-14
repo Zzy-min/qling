@@ -1,4 +1,4 @@
-import type { SlashCommandContext } from "./commands/runtime.js";
+import type { SlashCommandContext } from "./slash-context.js";
 import { SessionRegistry, type SavedSessionSnapshot } from "./session/session-registry.js";
 
 interface RecapMessage {

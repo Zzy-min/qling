@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-07-14T15:38:17.427Z",
+  "note": "Known reverse-layer edges. --baseline fails only on NEW keys not listed here.",
+  "forbiddenCount": 5,
+  "forbidden": [
+    "agent-runtime->cli::repl.ts::commands/index.ts",
+    "domain->agent-runtime::session/durable-session-supervisor.ts::agent-loop.ts",
+    "domain->agent-runtime::session/durable-session-supervisor.ts::tools/index.ts",
+    "presentation->cli::tui/streaming-repl.ts::commands/index.ts",
+    "presentation->cli::tui/streaming-tui.ts::commands/index.ts"
+  ]
+}
