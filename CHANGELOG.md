@@ -8,6 +8,8 @@
 - **记忆 lifecycle 抽出**：`src/memory/lifecycle.ts` 的 `runAutoDream` 承接 auto-dream。
 - **Dashboard 解耦**：`AgentLoop` 对 `dashboard-server` 改为动态 import，消除 agent-runtime → adapters 静态反向边。
 - **工具编排抽出**：`src/agent/tool-orchestrator.ts` 承接参数解析、重复限制、pipeline 执行、内容过滤与结果卫生；`AgentLoop` 仅注入依赖并调度。
+- **验证闭环抽出**：`src/execution/verification-loop.ts` + `recovery-messages.ts` 承接写后 StagedVerifier / advisory / progress / verify 配置落盘。
+- **Session 持久抽出**：`src/session/session-persistence.ts` 承接快照 build/apply；`AgentLoop` 仅 hydrate 运行时字段。
 
 ### Phase 5.1 — 验证闭环统一 + Doctor
 

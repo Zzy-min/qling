@@ -6,8 +6,6 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
-import { exec } from "child_process";
-import { existsSync } from "fs";
 import { ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry, buildSystemPrompt, buildRepoMapSection } from "./pipeline/sections.js";
@@ -45,6 +43,11 @@ import {
   type SavedSessionSummary,
 } from "./session/session-registry.js";
 import {
+  applySessionSnapshot,
+  buildSessionSnapshot,
+  defaultSessionSaveName,
+} from "./session/session-persistence.js";
+import {
   apiKeyRequiredForEndpoint,
   isLoopbackEndpoint,
 } from "./providers/presets.js";
@@ -58,13 +61,17 @@ import { classifyFailure } from "./execution/failure-classifier.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
 import type { ExecutionEvent, RecoveryState } from "./execution/types.js";
-import { StagedVerifier } from "./execution/staged-verifier.js";
 import {
-  formatVerificationStagesSummary,
-  resolveVerificationStages,
-} from "./execution/verification-stages.js";
-import type { ProgressSnapshot } from "./execution/types.js";
-import { createHash } from "node:crypto";
+  formatRecoveryInstruction,
+  formatRecoveryPause,
+} from "./execution/recovery-messages.js";
+import {
+  loadVerificationCommand as loadVerificationCommandFile,
+  persistVerificationCommand as persistVerificationCommandFile,
+  runShellCommand,
+  runWriteToolVerification,
+  stagesSummary,
+} from "./execution/verification-loop.js";
 
 /** Minimal surface so agent-runtime does not statically import adapters/dashboard. */
 interface DashboardHandle {
@@ -746,70 +753,26 @@ export class AgentLoop extends AgentEventEmitter {
         }
       );
 
-      // 6. 验证阶段（针对写操作）— 恢复闭环只走 StagedVerifier
-      const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "patch" || t.call.name === "bash");
-      if (hasWrites) {
-        const stages = resolveVerificationStages({ configuredCommand: this.verificationCommand });
-        if (stages.length > 0) {
-          const stagedVerifier = new StagedVerifier({ execute: (command) => this.runVerificationCommand(command) });
-          const verification = await stagedVerifier.run(stages);
-          if (!verification.ok) {
-            const failedCommand =
-              stages.find((stage) => stage.name === verification.failedStage)?.command ??
-              stages.map((stage) => stage.command).join(" && ");
-            const failure = classifyFailure(new Error(`verification command failed: ${failedCommand}`), {
-              tool: "verify",
-              verificationCommand: failedCommand,
-            });
-            const progress = await this.buildVerificationProgress(verification.failingTests);
-            const decision = this.recoveryController.recordFailure(failure, progress);
-            const state = this.recoveryController.getRecoveryState();
-            const progressWithStrategy: ProgressSnapshot = {
-              ...progress,
-              attemptedStrategies: state.attemptedStrategies,
-              currentStrategy: state.currentStrategy,
-            };
-            this.executionEventBus.emit({
-              runId: state.runId,
-              sessionId: state.sessionId,
-              type: "verification_failed",
-              status: decision.action === "pause" ? "paused" : "recovering",
-              stage: verification.failedStage,
-              tool: "verify",
-              category: decision.category,
-              fingerprint: failure.fingerprint,
-              progress: progressWithStrategy,
-              recoveryAction: decision.recommendedStrategy ?? decision.action,
-            });
-            if (decision.action === "pause") {
-              this.executionEventBus.completeAttempt(runId, "failed");
-              this.emit("recovery_paused", state, decision);
-              return this.formatRecoveryPause(verification.stderr || verification.stdout, decision.reason);
-            }
-            const stdout = verification.stdout.slice(-2_000);
-            const stderr = verification.stderr.slice(-2_000);
-            const strategy = decision.recommendedStrategy ?? "targeted_verification_repair";
-            const files = (progress.changedFiles ?? []).join(", ") || "-";
-            this.messages.push({
-              role: "user",
-              content:
-                `【定向验证失败】阶段=${verification.failedStage} 命令=\`${failedCommand}\`\n` +
-                `失败测试=${verification.failingTests.join(", ") || "unknown"}\n` +
-                `修改文件=${files}\n` +
-                `指纹=${failure.fingerprint ?? "-"}\n` +
-                `已尝试策略=${state.attemptedStrategies.join(", ") || "-"}\n` +
-                `恢复策略=${strategy}\n[stdout]\n${stdout}\n[stderr]\n${stderr}\n` +
-                this.formatRecoveryInstruction(failure, strategy).split("\n").slice(1).join("\n"),
-            });
-            this.emit("repair", failure.message, strategy, state.strategyAttempts);
-            this.executionEventBus.completeAttempt(runId, "recovering");
-            continue;
-          }
-          this.emit("verification", "PASS", `验证通过: ${formatVerificationStagesSummary(stages)}`);
-        } else {
-          // Advisory only — does not drive RecoveryController
-          await this.verifyLastOperationAdvisory();
-        }
+      // 6. 验证阶段（针对写操作）— 委托 verification-loop
+      const verifyOutcome = await runWriteToolVerification(preparedCalls, {
+        verificationCommand: this.verificationCommand,
+        runCommand: (cmd) => this.runVerificationCommand(cmd),
+        recoveryController: this.recoveryController,
+        executionEventBus: this.executionEventBus,
+        emit: (event, ...args) => this.emit(event, ...args),
+        getRecoveryState: () => this.getRecoveryState(),
+        verifier: this.verifier,
+        messages: this.messages,
+        runId,
+      });
+      if (verifyOutcome.kind === "pause") {
+        return verifyOutcome.text;
+      }
+      if (verifyOutcome.kind === "recover") {
+        this.messages.push({ role: "user", content: verifyOutcome.userMessage });
+        this.emit("repair", verifyOutcome.failureMessage, verifyOutcome.strategy, verifyOutcome.strategyAttempts);
+        this.executionEventBus.completeAttempt(runId, "recovering");
+        continue;
       }
 
       // 7. Auto-dream 检查
@@ -864,39 +827,12 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private formatRecoveryPause(reason: string, next: string): string {
-    const state = this.getRecoveryState();
-    const files = state?.lastProgress?.changedFiles?.join(", ") || "-";
-    return [
-      "执行已暂停",
-      `原因: ${reason}`,
-      `已尝试: ${state?.strategyAttempts ?? 0} 次恢复策略`,
-      `当前策略: ${state?.currentStrategy ?? "-"}`,
-      `已尝试策略: ${(state?.attemptedStrategies ?? []).join(", ") || "-"}`,
-      `当前证据: ${state?.lastFailure?.fingerprint ?? "-"}`,
-      `修改文件: ${files}`,
-      `验证阶段: ${this.getVerificationStagesSummary()}`,
-      `下一步: ${next}；使用 /recover retry|next|edit|cancel`,
-      "边界: 本地摘要轨迹已保存，不包含 prompt 或工具正文。",
-    ].join("\n");
-  }
-
-  private formatRecoveryInstruction(failure: { category: string; message: string }, strategy?: string): string {
-    const instructions: Record<string, string> = {
-      repair_tool_arguments: "检查工具参数 schema，修正参数后只重试这一次工具调用。",
-      return_tool_schema: "不要继续执行工具；说明缺失或非法字段，并给出正确参数示例。",
-      inspect_command_environment: "先检查 PATH、package scripts 和当前平台可用命令，再选择一个有证据支持的替代命令。",
-      use_supported_command: "改用工作区内已有的 package script 或轻灵已注册工具，不要盲目重复原命令。",
-      inspect_tool_error: "分析工具错误的直接原因，只修改当前失败目标。",
-      retry_tool_once: "在确认参数和目标未变化后，仅重试当前工具一次。",
-      narrow_tool_scope: "缩小工具操作范围到当前失败目标，避免重复无关操作。",
-      return_tool_diagnostics: "停止重复调用，返回可验证的诊断信息和下一步建议。",
-      targeted_verification_repair: "仅修复当前失败测试集合，不重复无关的全量验证。",
-      narrow_verification_scope: "缩小验证范围到受影响文件和失败测试，先取得可观测进展。",
-      compact_context_once: "仅执行一次上下文压缩，保留用户原文、工具链和错误证据，然后继续任务。",
-      transport_retry: "提供方瞬时错误已退避；不要改变任务目标，直接继续。",
-    };
-    return `【定向恢复】失败类别=${failure.category}；失败原因=${failure.message}\n` +
-      `恢复策略=${strategy ?? "暂无"}\n${instructions[strategy ?? ""] ?? "停止重复动作，基于最新证据选择下一步。"}`;
+    return formatRecoveryPause({
+      reason,
+      next,
+      state: this.getRecoveryState(),
+      verificationStagesSummary: this.getVerificationStagesSummary(),
+    });
   }
 
   private async applyRecoveryStrategy(
@@ -908,21 +844,15 @@ export class AgentLoop extends AgentEventEmitter {
       this.messages.push({
         role: "user",
         content:
-          this.formatRecoveryInstruction(failure, strategy) +
+          formatRecoveryInstruction(failure, strategy) +
           `\n上下文压缩结果: before=${result.beforeCount} after=${result.afterCount} changed=${result.changed}`,
       });
       return;
     }
     this.messages.push({
       role: "user",
-      content: this.formatRecoveryInstruction(failure, strategy),
+      content: formatRecoveryInstruction(failure, strategy),
     });
-  }
-
-  private async getWorkspaceDiffHash(): Promise<string> {
-    const result = await this.runVerificationCommand("git diff --no-ext-diff --binary");
-    const content = result.code === 0 ? result.stdout : "git-unavailable";
-    return createHash("sha256").update(content).digest("hex").slice(0, 20);
   }
 
   getModel(): string {
@@ -1169,12 +1099,12 @@ export class AgentLoop extends AgentEventEmitter {
   // --- Session Persistence ---
 
   async checkpointSession(): Promise<string> {
-    return this.sessionRegistry.save(this.buildSessionSnapshot(this.sessionId));
+    return this.sessionRegistry.save(this.captureSessionSnapshot(this.sessionId));
   }
 
   async saveSession(name?: string): Promise<string> {
-    const sessionName = name ?? "session-" + new Date().toISOString().replace(/[:.]/g, "-");
-    return this.sessionRegistry.save(this.buildSessionSnapshot(sessionName));
+    const sessionName = name ?? defaultSessionSaveName();
+    return this.sessionRegistry.save(this.captureSessionSnapshot(sessionName));
   }
 
   async loadSession(name: string): Promise<boolean> {
@@ -1195,7 +1125,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (!snapshot) {
       return null;
     }
-    return this.applySessionSnapshot(snapshot);
+    return this.hydrateSessionSnapshot(snapshot);
   }
 
   async restoreLatestSession(): Promise<SavedSessionSummary | null> {
@@ -1203,36 +1133,35 @@ export class AgentLoop extends AgentEventEmitter {
     if (!snapshot) {
       return null;
     }
-    return this.applySessionSnapshot(snapshot);
+    return this.hydrateSessionSnapshot(snapshot);
   }
 
 
   // --- Private Methods ---
 
-  private buildSessionSnapshot(name: string): Omit<SavedSessionSnapshot, "version"> {
-    return {
-      name,
+  private captureSessionSnapshot(name: string): Omit<SavedSessionSnapshot, "version"> {
+    return buildSessionSnapshot(name, {
       sessionId: this.sessionId,
-      workspaceDir: this.getWorkspaceDir(),
-      createdAt: this.sessionCreatedAt,
-      updatedAt: new Date().toISOString(),
+      sessionCreatedAt: this.sessionCreatedAt,
       messages: this.getMessagesSnapshot(),
       turnCount: this.turnCount,
       sessionTokens: this.sessionTokens,
       compactionCount: this.compactionCount,
-    };
+      workspaceDir: this.getWorkspaceDir(),
+    });
   }
 
-  private applySessionSnapshot(snapshot: SavedSessionSnapshot): SavedSessionSummary {
-    this.messages = snapshot.messages.map((message) => ({ ...message }));
-    this.turnCount = snapshot.turnCount;
-    this.sessionTokens = snapshot.sessionTokens;
-    this.sessionPromptTokens = 0;
-    this.sessionCompletionTokens = 0;
-    this.tokenUsageSource = "unknown";
-    this.compactionCount = snapshot.compactionCount;
-    this.sessionId = snapshot.sessionId;
-    this.sessionCreatedAt = snapshot.createdAt;
+  private hydrateSessionSnapshot(snapshot: SavedSessionSnapshot): SavedSessionSummary {
+    const patch = applySessionSnapshot(snapshot);
+    this.messages = patch.messages;
+    this.turnCount = patch.turnCount;
+    this.sessionTokens = patch.sessionTokens;
+    this.sessionPromptTokens = patch.sessionPromptTokens;
+    this.sessionCompletionTokens = patch.sessionCompletionTokens;
+    this.tokenUsageSource = patch.tokenUsageSource;
+    this.compactionCount = patch.compactionCount;
+    this.sessionId = patch.sessionId;
+    this.sessionCreatedAt = patch.sessionCreatedAt;
     this.pipeline.setSessionId(this.sessionId);
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
@@ -1241,21 +1170,11 @@ export class AgentLoop extends AgentEventEmitter {
         ...this.config,
         runtime: {
           ...this.config.runtime,
-          workspaceDir: snapshot.workspaceDir ?? this.config.runtime.workspaceDir,
+          workspaceDir: patch.workspaceDir ?? this.config.runtime.workspaceDir,
         },
       };
     }
-    return {
-      name: snapshot.name,
-      sessionId: snapshot.sessionId,
-      workspaceDir: snapshot.workspaceDir,
-      createdAt: snapshot.createdAt,
-      updatedAt: snapshot.updatedAt,
-      turnCount: snapshot.turnCount,
-      messageCount: snapshot.messages.length,
-      sessionTokens: snapshot.sessionTokens,
-      compactionCount: snapshot.compactionCount,
-    };
+    return patch.summary;
   }
 
   /** 自我反思循环 (v0.5 M2) */
@@ -1347,107 +1266,21 @@ export class AgentLoop extends AgentEventEmitter {
     });
   }
 
-  /**
-   * Advisory-only verification when no staged commands are configured.
-   * Never feeds RecoveryController — recovery requires StagedVerifier stages.
-   */
-  private async verifyLastOperationAdvisory(): Promise<void> {
-    const toolMsgs = this.messages.filter((m) => m.role === "tool");
-    if (toolMsgs.length === 0) return;
-
-    try {
-      const lastResult = JSON.parse(toolMsgs[toolMsgs.length - 1].content!);
-      const vr = await this.verifier.verify(
-        "文件操作/Bash执行",
-        "操作成功完成",
-        lastResult.output
-      );
-      const icon = vr.verdict === "PASS" ? "✅" : vr.verdict === "FAIL" ? "❌" : "⚠️";
-      console.error(icon + " 旁路验证(非恢复驱动): " + vr.verdict);
-      if (vr.verdict !== "PASS") {
-        console.error("   详情: " + vr.details);
-        console.error("   提示: 设置 /verify set 或 QLING_VERIFY_* 以启用命令级恢复验证");
-      }
-      this.emit("verification", vr.verdict, vr.details ?? vr.verdict);
-    } catch {
-      // 忽略验证错误
-    }
-  }
-
-  private async buildVerificationProgress(failingTests: string[]): Promise<ProgressSnapshot> {
-    const [diffHash, changedFiles] = await Promise.all([
-      this.getWorkspaceDiffHash(),
-      this.getWorkspaceChangedFiles(),
-    ]);
-    return {
-      diffHash,
-      failingTests: [...failingTests],
-      changedFiles,
-      changed: changedFiles.length > 0,
-    };
-  }
-
-  private async getWorkspaceChangedFiles(): Promise<string[]> {
-    const result = await this.runVerificationCommand("git status --porcelain");
-    if (result.code !== 0 || !result.stdout.trim()) return [];
-    const names = new Set<string>();
-    for (const line of result.stdout.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      // porcelain: XY path  or  XY orig -> path
-      const body = trimmed.slice(2).trim();
-      const pathPart = body.includes(" -> ") ? body.split(" -> ").pop()! : body;
-      const base = path.basename(pathPart.replace(/^"+|"+$/g, ""));
-      if (base) names.add(base);
-      if (names.size >= 20) break;
-    }
-    return [...names].sort();
-  }
-
   /** Exposed for doctor / status: current staged verification plan. */
   getVerificationStagesSummary(): string {
-    return formatVerificationStagesSummary(
-      resolveVerificationStages({ configuredCommand: this.verificationCommand })
-    );
+    return stagesSummary(this.verificationCommand);
   }
 
   async persistVerificationCommand(): Promise<void> {
-    const workspaceDir = this.getWorkspaceDir();
-    const filePath = path.join(workspaceDir, ".qling-verify.json");
-    try {
-      if (this.verificationCommand) {
-        await fs.writeFile(filePath, JSON.stringify({ verificationCommand: this.verificationCommand }, null, 2), "utf-8");
-      } else {
-        if (existsSync(filePath)) {
-          await fs.unlink(filePath);
-        }
-      }
-    } catch (err) {
-      console.error("[AgentLoop] Failed to persist verification command: " + (err as Error).message);
-    }
+    await persistVerificationCommandFile(this.getWorkspaceDir(), this.verificationCommand);
   }
 
   async loadVerificationCommand(): Promise<void> {
-    const workspaceDir = this.getWorkspaceDir();
-    const filePath = path.join(workspaceDir, ".qling-verify.json");
-    if (existsSync(filePath)) {
-      try {
-        const content = await fs.readFile(filePath, "utf-8");
-        const data = JSON.parse(content);
-        this.verificationCommand = data.verificationCommand ?? null;
-      } catch (err) {
-        console.error("[AgentLoop] Failed to load verification command: " + (err as Error).message);
-      }
-    }
+    this.verificationCommand = await loadVerificationCommandFile(this.getWorkspaceDir());
   }
 
   runVerificationCommand(cmd: string): Promise<{ code: number; stdout: string; stderr: string }> {
-    return new Promise((resolve) => {
-      exec(cmd, { cwd: this.getWorkspaceDir() }, (error, stdout, stderr) => {
-        const code = error ? (error.code ?? 1) : 0;
-        resolve({ code, stdout, stderr });
-      });
-    });
+    return runShellCommand(cmd, this.getWorkspaceDir());
   }
 
   private async checkAutoDream(): Promise<void> {
