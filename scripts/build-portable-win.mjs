@@ -76,6 +76,23 @@ try {
   process.exit(1);
 }
 
+// npm pack intentionally excludes node_modules. Install only runtime dependencies
+// into the staged package, then rebuild the native dependency with lifecycle
+// scripts enabled only for that dependency.
+const stagedPackage = join(STAGE, "package");
+runChecked(
+  process.platform === "win32" ? "npm.cmd" : "npm",
+  ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+  stagedPackage,
+  "install staged production dependencies"
+);
+runChecked(
+  process.platform === "win32" ? "npm.cmd" : "npm",
+  ["rebuild", "better-sqlite3"],
+  stagedPackage,
+  "rebuild staged better-sqlite3"
+);
+
 // 2) Bundle Node runtime
 const runtimeDir = join(STAGE, "runtime");
 await mkdir(runtimeDir, { recursive: true });
@@ -176,6 +193,9 @@ if (cscResult.status !== 0 || !existsSync(launcherExe)) {
 }
 console.log(`[portable] compiled qling.exe via ${csc}`);
 
+runChecked(launcherExe, ["--version"], STAGE, "verify portable launcher version");
+runChecked(launcherExe, ["doctor"], STAGE, "verify portable launcher doctor");
+
 const readme = `Qling ${version} — Windows portable layout
 ========================================
 
@@ -226,6 +246,22 @@ console.log(`[portable] wrote ${ZIP_PATH}`);
 console.log(`[portable] size=${buf.length} sha256=${sha256}`);
 console.log(`[portable] bundledNode=${bundledNode}`);
 console.log(`[portable] meta: dist-portable/portable-meta.json`);
+
+function runChecked(command, args, cwd, label) {
+  console.log(`[portable] ${label}…`);
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    shell: process.platform === "win32" && /\.cmd$/i.test(command),
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status !== 0) {
+    if (result.error) console.error(`[portable] ${result.error.message}`);
+    console.error(`[portable] ${label} failed with exit code ${result.status}`);
+    process.exit(result.status ?? 1);
+  }
+}
 
 function downloadFile(url, dest) {
   return new Promise((resolvePromise, reject) => {
