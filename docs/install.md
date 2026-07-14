@@ -123,7 +123,7 @@ npm run build:portable-win
 # → dist-portable/qling-win-x64.zip + portable-meta.json (sha256)
 ```
 
-Release 资产示例：`https://github.com/Zzy-min/qling/releases/download/v1.2.1/qling-win-x64.zip`  
+Release 资产示例：`https://github.com/Zzy-min/qling/releases/download/v1.2.2/qling-win-x64.zip`
 清单：`packaging/winget/Zzy-min.qling.yaml`（含 InstallerSha256）。
 
 ### 本地校验

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v1.2.2 (2026-07-15)
+
+- Fix CRLF skill frontmatter parsing on Windows CI.
+- Normalize Windows and POSIX target paths consistently in recovery fingerprints.
+- Persist session task state atomically to prevent partial JSON reads.
+- Install locked production dependencies in Windows portable builds and verify the staged launcher with `--version` and `doctor` before packaging.
+- Provision Playwright Chromium for the required Linux dashboard smoke test.
+
 ## v1.2.1 (2026-07-15)
 
 ### Official distribution + strict layers + self-contained portable
