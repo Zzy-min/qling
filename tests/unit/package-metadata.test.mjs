@@ -10,7 +10,7 @@ test("package.json has npm publish metadata for Phase 1.4", async () => {
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
   assert.equal(pkg.name, "@qlingzzy/qling");
-  assert.equal(pkg.version, "1.0.0");
+  assert.equal(pkg.version, "1.1.0");
   assert.equal(pkg.license, "MIT");
   assert.ok(pkg.bin?.qling === "dist/index.js" || pkg.bin?.qling === "./dist/index.js");
   assert.equal(pkg.publishConfig?.access, "public");
