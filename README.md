@@ -63,8 +63,9 @@ qling
 # 或从 GitHub 直接全局安装
 npm install -g github:Zzy-min/qling
 
-# npm 官方包（作用域名，CLI 仍是 qling）
-npm install -g @qlingzzy/qling
+# npm 官方包（已发布 1.1.0；作用域名，CLI 仍是 qling）
+# 若默认 registry 是国内镜像，请显式指定官方源
+npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/
 ```
 
 已安装 CLI 后，可运行本机初始化检查：

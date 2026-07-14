@@ -12,34 +12,56 @@ Current draft version: **1.1.0** (aligned with package.json).
 
 ## Recommended path today
 
-1. `git clone` + `npm run bootstrap` + `npm link`
-2. Or `npm install -g github:Zzy-min/qling`
-3. After npm publish: `npm install -g @qlingzzy/qling` (CLI remains `qling`)
+1. `npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/`
+2. Or `git clone` + `npm run bootstrap` + `npm link`
+3. Or `npm install -g github:Zzy-min/qling`
 
 See [docs/install.md](../docs/install.md).
 
-## Local validation (before publishing)
+## Status (1.1.0)
+
+| Artifact | Status |
+|----------|--------|
+| npm `@qlingzzy/qling@1.1.0` | Published on registry.npmjs.org |
+| Scoop `hash` | Filled (SHA256 of npm tarball) |
+| Scoop official bucket | Not submitted |
+| winget `InstallerSha256` | Still placeholder (needs zip/msi) |
+
+## Local validation
+
+```bash
+npm run validate:packaging
+```
 
 Scoop:
 
 ```powershell
-# Schema-ish check: required keys present
 Get-Content packaging/scoop/qling.json | ConvertFrom-Json | Select-Object version, url, hash
-# After real hash is filled and a private bucket exists:
-# scoop install .\packaging\scoop\qling.json
+# Private bucket only until community PR lands:
+# scoop install qling
 ```
 
 winget:
 
 ```powershell
-# YAML structure review only until InstallerSha256 is real
 Get-Content packaging/winget/Zzy-min.qling.yaml
-# Official submit path: fork microsoft/winget-pkgs → PR
+# Submit via fork of microsoft/winget-pkgs after real installer assets exist
 ```
 
-npm (after `npm login`):
+npm publish (maintainer; force official registry if default is a mirror):
 
 ```bash
-npm publish --access public
-npm view @qlingzzy/qling version
+npm whoami --registry https://registry.npmjs.org/
+npm publish --access public --registry https://registry.npmjs.org/
+npm view @qlingzzy/qling version --registry https://registry.npmjs.org/
+```
+
+Refresh Scoop hash after a new npm version:
+
+```powershell
+$v = "1.1.0"
+$url = "https://registry.npmjs.org/@qlingzzy/qling/-/qling-$v.tgz"
+$out = "$env:TEMP\qling-$v.tgz"
+Invoke-WebRequest $url -OutFile $out
+(Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
 ```

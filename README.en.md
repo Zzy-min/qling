@@ -49,12 +49,12 @@ npm link
 qling --version
 ```
 
-### From npm
+### From npm (published)
 
 Package name is scoped: **`@qlingzzy/qling`** (CLI binary remains `qling`):
 
 ```bash
-npm install -g @qlingzzy/qling
+npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/
 qling bootstrap
 qling setup
 ```
@@ -178,9 +178,9 @@ QLING_EVAL_LLM=1 npm run eval:llm
 | Channel | Status |
 |---------|--------|
 | Source + bootstrap | Ready |
-| npm `@qlingzzy/qling` | Ready when published (`npm login` required on publisher machine) |
-| Scoop | Draft manifest only |
-| winget | Draft YAML only |
+| npm `@qlingzzy/qling` | **Published** `1.1.0` — install with `--registry https://registry.npmjs.org/` if your default is a mirror |
+| Scoop | Draft + real tarball SHA256; not in official buckets |
+| winget | Draft YAML only (needs portable zip + SHA256) |
 | Portable zip / single binary | Not yet |
 
 ## Version

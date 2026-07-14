@@ -24,6 +24,12 @@ if (!String(scoop.url || "").includes(version)) {
 if (!Array.isArray(scoop.notes) || !scoop.notes.some((n) => /DRAFT|draft/i.test(n))) {
   errors.push("scoop notes should mark DRAFT status");
 }
+const hash = String(scoop.hash || "");
+if (!hash || /TODO|REPLACE/i.test(hash)) {
+  errors.push("scoop hash still placeholder — fill real SHA256 after npm publish");
+} else if (!/^(sha256:)?[a-f0-9]{64}$/i.test(hash)) {
+  errors.push(`scoop hash looks invalid: ${hash}`);
+}
 
 const winget = await readFile(
   join(root, "packaging", "winget", "Zzy-min.qling.yaml"),

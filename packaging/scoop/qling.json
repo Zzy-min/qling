@@ -4,21 +4,26 @@
   "homepage": "https://github.com/Zzy-min/qling",
   "license": "MIT",
   "notes": [
-    "DRAFT manifest — not published to an official Scoop bucket.",
-    "Requires Node.js >= 18 on PATH.",
-    "Replace url/hash with a pinned npm tarball or GitHub Release asset before publishing.",
+    "DRAFT manifest — not in an official Scoop bucket yet (private/local bucket only).",
+    "Requires Node.js >= 18 on PATH (better-sqlite3 may need VS Build Tools).",
+    "hash is SHA256 of the npm tarball for @qlingzzy/qling@1.1.0 (registry.npmjs.org).",
+    "npm tarball has no Windows bin shim; post_install falls back to npm global install.",
     "API keys must be set as user environment variables (never commit secrets).",
-    "Until a portable zip exists, prefer: npm install -g @qlingzzy/qling@1.1.0"
+    "Preferred path: npm install -g @qlingzzy/qling@1.1.0 --registry https://registry.npmjs.org/"
   ],
   "depends": [
     "nodejs"
   ],
   "url": "https://registry.npmjs.org/@qlingzzy/qling/-/qling-1.1.0.tgz",
-  "hash": "TODO_REPLACE_WITH_SHA256_OF_TGZ",
+  "hash": "sha256:80fce9e65901bf9bd5eedcaa69fcf3a9dc779c38adc32f3a2282c81d95636587",
   "extract_dir": "package",
-  "bin": "bin\\qling.cmd",
+  "bin": "dist\\index.js",
+  "env_add_path": [
+    "current\\node_modules\\.bin"
+  ],
   "post_install": [
-    "Write-Host 'If bin shim is missing, run: npm install -g @qlingzzy/qling@$version' -ForegroundColor Yellow",
+    "Write-Host 'npm package extracted; if qling is missing from PATH, run:' -ForegroundColor Yellow",
+    "Write-Host '  npm install -g @qlingzzy/qling@1.1.0 --registry https://registry.npmjs.org/' -ForegroundColor Cyan",
     "Write-Host 'Then: qling bootstrap && qling setup' -ForegroundColor Cyan"
   ],
   "checkver": {

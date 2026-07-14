@@ -34,24 +34,35 @@ qling --help
 
 `bootstrap` 会：检查 Node/npm → 安装依赖 → 构建 → 创建 `~/.qling/` → 给出 `doctor`/`setup` 下一步。默认**不**安装浏览器、**不**自动开 dashboard。
 
-## 方式 B：npm 全局安装
+## 方式 B：npm 全局安装（已发布 1.1.0）
 
-包名因 npm 相似度策略使用作用域 **`@qlingzzy/qling`**（安装后命令仍是 `qling`）：
+包名因 npm 相似度策略使用作用域 **`@qlingzzy/qling`**（安装后命令仍是 `qling`）。  
+包页：https://www.npmjs.com/package/@qlingzzy/qling
 
 ```bash
-npm install -g @qlingzzy/qling
+# 若本机默认 registry 是国内镜像，发布/校验请显式指定官方源
+npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/
 qling --version
 qling bootstrap
 qling setup
 ```
 
-从 GitHub 直接装：
+从 GitHub 直接装（不经过 npm registry）：
 
 ```bash
 npm install -g github:Zzy-min/qling
 ```
 
 > 注意：`better-sqlite3` 为原生模块，需本机可编译环境；Windows 建议安装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 或使用已预编译的 Node 版本。
+
+### 发布者备忘（维护者）
+
+本机默认若为 `registry.npmmirror.com`，`npm whoami` / `npm login` 会对镜像失败；身份与 publish 必须带官方源：
+
+```bash
+npm whoami --registry https://registry.npmjs.org/
+npm publish --access public --registry https://registry.npmjs.org/
+```
 
 ## 方式 C：Windows PowerShell 快速路径
 
@@ -92,13 +103,15 @@ Get-Content packaging/scoop/qling.json | ConvertFrom-Json | Select-Object versio
 scoop install qling
 ```
 
-当前草案 URL 指向 npm tarball；`hash` 仍为占位。正式上架前请：
+1.1.0 的 npm tarball **已填真实 SHA256**（见 manifest `hash`）。仍未进官方 Scoop bucket：需自建 bucket 或社区 bucket PR。
 
-1. `npm pack` 或发布后下载 tarball  
-2. 计算 SHA256 写入 `hash`  
-3. 提交到自建/社区 Scoop bucket  
+```powershell
+# 私有 bucket 放入 packaging/scoop/qling.json 后可试装
+# 若 shim 不理想，post_install 会提示改用 npm 全局安装
+scoop install qling
+```
 
-在 hash 未填前，**推荐**继续用 `npm install -g @qlingzzy/qling` 或源码 bootstrap。
+**推荐**用户路径仍是：`npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/` 或源码 bootstrap。
 
 ## 方式 E：winget 草案（未上架）
 

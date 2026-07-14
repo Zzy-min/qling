@@ -11,6 +11,8 @@
 - **英文 README**：补齐 1.1 能力、eval、分发与 skills 说明。
 - **Demo 说明**：`docs/demo.md`（文字演示路径；GIF 另录不入库）。
 - **`ci:check`**：纳入 `eval:tasks` 与 `validate:packaging`。
+- **npm 发布**：`@qlingzzy/qling@1.1.0` 已上架 registry.npmjs.org；文档注明镜像默认下需 `--registry https://registry.npmjs.org/`。
+- **Scoop hash**：填入 1.1.0 tarball 真实 SHA256（仍为未进官方 bucket 的草案）。
 
 ## v1.1.0 (2026-07-14)
 
