@@ -8,12 +8,9 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import { ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
-import { buildDefaultRegistry, buildSystemPrompt, buildRepoMapSection } from "./pipeline/sections.js";
+import { buildDefaultRegistry } from "./pipeline/sections.js";
 import { MemoryStore } from "./memory.js";
-import {
-  resolveRoundTokenUsage,
-  type TokenUsageSource,
-} from "./token-usage.js";
+import type { TokenUsageSource } from "./token-usage.js";
 import { WriteAheadLog } from "./memory/wal.js";
 import { runAutoDream } from "./memory/lifecycle.js";
 import { MCPRegistry } from "./mcp/registry.js";
@@ -52,12 +49,7 @@ import {
   isLoopbackEndpoint,
 } from "./providers/presets.js";
 import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
-import {
-  executePreparedTools,
-  prepareToolCalls,
-} from "./agent/tool-orchestrator.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
-import { classifyFailure } from "./execution/failure-classifier.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
 import type { ExecutionEvent, RecoveryState } from "./execution/types.js";
@@ -69,9 +61,17 @@ import {
   loadVerificationCommand as loadVerificationCommandFile,
   persistVerificationCommand as persistVerificationCommandFile,
   runShellCommand,
-  runWriteToolVerification,
   stagesSummary,
 } from "./execution/verification-loop.js";
+import {
+  assembleSystemPrompt,
+  reflectiveThink,
+} from "./agent/system-prompt.js";
+import {
+  runInnerIterationLoop,
+  runOuterAgentLoop,
+  type TokenCounters,
+} from "./agent/main-loop.js";
 
 /** Minimal surface so agent-runtime does not statically import adapters/dashboard. */
 interface DashboardHandle {
@@ -106,12 +106,6 @@ export interface LlmSessionPatch {
   provider?: string;
   endpoint?: string;
   apiKey?: string;
-}
-
-interface TurnTelemetry {
-  turn: number;
-  toolCalls: number;
-  toolFailures: number;
 }
 
 export class AgentEventEmitter {
@@ -591,239 +585,79 @@ export class AgentLoop extends AgentEventEmitter {
 
   async run(): Promise<string> {
     await this.initPromise;
-    const resumable = this.activeRun && this.getRecoveryState()?.status === "recovering";
-    const originalTask = resumable ? this.activeRun!.originalTask : this.findLastUserMessage();
-    const runId = resumable
-      ? this.activeRun!.runId
-      : `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-    if (!resumable) {
-      this.activeRun = { runId, sessionId: this.sessionId, originalTask, startedAt: Date.now() };
-      this.recoveryController.startRun({ runId, sessionId: this.sessionId, originalTask });
-      this.executionEventBus.startRun({ runId, sessionId: this.sessionId });
-    }
-    let transportAttempts = 0;
-
-    while (true) {
-      try {
-        const response = await this.executeRunInternal();
-        if (this.getRecoveryState()?.status === "paused") return response;
-        this.executionEventBus.completeRun(runId, "succeeded");
-        this.activeRun = null;
-        return response;
-      } catch (error) {
-        this.executionEventBus.completeAttempt(runId, "failed");
-        const failure = classifyFailure(error, { provider: true });
-        if (failure.category === "provider_transient" && transportAttempts < 3) {
-          transportAttempts++;
-          const delay = Math.min(4_000, 250 * 2 ** (transportAttempts - 1)) + Math.floor(Math.random() * 100);
-          this.executionEventBus.emit({
-            runId,
-            sessionId: this.sessionId,
-            type: "recovery_started",
-            status: "recovering",
-            stage: "provider",
-            category: failure.category,
-            fingerprint: failure.fingerprint,
-            recoveryAction: "transport_retry",
-          });
-          this.emit("repair", failure.message, "provider transport retry", transportAttempts);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-        const decision = this.recoveryController.recordFailure(failure, {});
-        const recoveryState = this.recoveryController.getRecoveryState();
-        this.executionEventBus.emit({
-          runId,
-          sessionId: this.sessionId,
-          type: "failure",
-          status: decision.action === "pause" ? "paused" : "recovering",
-          stage: "agent",
-          category: decision.category,
-          fingerprint: failure.fingerprint,
-          recoveryAction: decision.recommendedStrategy ?? decision.action,
-        });
-        this.emit("recovery_paused", recoveryState, decision);
-        if (decision.action === "pause") return this.formatRecoveryPause(failure.message, decision.reason);
-        await this.applyRecoveryStrategy(failure, decision.recommendedStrategy);
-        this.emit("repair", failure.message, decision.recommendedStrategy ?? decision.reason, recoveryState.strategyAttempts);
-        continue;
-      }
-    }
+    return runOuterAgentLoop({
+      sessionId: this.sessionId,
+      activeRun: this.activeRun,
+      messages: this.messages,
+      executionEventBus: this.executionEventBus,
+      recoveryController: this.recoveryController,
+      emit: (event, ...args) => this.emit(event, ...args),
+      getRecoveryState: () => this.getRecoveryState(),
+      formatRecoveryPause: (reason, next) => this.formatRecoveryPause(reason, next),
+      applyRecoveryStrategy: (failure, strategy) => this.applyRecoveryStrategy(failure, strategy),
+      setActiveRun: (run) => {
+        this.activeRun = run;
+      },
+      executeInner: () => this.executeRunInternal(),
+    });
   }
 
   private async executeRunInternal(): Promise<string> {
     await this.initPromise;
-    const toolSignatureCounts = new Map<string, number>();
-    const toolRepeatLimit = Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6);
-
-    for (let i = 0; i < this.config.maxIterations; i++) {
-      this.turnCount++;
-      const runId = this.activeRun?.runId ?? `run_untracked_${this.turnCount}`;
-      const attemptId = `attempt_${runId}_${this.turnCount}`;
-      this.executionEventBus.startAttempt({ runId, sessionId: this.sessionId, attemptId });
-
-      // 保存本轮用户消息（在 assistant/tool 消息 push 之前）
-      let lastUserMsg = "";
-      for (let k = this.messages.length - 1; k >= 0; k--) {
-        if (this.messages[k].role === "user") {
-          lastUserMsg = this.messages[k].content;
-          break;
-        }
-      }
-
-      // 0. 上下文压缩（超过阈值时触发）
-      if (this.compactor.needsCompaction(this.messages)) {
-        console.error("\n📦 上下文压缩中...（" + this.messages.length + " 条消息）");
-        const compacted = await this.compactor.compact(this.messages);
-        this.messages = compacted;
-        this.compactionCount++;
-        console.error("📦 压缩完成 → " + this.messages.length + " 条消息\n");
-      }
-
-      // 0b. 冲突/注入扫描（Lesson 12: Context Validation）
-      const conflicts = this.compactor.scanConflicts(this.messages);
-      if (conflicts.length > 0) {
-        console.error("⚠️ 检测到 " + conflicts.length + " 处指令冲突");
-      }
-      const poison = this.compactor.scanPoison(this.messages);
-      if (poison.length > 0) {
-        console.error("🚨 检测到 " + poison.length + " 处可能的提示注入");
-      }
-
-      // 1. 构建 system prompt（动态sections）
-      const systemPrompt = await this.buildSystemPrompt();
-
-      // v0.3 Workflow Checkpoint: Update context
-      if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
-        await this.workflowRuntime.updateContext(this.messages);
-      }
-
-      // 2. API 调用；token 仅累加 provider 官方 usage
-      const { content, tool_calls, usage } = await this.chat(systemPrompt);
-      const tokenUsage = resolveRoundTokenUsage(usage);
-      if (tokenUsage.source === "provider") {
-        this.sessionTokens += tokenUsage.tokens;
-        this.sessionPromptTokens += tokenUsage.promptTokens;
-        this.sessionCompletionTokens += tokenUsage.completionTokens;
-        this.tokenUsageSource = "provider";
-      }
-      this.messages.push({ role: "assistant", content, tool_calls });
-      this.emit("thinking", content || "正在思考...");
-
-      // 4. 无工具调用 → 结束
-      if (!tool_calls || tool_calls.length === 0) {
-        // 知识观察：助手消息
-        this.knowledgeAdapter.onAssistantMessage(content);
-        // Auto-dream 检查
-        await this.checkAutoDream();
-        // 知识观察：回合结束
-        await this.knowledgeAdapter.onTurnEnd(this.turnCount);
-        this.logTurnTelemetry({ turn: this.turnCount, toolCalls: 0, toolFailures: 0 });
-        this.executionEventBus.completeAttempt(runId, "succeeded");
-        return content;
-      }
-
-      // 5. Pipeline 执行（Hook → 工具）— 委托 tool-orchestrator
-      console.error("\n🔧 执行 " + tool_calls.length + " 个工具...\n");
-      const preparedCalls = prepareToolCalls(tool_calls, {
-        parseRetries: this.config.runtime?.parseRetries ?? 0,
-        toolRepeatLimit,
-        signatureCounts: toolSignatureCounts,
-      });
-      const { turnToolCalls, turnToolFailures } = await executePreparedTools(
-        {
-          pipeline: this.pipeline,
-          tools: this.config.tools,
-          guardConfig: this.guardConfig,
-          channel: this.channel,
-          approvalGate: this.approvalGate,
-          knowledgeAdapter: this.knowledgeAdapter,
-          memoryStore: this.memoryStore,
-          workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
-          workflowRuntime: this.workflowRuntime,
-          executionEventBus: this.executionEventBus,
-          emit: (event, ...args) => this.emit(event, ...args),
-          reflectiveThink: (tc) => this.reflectiveThink(tc),
-        },
-        {
-          preparedCalls,
-          messages: this.messages,
-          runId,
-          attemptId,
-        }
-      );
-
-      // 6. 验证阶段（针对写操作）— 委托 verification-loop
-      const verifyOutcome = await runWriteToolVerification(preparedCalls, {
-        verificationCommand: this.verificationCommand,
-        runCommand: (cmd) => this.runVerificationCommand(cmd),
-        recoveryController: this.recoveryController,
-        executionEventBus: this.executionEventBus,
-        emit: (event, ...args) => this.emit(event, ...args),
-        getRecoveryState: () => this.getRecoveryState(),
-        verifier: this.verifier,
-        messages: this.messages,
-        runId,
-      });
-      if (verifyOutcome.kind === "pause") {
-        return verifyOutcome.text;
-      }
-      if (verifyOutcome.kind === "recover") {
-        this.messages.push({ role: "user", content: verifyOutcome.userMessage });
-        this.emit("repair", verifyOutcome.failureMessage, verifyOutcome.strategy, verifyOutcome.strategyAttempts);
-        this.executionEventBus.completeAttempt(runId, "recovering");
-        continue;
-      }
-
-      // 7. Auto-dream 检查
-      await this.checkAutoDream();
-
-      // v0.5 M1: Experience Distillation (M1 Core)
-      if (this.turnCount > 0 && !preparedCalls.some(p => p.immediateResult?.is_error || (p.call.id && this.messages.some(m => m.tool_call_id === p.call.id && JSON.parse(m.content!).is_error)))) {
-         const successfulCmds = preparedCalls
-           .filter(p => p.call.name === "bash")
-           .map(p => (p.call.arguments as any).cmd || (p.call.arguments as any).command);
-
-         if (successfulCmds.length > 0) {
-           let lastUserMsg = "";
-           for (let i = this.messages.length - 1; i >= 0; i--) {
-             if (this.messages[i].role === "user") {
-               lastUserMsg = this.messages[i].content;
-               break;
-             }
-           }
-           this.memoryStore.addPractice(
-             lastUserMsg.slice(0, 100),
-             successfulCmds,
-             preparedCalls.map(p => (p.call.arguments as any).path || (p.call.arguments as any).file).filter(Boolean)
-           );
-           console.error(`✨ [认知] 已将 ${successfulCmds.length} 条成功指令蒸馏为最佳实践`);
-         }
-      }
-
-      // 7b. 记录对话轮次（更新 conversation memory）
-      this.memoryStore.addConversationTurn("user", lastUserMsg);
-      this.memoryStore.addConversationTurn("assistant", content);
-
-      // 7c. 知识观察：助手消息 + 回合结束
-      this.knowledgeAdapter.onAssistantMessage(content);
-      await this.knowledgeAdapter.onTurnEnd(this.turnCount);
-      this.logTurnTelemetry({
-        turn: this.turnCount,
-        toolCalls: turnToolCalls,
-        toolFailures: turnToolFailures,
-      });
-      this.executionEventBus.completeAttempt(runId, "succeeded");
-    }
-
-    return "⚠️ 达到最大迭代次数，任务未完成。";
-  }
-
-  private findLastUserMessage(): string {
-    for (let index = this.messages.length - 1; index >= 0; index--) {
-      if (this.messages[index].role === "user") return this.messages[index].content;
-    }
-    return "";
+    const counters: TokenCounters = {
+      sessionTokens: this.sessionTokens,
+      sessionPromptTokens: this.sessionPromptTokens,
+      sessionCompletionTokens: this.sessionCompletionTokens,
+      tokenUsageSource: this.tokenUsageSource,
+    };
+    const host = {
+      messages: this.messages,
+      turnCount: this.turnCount,
+      sessionId: this.sessionId,
+      maxIterations: this.config.maxIterations,
+      toolRepeatLimit: Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6),
+      parseRetries: this.config.runtime?.parseRetries ?? 0,
+      verificationCommand: this.verificationCommand,
+      counters,
+      compactionCount: this.compactionCount,
+      toolCallTotal: this.toolCallTotal,
+      toolFailureTotal: this.toolFailureTotal,
+      retryCountTotal: this.retryCountTotal,
+      loggingFormat: this.loggingConfig.format as "text" | "json",
+      activeRunId: this.activeRun?.runId,
+      compactor: this.compactor,
+      pipeline: this.pipeline,
+      tools: this.config.tools,
+      guardConfig: this.guardConfig,
+      channel: this.channel,
+      approvalGate: this.approvalGate,
+      knowledgeAdapter: this.knowledgeAdapter,
+      memoryStore: this.memoryStore,
+      workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
+      workflowRuntime: this.workflowRuntime,
+      executionEventBus: this.executionEventBus,
+      recoveryController: this.recoveryController,
+      verifier: this.verifier,
+      buildSystemPrompt: () => this.buildSystemPrompt(),
+      chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
+        this.chat(systemPrompt, overrides ?? {}),
+      emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
+      runVerificationCommand: (cmd: string) => this.runVerificationCommand(cmd),
+      getRecoveryState: () => this.getRecoveryState(),
+      reflectiveThink: (tc: ToolCall) => this.reflectiveThink(tc),
+      checkAutoDream: () => this.checkAutoDream(),
+    };
+    const result = await runInnerIterationLoop(host);
+    // write back mutable counters from host
+    this.turnCount = host.turnCount;
+    this.sessionTokens = host.counters.sessionTokens;
+    this.sessionPromptTokens = host.counters.sessionPromptTokens;
+    this.sessionCompletionTokens = host.counters.sessionCompletionTokens;
+    this.tokenUsageSource = host.counters.tokenUsageSource;
+    this.compactionCount = host.compactionCount;
+    this.toolCallTotal = host.toolCallTotal;
+    this.toolFailureTotal = host.toolFailureTotal;
+    return result;
   }
 
   private formatRecoveryPause(reason: string, next: string): string {
@@ -1178,68 +1012,23 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   /** 自我反思循环 (v0.5 M2) */
-  private async reflectiveThink(tc: ToolCall): Promise<{ decision: "proceed" | "ask" | "block" | "warn", reason: string }> {
-    const { buildReflectionPrompt } = await import("./pipeline/sections.js");
-    const prompt = buildReflectionPrompt(tc.name, tc.arguments);
-
-    try {
-      // 执行一次极简的内部调用进行风险评估
-      const resp = await this.chat(prompt, { max_tokens: 200, temperature: 0 });
-      // 提取 JSON（防止模型输出冗余文字）
-      const jsonStr = resp.content.match(/\{[\s\S]*\}/)?.[0] || "{}";
-      const analysis = JSON.parse(jsonStr);
-      return {
-        decision: analysis.decision || "proceed",
-        reason: analysis.reason || "评估完成。"
-      };
-    } catch {
-      // 降级：启发式检查
-      const args = tc.arguments as any;
-      const cmd = (args.cmd || args.command || "").toLowerCase();
-      if (cmd.includes("rm ") || cmd.includes("del ")) {
-        return { decision: "warn", reason: "启发式拦截：检测到可能的删除操作。" };
-      }
-      return { decision: "proceed", reason: "启发式通过。" };
-    }
+  private async reflectiveThink(tc: ToolCall) {
+    return reflectiveThink(tc, (systemPrompt, overrides) => this.chat(systemPrompt, overrides ?? {}));
   }
 
   private async buildSystemPrompt(): Promise<string> {
-    // 加载代码地图并更新 REPOMAP section
-    const cognitiveIndex = (this.memoryStore as any)?.getCognitiveIndex?.();
-    if (cognitiveIndex) {
-      try {
-        const symbols = cognitiveIndex.getAllSymbols();
-        this.sectionRegistry.register(buildRepoMapSection(symbols));
-      } catch (err) {
-        // Ignore
-      }
-    }
-
-    // 加载记忆 (v0.3 支持语义异步预取)
-    let memoryStr = "";
-    if (this.messages.length > 0) {
-       let lastUserMsg = "";
-       for (let i = this.messages.length - 1; i >= 0; i--) {
-         if (this.messages[i].role === "user") {
-           lastUserMsg = this.messages[i].content;
-           break;
-         }
-       }
-       const relevant = await this.memoryStore.getRelevant(lastUserMsg, 10);
-       if (relevant.length > 0) {
-         memoryStr = relevant.map((e) => "[" + e.source + "] " + e.content).join("\n");
-       }
-    }
-
-    const sectionPrompt = buildSystemPrompt(this.sectionRegistry, {
-      memory: memoryStr || undefined,
+    return assembleSystemPrompt({
+      baseSystemPrompt: this.config.systemPrompt,
+      sectionRegistry: this.sectionRegistry,
+      memoryStore: this.memoryStore,
+      messages: this.messages,
+      provider: this.config.provider,
+      endpoint: this.config.endpoint,
+      workspaceDir: this.config.runtime?.workspaceDir,
+      fileCacheDir: this.config.runtime?.fileCacheDir,
+      fileStateDir: this.config.runtime?.fileStateDir,
+      runtimeRootDir: this.runtimeRootDir,
     });
-    const parts = [
-      this.config.systemPrompt.trim(),
-      this.buildRuntimeMetaSection(),
-      sectionPrompt,
-    ].filter((p) => p && p.trim().length > 0);
-    return parts.join("\n\n");
   }
 
   private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<LlmChatResponse> {
@@ -1302,60 +1091,6 @@ export class AgentLoop extends AgentEventEmitter {
     } catch {
       // ignore
     }
-  }
-
-  private logTurnTelemetry(metrics: TurnTelemetry): void {
-    this.toolCallTotal += metrics.toolCalls;
-    this.toolFailureTotal += metrics.toolFailures;
-
-    const turnFailureRate =
-      metrics.toolCalls === 0 ? 0 : Math.round((metrics.toolFailures / metrics.toolCalls) * 100);
-    const totalFailureRate =
-      this.toolCallTotal === 0 ? 0 : Math.round((this.toolFailureTotal / this.toolCallTotal) * 100);
-
-    const text =
-      "📊 [Obs] turn=" +
-      metrics.turn +
-      " tools=" +
-      metrics.toolCalls +
-      " turnFailRate=" +
-      turnFailureRate +
-      "% totalFailRate=" +
-      totalFailureRate +
-      "% compactions=" +
-      this.compactionCount +
-      " retries=" +
-      this.retryCountTotal;
-    if (this.loggingConfig.format === "json") {
-      console.error(
-        JSON.stringify({
-          type: "observability",
-          turn: metrics.turn,
-          toolCalls: metrics.toolCalls,
-          turnFailureRate,
-          totalFailureRate,
-          compactions: this.compactionCount,
-          retries: this.retryCountTotal,
-        })
-      );
-      return;
-    }
-    console.error(text);
-  }
-
-  private buildRuntimeMetaSection(): string {
-    const runtime = this.config.runtime;
-    const workspace = runtime?.workspaceDir ?? "(disabled)";
-    const cache = runtime?.fileCacheDir ?? path.join(this.runtimeRootDir, "cache");
-    const state = runtime?.fileStateDir ?? this.runtimeRootDir;
-    return [
-      "【Runtime Meta】",
-      `provider=${this.config.provider ?? "default"}`,
-      `endpoint=${this.config.endpoint ?? "default"}`,
-      `workspace_dir=${workspace}`,
-      `file_cache_dir=${cache}`,
-      `file_state_dir=${state}`,
-    ].join("\n");
   }
 
   private async maybeDumpInspect(kind: "prompt" | "request", payload: unknown): Promise<void> {
