@@ -9,6 +9,7 @@
 7. Run the repository gates: `npm run ci:check`, recovery evaluation, audit, and diff check.
 8. Review the diff for correctness and security regressions.
 9. Push only after user approval, then wait for a fresh cross-platform GitHub Actions result.
+10. Provision Playwright Chromium in Linux CI so the required dashboard responsive E2E test runs instead of failing before launch.
 
 External packaging follow-up is separate:
 
