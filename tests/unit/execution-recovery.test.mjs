@@ -60,6 +60,23 @@ test("failure fingerprint ignores paths timestamps and changing numeric noise", 
   assert.equal(first, second);
 });
 
+test("failure fingerprint treats Windows paths consistently on every host OS", () => {
+  const first = createFailureFingerprint({
+    category: "tool_execution",
+    tool: "bash",
+    message: "build failed",
+    targetPath: "C:\\tmp\\repo-a\\src\\a.ts",
+  });
+  const second = createFailureFingerprint({
+    category: "tool_execution",
+    tool: "bash",
+    message: "build failed",
+    targetPath: "D:\\work\\repo-b\\src\\a.ts",
+  });
+
+  assert.equal(first, second);
+});
+
 test("progress detector requires diff tests or todo evidence to change", () => {
   const before = { diffHash: "a", failingTests: ["one", "two"], completedTodos: 1 };
   assert.equal(hasExecutionProgress(before, { ...before }), false);

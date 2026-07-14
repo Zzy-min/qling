@@ -31,6 +31,16 @@ test("opencli skill file exists with routing-rich frontmatter", () => {
   assert.doesNotMatch(raw, /仅支持 TikTok，不支持抖音/);
 });
 
+test("opencli frontmatter parses identically after a CRLF checkout", () => {
+  const raw = readFileSync(opencliSkillPath, "utf8");
+  const crlfRaw = raw.replace(/\r?\n/g, "\r\n");
+  const meta = parseFrontmatter(crlfRaw, opencliSkillPath);
+
+  assert.equal(meta.name, "opencli");
+  assert.match(meta.description, /抖音|douyin|opencli/i);
+  assert.ok(meta.tags.some((tag) => /douyin|opencli/i.test(tag)));
+});
+
 test("getSkillDirs includes package-bundled skills directory", () => {
   const dirs = getSkillDirs();
   assert.ok(dirs.length >= 2, `expected multiple skill dirs, got ${dirs.join(", ")}`);
