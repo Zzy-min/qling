@@ -4,11 +4,16 @@
 
 | 渠道 | 状态 |
 |------|------|
-| 公共 Scoop bucket | https://github.com/Zzy-min/scoop-qling （立即可用） |
-| Scoop Extras PR | https://github.com/ScoopInstaller/Extras/pull/18307 — 已按审阅改 64bit 结构 / plain hash / 去掉 `&&` |
-| winget-pkgs PR | https://github.com/microsoft/winget-pkgs/pull/402294 — CLA 已通过，manifest 升至 1.2.1 |
+| 公共 Scoop bucket | https://github.com/Zzy-min/scoop-qling （**推荐 / 立即可用**） |
+| Scoop Extras PR | https://github.com/ScoopInstaller/Extras/pull/18307 — **已关闭**（维护者：未达 Extras 收录门槛，建议自建 bucket） |
+| winget-pkgs PR | https://github.com/microsoft/winget-pkgs/pull/402294 — **OPEN**，CLA 已通过，manifest **1.2.1** |
 | 便携 zip | https://github.com/Zzy-min/qling/releases/download/v1.2.1/qling-win-x64.zip （内嵌 Node） |
 | npm | `@qlingzzy/qling@1.2.1` |
+
+### Scoop Extras 说明（诚实）
+
+维护者 [z-Fng](https://github.com/z-Fng) 关闭了 Extras PR：项目尚未满足 Extras 新包门槛（常见参考含社区热度等）。  
+**可用路径**：自建公共 bucket `scoop-qling`（已上线）。待项目成长后再 reopen Extras。
 
 ## Scoop Extras
 
