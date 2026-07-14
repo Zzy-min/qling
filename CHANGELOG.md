@@ -7,6 +7,7 @@
 - **LLM 客户端抽出**：`src/providers/llm-client.ts`（`LlmHttpClient`）承载 chat/completions + 重试拦截器；`/model` 会话切换会 `reconfigure` 客户端。
 - **记忆 lifecycle 抽出**：`src/memory/lifecycle.ts` 的 `runAutoDream` 承接 auto-dream。
 - **Dashboard 解耦**：`AgentLoop` 对 `dashboard-server` 改为动态 import，消除 agent-runtime → adapters 静态反向边。
+- **工具编排抽出**：`src/agent/tool-orchestrator.ts` 承接参数解析、重复限制、pipeline 执行、内容过滤与结果卫生；`AgentLoop` 仅注入依赖并调度。
 
 ### Phase 5.1 — 验证闭环统一 + Doctor
 

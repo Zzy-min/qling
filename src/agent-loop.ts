@@ -8,7 +8,7 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import { exec } from "child_process";
 import { existsSync } from "fs";
-import { dispatch, ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
+import { ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry, buildSystemPrompt, buildRepoMapSection } from "./pipeline/sections.js";
 import { MemoryStore } from "./memory.js";
@@ -20,7 +20,7 @@ import { WriteAheadLog } from "./memory/wal.js";
 import { runAutoDream } from "./memory/lifecycle.js";
 import { MCPRegistry } from "./mcp/registry.js";
 import { mcpToolsToNativeDefinitions } from "./mcp/bridge.js";
-import { ApprovalGate, ApprovalRequiredError } from "./guard/approval.js";
+import { ApprovalGate } from "./guard/approval.js";
 import { MetricsCollector } from "./metrics/collector.js";
 import { AgentTelemetry } from "./metrics/agent-telemetry.js";
 import type { Channel } from "./channels/types.js";
@@ -28,18 +28,16 @@ import type { MCPServerConfig } from "./types.js";
 import { VerificationAgent } from "./pipeline/verification.js";
 import { ContextCompactor } from "./context-compactor.js";
 import { KnowledgeAgentAdapter } from "./knowledge-agent.js";
-import type { AgentConfig, Message, ToolCall, ToolResult } from "./types.js";
+import type { AgentConfig, Message, ToolCall } from "./types.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
 import { WorkflowBuilder } from "./workflow-types.js";
-import { checkToolConsistency } from "./pipeline/consistency-checker.js";
 import { DiscoveryRegistry } from "./discovery-registry.js";
 import { DiscoverySource } from "./discovery-types.js";
 import { MissionManager } from "./mission/manager.js";
 import { getSkillDirs } from "./tools/skill.js";
 import { listSkills } from "./skills/registry.js";
 import { buildSkillsSection } from "./pipeline/sections.js";
-import { applyContentFilter, setCustomPatterns } from "./guard/content-filter.js";
-import { appendGuardAudit } from "./guard.js";
+import { setCustomPatterns } from "./guard/content-filter.js";
 import { guardConfigFromEnv, type GuardConfig } from "./config.js";
 import {
   SessionRegistry,
@@ -51,11 +49,10 @@ import {
   isLoopbackEndpoint,
 } from "./providers/presets.js";
 import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
-import { maybeAutoCommitAfterWrite } from "./git/auto-commit.js";
 import {
-  prepareToolResultContent,
-  resolveToolResultMaxChars,
-} from "./context-tool-hygiene.js";
+  executePreparedTools,
+  prepareToolCalls,
+} from "./agent/tool-orchestrator.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
 import { classifyFailure } from "./execution/failure-classifier.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
@@ -719,277 +716,35 @@ export class AgentLoop extends AgentEventEmitter {
         return content;
       }
 
-      // 5. Pipeline 执行（Hook → 工具）
+      // 5. Pipeline 执行（Hook → 工具）— 委托 tool-orchestrator
       console.error("\n🔧 执行 " + tool_calls.length + " 个工具...\n");
-      const preparedCalls: Array<{ call: ToolCall; immediateResult?: ToolResult }> = [];
-      for (const tc of tool_calls) {
-        const parseResult = this.parseToolArguments(tc.function.arguments);
-        if (!parseResult.ok) {
-          preparedCalls.push({
-            call: {
-              id: tc.id,
-              name: tc.function.name,
-              arguments: {},
-            },
-            immediateResult: {
-              tool_call_id: tc.id,
-              output: `Error: [TOOL_INVALID_ARGUMENTS] ${parseResult.error}`,
-              is_error: true,
-              error: {
-                code: "TOOL_INVALID_ARGUMENTS",
-                message: parseResult.error,
-                category: "runtime",
-              },
-            },
-          });
-          continue;
+      const preparedCalls = prepareToolCalls(tool_calls, {
+        parseRetries: this.config.runtime?.parseRetries ?? 0,
+        toolRepeatLimit,
+        signatureCounts: toolSignatureCounts,
+      });
+      const { turnToolCalls, turnToolFailures } = await executePreparedTools(
+        {
+          pipeline: this.pipeline,
+          tools: this.config.tools,
+          guardConfig: this.guardConfig,
+          channel: this.channel,
+          approvalGate: this.approvalGate,
+          knowledgeAdapter: this.knowledgeAdapter,
+          memoryStore: this.memoryStore,
+          workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
+          workflowRuntime: this.workflowRuntime,
+          executionEventBus: this.executionEventBus,
+          emit: (event, ...args) => this.emit(event, ...args),
+          reflectiveThink: (tc) => this.reflectiveThink(tc),
+        },
+        {
+          preparedCalls,
+          messages: this.messages,
+          runId,
+          attemptId,
         }
-
-        const call: ToolCall = {
-          id: tc.id,
-          name: tc.function.name,
-          arguments: parseResult.value,
-        };
-        const signature = this.buildToolSignature(call.name, call.arguments);
-        const repeatCount = (toolSignatureCounts.get(signature) ?? 0) + 1;
-        toolSignatureCounts.set(signature, repeatCount);
-        if (repeatCount > toolRepeatLimit) {
-          preparedCalls.push({
-            call,
-            immediateResult: {
-              tool_call_id: tc.id,
-              output:
-                `Error: [TOOL_REPEAT_LIMIT_EXCEEDED] ` +
-                `tool '${call.name}' exceeded repeat limit (${toolRepeatLimit})`,
-              is_error: true,
-              error: {
-                code: "TOOL_REPEAT_LIMIT_EXCEEDED",
-                message: `tool '${call.name}' exceeded repeat limit (${toolRepeatLimit})`,
-                category: "guard",
-              },
-            },
-          });
-          continue;
-        }
-        preparedCalls.push({ call });
-      }
-
-      // v0.3 Workflow Checkpoint: Set pending tools
-      if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
-        await this.workflowRuntime.setPendingTools(preparedCalls.map(p => p.call));
-      }
-
-      let turnToolCalls = 0;
-      let turnToolFailures = 0;
-
-      for (let j = 0; j < preparedCalls.length; j++) {
-        const prepared = preparedCalls[j];
-        const tc = prepared.call;
-        turnToolCalls++;
-
-        // v0.5 M2: Self-Reflective Loop (Inner Monologue)
-        // 针对高风险工具进行预演评估
-        if (tc.name === "write" || tc.name === "bash") {
-          const reflection = await this.reflectiveThink(tc);
-          if (reflection.decision === "block") {
-            console.error(`🚨 [内省阻断] ${reflection.reason}`);
-            this.messages.push({
-              role: "tool",
-              content: JSON.stringify({
-                tool_call_id: tc.id,
-                output: `Error: [REFLECTION_BLOCKED] ${reflection.reason}. This action was deemed too risky.`,
-                is_error: true,
-              }),
-              tool_call_id: tc.id,
-            });
-            turnToolFailures++;
-            continue;
-          } else if (reflection.decision === "warn") {
-            console.error(`💭 [内省警告] ${reflection.reason}`);
-          }
-        }
-
-        // v0.3 Tool Spec Boost: Consistency Check
-        if (process.env.QLING_FEATURES_TOOL_SPEC_BOOST === "true") {
-          const def = this.config.tools.find(t => t.name === tc.name);
-          if (def) {
-            const check = checkToolConsistency(tc, def);
-            if (!check.ok) {
-              console.error(`⚠️ [SpecBoost] 检查到幻觉风险: ${tc.name} - ${check.error}`);
-              this.messages.push({
-                role: "tool",
-                content: JSON.stringify({
-                  tool_call_id: tc.id,
-                  output: `Error: [TOOL_SPEC_VIOLATION] ${check.error}. Please correct your arguments based on the schema and examples.`,
-                  is_error: true,
-                }),
-                tool_call_id: tc.id,
-              });
-              turnToolFailures++;
-              continue;
-            }
-            if (check.warnings.length > 0) {
-               console.warn(`[SpecBoost] 潜在警告: ${check.warnings.join("; ")}`);
-            }
-          }
-        }
-
-        // 知识观察：工具调用前
-        this.knowledgeAdapter.onToolCall(tc);
-        this.executionEventBus.startTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name });
-        this.emit("tool_start", tc.name, tc.arguments);
-        let result: ToolResult = prepared.immediateResult ?? {
-          tool_call_id: tc.id,
-          output: "",
-          is_error: false,
-        };
-        if (!prepared.immediateResult) {
-          try {
-            result = await this.pipeline.execute(tc, (t) => dispatch(t));
-          } catch (err) {
-            if (err instanceof ApprovalRequiredError && this.channel) {
-              // Approval flow
-              if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
-                await this.workflowRuntime.awaitApproval();
-              }
-              const approvalResponse = await this.approvalGate.requestApproval(
-                {
-                  id: err.toolCallId,
-                  toolName: err.toolName,
-                  arguments: tc.arguments as Record<string, unknown>,
-                  reason: err.reasons.join("; "),
-                  timestamp: Date.now(),
-                },
-                this.channel
-              );
-              if (approvalResponse.decision === "allow") {
-                result = await dispatch(tc);
-              } else {
-                result = {
-                  tool_call_id: tc.id,
-                  output: "[Approval Denied] " + err.reasons.join("; "),
-                  is_error: true,
-                  error: { code: "APPROVAL_DENIED", message: "User denied tool execution", category: "permission" },
-                };
-                turnToolFailures++;
-              }
-            } else {
-              result = {
-                tool_call_id: tc.id,
-                output: (err as Error).message,
-                is_error: true,
-                error: { code: "TOOL_ERROR", message: (err as Error).message, category: "runtime" },
-              };
-              turnToolFailures++;
-            }
-          }
-        } else {
-          turnToolFailures++;
-        }
-        // 知识观察：工具结果后
-        this.knowledgeAdapter.onToolResult(result, tc.name);
-        this.executionEventBus.completeTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name, failed: result.is_error });
-        this.emit("tool_result", tc.name, result.output, result.is_error ?? false);
-
-        // v0.5 M1: Knowledge Graph Linking (Automatic)
-        if (!result.is_error && (tc.name === "bash" || tc.name === "write" || tc.name === "read")) {
-          let lastUserMsg = "";
-          for (let i = this.messages.length - 1; i >= 0; i--) {
-            if (this.messages[i].role === "user") {
-              lastUserMsg = this.messages[i].content;
-              break;
-            }
-          }
-          const taskId = "task_" + Buffer.from(lastUserMsg.slice(0, 10)).toString("hex");
-
-          this.memoryStore.link(
-            { id: taskId, type: "task", label: lastUserMsg.slice(0, 50) },
-            "uses",
-            { id: "tool_" + tc.name, type: "tool", label: tc.name }
-          );
-
-          const args = tc.arguments as any;
-          const targetFile = args.path || args.file || "";
-          if (targetFile) {
-            this.memoryStore.link(
-              { id: "tool_" + tc.name, type: "tool", label: tc.name },
-              tc.name === "read" ? "reads" : "writes",
-              { id: "file_" + Buffer.from(targetFile).toString("hex"), type: "file", label: targetFile }
-            );
-          }
-        }
-
-        // Phase 1.2: 可选 git auto-commit（write/patch 成功且非 dry_run）
-        if (
-          !result.is_error &&
-          (tc.name === "write" || tc.name === "patch") &&
-          !(tc.arguments as { dry_run?: boolean })?.dry_run
-        ) {
-          const args = tc.arguments as { path?: string; file?: string };
-          const targetFile = String(args.path || args.file || "").trim();
-          if (targetFile) {
-            try {
-              const ac = await maybeAutoCommitAfterWrite({
-                workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
-                filePath: targetFile,
-                toolName: tc.name,
-              });
-              if (ac.mode !== "off") {
-                result = {
-                  ...result,
-                  output: `${result.output}\n\n[${ac.message}]`,
-                };
-              }
-            } catch {
-              // auto-commit 失败不影响工具成功语义
-            }
-          }
-        }
-
-        // Guard M2: 内容过滤（工具输出）
-        if (this.guardConfig.enabled && this.guardConfig.content_filter?.enabled) {
-          const cf = applyContentFilter(result.output, {
-            pii: this.guardConfig.content_filter.pii_detection,
-            injection: this.guardConfig.content_filter.injection_detection,
-            custom: this.guardConfig.content_filter.custom_patterns.length > 0,
-          });
-          if (cf.blocked) {
-            await appendGuardAudit(this.guardConfig, {
-              tool: tc.name,
-              action: "deny",
-              category: "content_filter",
-              reason: cf.reason,
-            });
-            result = {
-              ...result,
-              output: `[内容过滤] ${cf.reason}: ${(cf.matches ?? []).join(", ")}`,
-              is_error: true,
-              error: { code: "CONTENT_FILTERED", message: cf.reason ?? "content filtered", category: "guard" },
-            };
-            turnToolFailures++;
-          }
-        }
-        // 进度展示
-        const preview = result.output.split("\n")[0].slice(0, 80);
-        const icon = result.is_error ? "❌" : "✅";
-        console.error(icon + " " + tc.name + ": " + preview + (result.output.length > 80 ? "..." : ""));
-
-        // v0.3 Workflow Checkpoint: Add result
-        if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
-          await this.workflowRuntime.addToolResult(result);
-        }
-
-        // Phase 3.0: 工具结果入上下文前卫生处理（默认折叠超长 output）
-        const rawToolContent = JSON.stringify(result);
-        const hygienicContent = prepareToolResultContent(rawToolContent, {
-          maxChars: resolveToolResultMaxChars(),
-        });
-        this.messages.push({
-          role: "tool",
-          content: hygienicContent,
-          tool_call_id: tc.id,
-        });
-      }
+      );
 
       // 6. 验证阶段（针对写操作）— 恢复闭环只走 StagedVerifier
       const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "patch" || t.call.name === "bash");
@@ -1792,83 +1547,4 @@ export class AgentLoop extends AgentEventEmitter {
     return this.config.runtime?.timeoutMs ?? 120_000;
   }
 
-  private parseToolArguments(
-    raw: string
-  ): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
-    const retries = Math.max(0, this.config.runtime?.parseRetries ?? 0);
-    let candidate = String(raw ?? "");
-    let lastError = "invalid arguments";
-
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const parsed = JSON.parse(candidate) as unknown;
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          lastError = "arguments must be a JSON object";
-        } else {
-          return { ok: true, value: parsed as Record<string, unknown> };
-        }
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
-      }
-      if (attempt < retries) {
-        candidate = this.repairToolArguments(candidate, attempt);
-      }
-    }
-
-    return {
-      ok: false,
-      error: `failed after ${retries + 1} attempt(s): ${lastError}`,
-    };
-  }
-
-  private repairToolArguments(source: string, attempt: number): string {
-    let out = source.trim();
-    if (attempt === 0) {
-      const fenced = out.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-      if (fenced) {
-        out = fenced[1].trim();
-      }
-      return out;
-    }
-    if (attempt === 1) {
-      return out.replace(/,\s*([}\]])/g, "$1");
-    }
-    if (attempt === 2) {
-      return out
-        .replace(/[“”]/g, "\"")
-        .replace(/[‘’]/g, "'")
-        .replace(/([{,]\s*)'([^']+?)'\s*:/g, '$1"$2":')
-        .replace(/:\s*'([^']*?)'(\s*[,}])/g, ': "$1"$2');
-    }
-    return out;
-  }
-
-  private buildToolSignature(name: string, args: Record<string, unknown>): string {
-    return `${name}:${this.stableStringify(args)}`;
-  }
-
-  private stableStringify(value: unknown): string {
-    const normalize = (input: unknown): unknown => {
-      if (Array.isArray(input)) {
-        return input.map((item) => normalize(item));
-      }
-      if (input && typeof input === "object") {
-        const entries = Object.entries(input as Record<string, unknown>).sort(([a], [b]) =>
-          a.localeCompare(b)
-        );
-        const obj: Record<string, unknown> = {};
-        for (const [k, v] of entries) {
-          obj[k] = normalize(v);
-        }
-        return obj;
-      }
-      return input;
-    };
-
-    try {
-      return JSON.stringify(normalize(value));
-    } catch {
-      return "[unstringifiable]";
-    }
-  }
 }
