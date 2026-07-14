@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Phase 5.1 — 验证闭环统一 + Doctor
+
+- **单一恢复验证入口**：写操作恢复只走 `StagedVerifier`；`resolveVerificationStages()` 合并 `QLING_VERIFY_STAGES` / `QLING_VERIFY_TYPECHECK_CMD` / `QLING_VERIFY_TEST_CMD` / `QLING_VERIFY_FULL_CMD` 与 `/verify set`。
+- **Progress 证据增强**：验证失败写入 `changedFiles`（basename）、`attemptedStrategies`、`currentStrategy` 与 fingerprint。
+- **VerificationAgent 降级**：标 deprecated；默认规则旁路、不驱动恢复；`QLING_VERIFY_LLM=1` 才启用旧 LLM 旁路。
+- **Doctor Phase5**：`recovery_budget` / `run_traces` / `verifier_stages` / `verify_llm_advisory`。
+- **Metrics**：`pausedRuns`、`averageTimeToPauseMs`。
+
 ### Phase 5.0 — 执行韧性收口
 
 - **确定性恢复策略表**：`RecoveryStrategyPlanner` 为每类失败给出可执行策略或硬停；`RecoveryController` 记录 `currentStrategy` / `attemptedStrategies`。

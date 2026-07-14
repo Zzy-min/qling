@@ -1,8 +1,9 @@
 // ============================================================
-// 轻灵 - Verification Agent（精简版）
-// - 简单操作跳过 LLM，直接规则判断
-// - LLM 输出严格限制在 150 tokens 内
-// - 只返回判决 + 一句话说明
+// 轻灵 - Verification Agent（精简版，已 deprecated）
+//
+// 写操作失败恢复闭环请使用 StagedVerifier + resolveVerificationStages。
+// 本类仅作无验证命令时的 advisory 旁路提示，不得驱动 RecoveryController。
+// - 默认规则判断；LLM 路径需 QLING_VERIFY_LLM=1 显式开启
 // ============================================================
 
 import {
@@ -28,6 +29,7 @@ PARTIAL  // 部分成功，有警告
 
 请直接返回判决和说明，不要解释验证过程。`;
 
+/** @deprecated Prefer StagedVerifier for recovery-driving verification. */
 export class VerificationAgent {
   constructor(
     private apiKey: string,
@@ -40,11 +42,14 @@ export class VerificationAgent {
     actualOutput: string,
     context?: string
   ): Promise<VerificationResult> {
-    // 规则验证（快速路径）
+    // 规则验证（快速路径）；advisory only — never feeds RecoveryController
     const ruleResult = this.ruleBasedVerify(operation, expectedOutcome, actualOutput);
-    // 如果 output 很短（bash 无输出、权限拒绝等），直接用规则结果
+    const llmEnabled = ["1", "true", "on", "yes"].includes(
+      String(process.env.QLING_VERIFY_LLM ?? "").trim().toLowerCase()
+    );
+    // 如果 output 很短且显式开启 LLM 旁路，才调用模型
     const isSimple = actualOutput.length < 100 || actualOutput.includes("denied") || actualOutput.includes("not found") || actualOutput.includes("Error");
-    if (isSimple && this.apiKey) {
+    if (llmEnabled && isSimple && this.apiKey) {
       try {
         const llmResult = await this.verifyWithLLM(operation, actualOutput, ruleResult);
         return llmResult;

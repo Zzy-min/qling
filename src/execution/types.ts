@@ -28,6 +28,11 @@ export interface ProgressSnapshot {
   failingTests?: string[];
   completedTodos?: number;
   changed?: boolean;
+  /** Basename-only list of modified paths (no full workspace leak). */
+  changedFiles?: string[];
+  /** Recovery strategies already attempted when this snapshot was recorded. */
+  attemptedStrategies?: string[];
+  currentStrategy?: string;
 }
 
 export interface FailureClassification {

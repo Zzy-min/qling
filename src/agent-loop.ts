@@ -65,6 +65,11 @@ import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
 import type { ExecutionEvent, RecoveryState } from "./execution/types.js";
 import { StagedVerifier } from "./execution/staged-verifier.js";
+import {
+  formatVerificationStagesSummary,
+  resolveVerificationStages,
+} from "./execution/verification-stages.js";
+import type { ProgressSnapshot } from "./execution/types.js";
 import { createHash } from "node:crypto";
 
 const HOME_DIR = os.homedir();
@@ -1008,23 +1013,29 @@ export class AgentLoop extends AgentEventEmitter {
         });
       }
 
-      // 6. 验证阶段（针对写操作）
+      // 6. 验证阶段（针对写操作）— 恢复闭环只走 StagedVerifier
       const hasWrites = preparedCalls.some((t) => t.call.name === "write" || t.call.name === "patch" || t.call.name === "bash");
       if (hasWrites) {
-        if (this.verificationCommand) {
+        const stages = resolveVerificationStages({ configuredCommand: this.verificationCommand });
+        if (stages.length > 0) {
           const stagedVerifier = new StagedVerifier({ execute: (command) => this.runVerificationCommand(command) });
-          const verification = await stagedVerifier.run([{ name: "configured", command: this.verificationCommand }]);
+          const verification = await stagedVerifier.run(stages);
           if (!verification.ok) {
-            const failure = classifyFailure(new Error(`verification command failed: ${this.verificationCommand}`), {
+            const failedCommand =
+              stages.find((stage) => stage.name === verification.failedStage)?.command ??
+              stages.map((stage) => stage.command).join(" && ");
+            const failure = classifyFailure(new Error(`verification command failed: ${failedCommand}`), {
               tool: "verify",
-              verificationCommand: this.verificationCommand,
+              verificationCommand: failedCommand,
             });
-            const progress = {
-              diffHash: await this.getWorkspaceDiffHash(),
-              failingTests: verification.failingTests,
-            };
+            const progress = await this.buildVerificationProgress(verification.failingTests);
             const decision = this.recoveryController.recordFailure(failure, progress);
             const state = this.recoveryController.getRecoveryState();
+            const progressWithStrategy: ProgressSnapshot = {
+              ...progress,
+              attemptedStrategies: state.attemptedStrategies,
+              currentStrategy: state.currentStrategy,
+            };
             this.executionEventBus.emit({
               runId: state.runId,
               sessionId: state.sessionId,
@@ -1034,7 +1045,7 @@ export class AgentLoop extends AgentEventEmitter {
               tool: "verify",
               category: decision.category,
               fingerprint: failure.fingerprint,
-              progress,
+              progress: progressWithStrategy,
               recoveryAction: decision.recommendedStrategy ?? decision.action,
             });
             if (decision.action === "pause") {
@@ -1045,11 +1056,15 @@ export class AgentLoop extends AgentEventEmitter {
             const stdout = verification.stdout.slice(-2_000);
             const stderr = verification.stderr.slice(-2_000);
             const strategy = decision.recommendedStrategy ?? "targeted_verification_repair";
+            const files = (progress.changedFiles ?? []).join(", ") || "-";
             this.messages.push({
               role: "user",
               content:
-                `【定向验证失败】阶段=${verification.failedStage} 命令=\`${this.verificationCommand}\`\n` +
+                `【定向验证失败】阶段=${verification.failedStage} 命令=\`${failedCommand}\`\n` +
                 `失败测试=${verification.failingTests.join(", ") || "unknown"}\n` +
+                `修改文件=${files}\n` +
+                `指纹=${failure.fingerprint ?? "-"}\n` +
+                `已尝试策略=${state.attemptedStrategies.join(", ") || "-"}\n` +
                 `恢复策略=${strategy}\n[stdout]\n${stdout}\n[stderr]\n${stderr}\n` +
                 this.formatRecoveryInstruction(failure, strategy).split("\n").slice(1).join("\n"),
             });
@@ -1057,9 +1072,10 @@ export class AgentLoop extends AgentEventEmitter {
             this.executionEventBus.completeAttempt(runId, "recovering");
             continue;
           }
-          this.emit("verification", "PASS", `验证通过: ${this.verificationCommand}`);
+          this.emit("verification", "PASS", `验证通过: ${formatVerificationStagesSummary(stages)}`);
         } else {
-          await this.verifyLastOperation();
+          // Advisory only — does not drive RecoveryController
+          await this.verifyLastOperationAdvisory();
         }
       }
 
@@ -1115,12 +1131,17 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private formatRecoveryPause(reason: string, next: string): string {
+    const state = this.getRecoveryState();
+    const files = state?.lastProgress?.changedFiles?.join(", ") || "-";
     return [
       "执行已暂停",
       `原因: ${reason}`,
-      `已尝试: ${this.getRecoveryState()?.strategyAttempts ?? 0} 次恢复策略`,
-      `当前策略: ${this.getRecoveryState()?.currentStrategy ?? "-"}`,
-      `当前证据: ${this.getRecoveryState()?.lastFailure?.fingerprint ?? "-"}`,
+      `已尝试: ${state?.strategyAttempts ?? 0} 次恢复策略`,
+      `当前策略: ${state?.currentStrategy ?? "-"}`,
+      `已尝试策略: ${(state?.attemptedStrategies ?? []).join(", ") || "-"}`,
+      `当前证据: ${state?.lastFailure?.fingerprint ?? "-"}`,
+      `修改文件: ${files}`,
+      `验证阶段: ${this.getVerificationStagesSummary()}`,
       `下一步: ${next}；使用 /recover retry|next|edit|cancel`,
       "边界: 本地摘要轨迹已保存，不包含 prompt 或工具正文。",
     ].join("\n");
@@ -1622,8 +1643,11 @@ export class AgentLoop extends AgentEventEmitter {
     };
   }
 
-  private async verifyLastOperation(): Promise<void> {
-    // 取最近的 bash/write 结果
+  /**
+   * Advisory-only verification when no staged commands are configured.
+   * Never feeds RecoveryController — recovery requires StagedVerifier stages.
+   */
+  private async verifyLastOperationAdvisory(): Promise<void> {
     const toolMsgs = this.messages.filter((m) => m.role === "tool");
     if (toolMsgs.length === 0) return;
 
@@ -1635,14 +1659,52 @@ export class AgentLoop extends AgentEventEmitter {
         lastResult.output
       );
       const icon = vr.verdict === "PASS" ? "✅" : vr.verdict === "FAIL" ? "❌" : "⚠️";
-      console.error(icon + " 验证结果: " + vr.verdict);
+      console.error(icon + " 旁路验证(非恢复驱动): " + vr.verdict);
       if (vr.verdict !== "PASS") {
         console.error("   详情: " + vr.details);
+        console.error("   提示: 设置 /verify set 或 QLING_VERIFY_* 以启用命令级恢复验证");
       }
       this.emit("verification", vr.verdict, vr.details ?? vr.verdict);
     } catch {
       // 忽略验证错误
     }
+  }
+
+  private async buildVerificationProgress(failingTests: string[]): Promise<ProgressSnapshot> {
+    const [diffHash, changedFiles] = await Promise.all([
+      this.getWorkspaceDiffHash(),
+      this.getWorkspaceChangedFiles(),
+    ]);
+    return {
+      diffHash,
+      failingTests: [...failingTests],
+      changedFiles,
+      changed: changedFiles.length > 0,
+    };
+  }
+
+  private async getWorkspaceChangedFiles(): Promise<string[]> {
+    const result = await this.runVerificationCommand("git status --porcelain");
+    if (result.code !== 0 || !result.stdout.trim()) return [];
+    const names = new Set<string>();
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // porcelain: XY path  or  XY orig -> path
+      const body = trimmed.slice(2).trim();
+      const pathPart = body.includes(" -> ") ? body.split(" -> ").pop()! : body;
+      const base = path.basename(pathPart.replace(/^"+|"+$/g, ""));
+      if (base) names.add(base);
+      if (names.size >= 20) break;
+    }
+    return [...names].sort();
+  }
+
+  /** Exposed for doctor / status: current staged verification plan. */
+  getVerificationStagesSummary(): string {
+    return formatVerificationStagesSummary(
+      resolveVerificationStages({ configuredCommand: this.verificationCommand })
+    );
   }
 
   async persistVerificationCommand(): Promise<void> {

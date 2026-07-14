@@ -8,6 +8,10 @@ export interface RecoveryMetrics {
   repeatedFailureRate: number;
   automaticRecoverySuccessRate: number;
   noProgressStops: number;
+  /** Runs that entered paused (user intervention surface). */
+  pausedRuns: number;
+  /** Average ms from first failure to first pause event; 0 when unknown. */
+  averageTimeToPauseMs: number;
 }
 
 export function calculateRecoveryMetrics(events: ExecutionEvent[]): RecoveryMetrics {
@@ -24,6 +28,9 @@ export function calculateRecoveryMetrics(events: ExecutionEvent[]): RecoveryMetr
   let repeatedFailures = 0;
   let failures = 0;
   let noProgressStops = 0;
+  let pausedRuns = 0;
+  let timeToPauseTotal = 0;
+  let timeToPauseSamples = 0;
 
   for (const runEvents of runs.values()) {
     const attempts = runEvents.filter((event) => event.type === "attempt_completed");
@@ -43,6 +50,17 @@ export function calculateRecoveryMetrics(events: ExecutionEvent[]): RecoveryMetr
       runsWithRecovery++;
       if (terminal?.status === "succeeded") recoveredSuccesses++;
     }
+    const pauseEvent = runEvents.find((event) => event.status === "paused");
+    if (pauseEvent) {
+      pausedRuns++;
+      const firstFailure = runEvents.find(
+        (event) => event.type === "failure" || event.type === "verification_failed" || event.status === "failed"
+      );
+      if (firstFailure && pauseEvent.timestamp >= firstFailure.timestamp) {
+        timeToPauseTotal += pauseEvent.timestamp - firstFailure.timestamp;
+        timeToPauseSamples++;
+      }
+    }
     for (const event of runEvents.filter((item) => item.type.includes("failure") || item.type === "failure")) {
       failures++;
       if (event.fingerprint && fingerprints.has(event.fingerprint)) repeatedFailures++;
@@ -60,6 +78,8 @@ export function calculateRecoveryMetrics(events: ExecutionEvent[]): RecoveryMetr
     repeatedFailureRate: ratio(repeatedFailures, failures),
     automaticRecoverySuccessRate: ratio(recoveredSuccesses, runsWithRecovery),
     noProgressStops,
+    pausedRuns,
+    averageTimeToPauseMs: timeToPauseSamples === 0 ? 0 : Math.round(timeToPauseTotal / timeToPauseSamples),
   };
 }
 

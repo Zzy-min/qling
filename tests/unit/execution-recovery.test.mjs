@@ -66,6 +66,10 @@ test("progress detector requires diff tests or todo evidence to change", () => {
   assert.equal(hasExecutionProgress(before, { ...before, diffHash: "b" }), true);
   assert.equal(hasExecutionProgress(before, { ...before, failingTests: ["two"] }), true);
   assert.equal(hasExecutionProgress(before, { ...before, completedTodos: 2 }), true);
+  assert.equal(
+    hasExecutionProgress(before, { ...before, changedFiles: ["a.ts"] }),
+    true
+  );
 });
 
 test("recovery controller pauses after two identical no-progress failures", () => {

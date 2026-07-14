@@ -127,6 +127,71 @@ export function buildPhase3FeatureChecks(env: DoctorOptions["env"] = process.env
   ];
 }
 
+/** Phase 5 韧性 / 验证管线（informational） */
+export function buildPhase5FeatureChecks(
+  env: DoctorOptions["env"] = process.env,
+  options: {
+    exists?: (path: string) => boolean;
+    stateDir?: string;
+    verificationStagesSummary?: string;
+  } = {}
+): DoctorCheck[] {
+  const exists = options.exists ?? existsSync;
+  const stateDir = options.stateDir || envText(env, "QLING_FILE_STATE_DIR") || DEFAULT_STATE_DIR;
+  const runsDir = join(stateDir, "runs");
+  const sameFp = envNumber(env, "QLING_RECOVERY_SAME_FINGERPRINT_LIMIT") || 2;
+  const strategyBudget = envNumber(env, "QLING_RECOVERY_STRATEGY_LIMIT") || 4;
+  const stagesSummary =
+    options.verificationStagesSummary ||
+    summarizeEnvVerificationStages(env);
+  const verifyLlm = envFlagOn(env, "QLING_VERIFY_LLM");
+
+  return [
+    {
+      id: "phase5_recovery_budget",
+      label: "phase5:recovery_budget",
+      status: "pass",
+      detail: `same_fingerprint_limit=${sameFp} strategy_attempt_limit=${strategyBudget}（硬停: 审批/沙箱/重复动作）`,
+    },
+    {
+      id: "phase5_run_traces",
+      label: "phase5:run_traces",
+      status: exists(runsDir) ? "pass" : "warn",
+      detail: exists(runsDir)
+        ? `trace_dir=${resolve(runsDir)}（脱敏 JSONL，30 天 / 50 MiB）`
+        : `trace_dir=${resolve(runsDir)} 尚未创建；首次失败恢复后生成`,
+    },
+    {
+      id: "phase5_verifier_stages",
+      label: "phase5:verifier_stages",
+      status: stagesSummary.startsWith("none") ? "warn" : "pass",
+      detail: stagesSummary,
+    },
+    {
+      id: "phase5_verify_llm_advisory",
+      label: "phase5:verify_llm_advisory",
+      status: verifyLlm ? "warn" : "pass",
+      detail: verifyLlm
+        ? "QLING_VERIFY_LLM=on（deprecated VerificationAgent LLM 旁路；不驱动恢复）"
+        : "默认规则旁路；恢复闭环仅 StagedVerifier",
+    },
+  ];
+}
+
+function summarizeEnvVerificationStages(env: DoctorOptions["env"]): string {
+  // Lazy import avoidance: inline minimal summary for doctor without agent loop
+  const parts: string[] = [];
+  const stages = envText(env, "QLING_VERIFY_STAGES");
+  if (stages) parts.push(`QLING_VERIFY_STAGES set`);
+  if (envText(env, "QLING_VERIFY_TYPECHECK_CMD")) parts.push("typecheck");
+  if (envText(env, "QLING_VERIFY_TEST_CMD")) parts.push("test");
+  if (envText(env, "QLING_VERIFY_FULL_CMD")) parts.push("full_gate");
+  if (parts.length === 0) {
+    return "none（可设 /verify set 或 QLING_VERIFY_TYPECHECK_CMD / QLING_VERIFY_TEST_CMD / QLING_VERIFY_STAGES）";
+  }
+  return parts.join(" + ");
+}
+
 function buildConfigCheck(env: DoctorOptions["env"]): DoctorCheck {
   const provider = envText(env, "QLING_LLM_PROVIDER") || "unset";
   const model = envText(env, "QLING_LLM_MODEL") || "unset";
@@ -171,6 +236,12 @@ async function buildSecretsCheck(): Promise<DoctorCheck> {
 function buildRecommendations(checks: DoctorCheck[]): string[] {
   const recommendations: string[] = [];
   const byId = new Map(checks.map((check) => [check.id, check]));
+
+  if (byId.get("phase5_verifier_stages")?.status === "warn") {
+    recommendations.push(
+      "- 写操作恢复验证：`/verify set \"npm test\"` 或设置 `QLING_VERIFY_TYPECHECK_CMD` / `QLING_VERIFY_TEST_CMD`。"
+    );
+  }
 
   if (byId.get("config")?.status === "warn") {
     const text = getLocalizedText();
@@ -414,6 +485,14 @@ export async function buildDoctorReport(
       detail: ollama.detail,
     },
     ...buildPhase3FeatureChecks(env),
+    ...buildPhase5FeatureChecks(env, {
+      exists,
+      stateDir,
+      verificationStagesSummary:
+        typeof (context.agentLoop as any)?.getVerificationStagesSummary === "function"
+          ? (context.agentLoop as any).getVerificationStagesSummary()
+          : undefined,
+    }),
   ];
 
   return {

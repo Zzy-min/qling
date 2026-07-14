@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDoctorReport, buildPhase3FeatureChecks, formatDoctorReport } from "../../dist/doctor.js";
+import {
+  buildDoctorReport,
+  buildPhase3FeatureChecks,
+  buildPhase5FeatureChecks,
+  formatDoctorReport,
+} from "../../dist/doctor.js";
 
 function createContext(overrides = {}) {
   return {
@@ -24,6 +29,21 @@ test("buildPhase3FeatureChecks reports defaults", () => {
   assert.ok(checks.some((c) => c.id === "phase4_lsp"));
   assert.equal(checks.find((c) => c.id === "phase3_browser_act")?.status, "warn");
   assert.equal(checks.find((c) => c.id === "phase4_lsp")?.status, "warn");
+});
+
+test("buildPhase5FeatureChecks reports recovery budget and verifier stages", () => {
+  const checks = buildPhase5FeatureChecks(
+    {
+      QLING_VERIFY_TYPECHECK_CMD: "tsc -b",
+    },
+    { exists: () => false, stateDir: "C:\\Users\\Lenovo\\.qling" }
+  );
+  assert.ok(checks.some((c) => c.id === "phase5_recovery_budget"));
+  assert.ok(checks.some((c) => c.id === "phase5_run_traces"));
+  assert.ok(checks.some((c) => c.id === "phase5_verifier_stages"));
+  assert.equal(checks.find((c) => c.id === "phase5_recovery_budget")?.status, "pass");
+  assert.equal(checks.find((c) => c.id === "phase5_run_traces")?.status, "warn");
+  assert.match(checks.find((c) => c.id === "phase5_verifier_stages")?.detail ?? "", /typecheck/);
 });
 
 test("doctor report summarizes healthy local checks", async () => {
@@ -49,6 +69,8 @@ test("doctor report summarizes healthy local checks", async () => {
   assert.equal(report.checks.find((check) => check.id === "daemon")?.status, "pass");
   assert.equal(report.checks.find((check) => check.id === "ollama")?.status, "pass");
   assert.ok(report.checks.some((c) => c.id === "phase3_browser_act"));
+  assert.ok(report.checks.some((c) => c.id === "phase5_recovery_budget"));
+  assert.ok(report.checks.some((c) => c.id === "phase5_verifier_stages"));
 });
 
 test("doctor ollama warn recommends local model path", async () => {
