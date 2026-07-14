@@ -8,7 +8,7 @@ These files are **drafts** for future distribution. They are **not** published t
 | `winget/Zzy-min.qling.yaml` | winget singleton sketch (needs release zip + SHA256) |
 | `docker/` | Optional Dockerfile + compose for workspace isolation |
 
-Current draft version: **1.1.0** (aligned with package.json).
+Current draft version: **1.1.1** (aligned with package.json).
 
 ## Recommended path today
 
@@ -18,11 +18,11 @@ Current draft version: **1.1.0** (aligned with package.json).
 
 See [docs/install.md](../docs/install.md).
 
-## Status (1.1.0)
+## Status (1.1.1)
 
 | Artifact | Status |
 |----------|--------|
-| npm `@qlingzzy/qling@1.1.0` | Published on registry.npmjs.org |
+| npm `@qlingzzy/qling@1.1.1` | Published on registry.npmjs.org |
 | Scoop `hash` | Filled (SHA256 of npm tarball) |
 | Scoop official bucket | Not submitted |
 | winget `InstallerSha256` | Still placeholder (needs zip/msi) |
@@ -59,7 +59,7 @@ npm view @qlingzzy/qling version --registry https://registry.npmjs.org/
 Refresh Scoop hash after a new npm version:
 
 ```powershell
-$v = "1.1.0"
+$v = "1.1.1"
 $url = "https://registry.npmjs.org/@qlingzzy/qling/-/qling-$v.tgz"
 $out = "$env:TEMP\qling-$v.tgz"
 Invoke-WebRequest $url -OutFile $out

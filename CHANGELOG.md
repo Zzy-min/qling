@@ -2,17 +2,19 @@
 
 ## Unreleased
 
-### Phase 7.0 — Sprint 4 分发与生态
+## v1.1.1 (2026-07-14)
+
+### Phase 7.0 — Sprint 4 分发与生态（收口发布）
 
 - **`eval:tasks`**：10 个本地 repo fixture（修测试 / 改文案 / 加函数 / 重命名 / 修 import / package scripts / JSON / 文档节 / 多文件一致 / 中文路径），不依赖 LLM。
 - **`validate:packaging`**：校验 Scoop / winget 草案版本与 `package.json` 对齐。
-- **Scoop / winget 文档**：`docs/install.md` 与 `packaging/README.md` 补充本地校验步骤；清单版本钉到 1.1.0。
+- **Scoop / winget 文档**：`docs/install.md` 与 `packaging/README.md` 补充本地校验与发布后 hash 流程。
 - **Skills 示例包**：`fix-failing-test` / `add-function` / `pr-summary` + `skills/examples/README.md`。
 - **英文 README**：补齐 1.1 能力、eval、分发与 skills 说明。
 - **Demo 说明**：`docs/demo.md`（文字演示路径；GIF 另录不入库）。
 - **`ci:check`**：纳入 `eval:tasks` 与 `validate:packaging`。
-- **npm 发布**：`@qlingzzy/qling@1.1.0` 已上架 registry.npmjs.org；文档注明镜像默认下需 `--registry https://registry.npmjs.org/`。
-- **Scoop hash**：填入 1.1.0 tarball 真实 SHA256（仍为未进官方 bucket 的草案）。
+- **npm**：`@qlingzzy/qling@1.1.1`（镜像默认下安装/发布请带 `--registry https://registry.npmjs.org/`）。
+- **Scoop**：清单钉到 1.1.1 并附 tarball SHA256（仍为未进官方 bucket 的草案）。
 
 ## v1.1.0 (2026-07-14)
 

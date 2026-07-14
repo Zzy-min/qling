@@ -1,6 +1,6 @@
 {
   "name": "@qlingzzy/qling",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "轻灵 Qling - 本地优先的中文 AI Agent CLI 工作台 / Local-first Chinese AI Agent CLI workbench",
   "type": "module",
   "main": "./dist/sdk.js",

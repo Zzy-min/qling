@@ -34,7 +34,7 @@ qling --help
 
 `bootstrap` 会：检查 Node/npm → 安装依赖 → 构建 → 创建 `~/.qling/` → 给出 `doctor`/`setup` 下一步。默认**不**安装浏览器、**不**自动开 dashboard。
 
-## 方式 B：npm 全局安装（已发布 1.1.0）
+## 方式 B：npm 全局安装（已发布 1.1.1）
 
 包名因 npm 相似度策略使用作用域 **`@qlingzzy/qling`**（安装后命令仍是 `qling`）。  
 包页：https://www.npmjs.com/package/@qlingzzy/qling
@@ -86,7 +86,7 @@ qling
 
 ## 方式 D：Scoop 草案（未上架）
 
-清单草稿：`packaging/scoop/qling.json`（版本与 `package.json` 对齐，当前 **1.1.0**）。
+清单草稿：`packaging/scoop/qling.json`（版本与 `package.json` 对齐，当前 **1.1.1**）。
 
 本地校验（不安装到官方 bucket）：
 
@@ -103,7 +103,7 @@ Get-Content packaging/scoop/qling.json | ConvertFrom-Json | Select-Object versio
 scoop install qling
 ```
 
-1.1.0 的 npm tarball **已填真实 SHA256**（见 manifest `hash`）。仍未进官方 Scoop bucket：需自建 bucket 或社区 bucket PR。
+1.1.1 的 npm tarball **已填真实 SHA256**（见 manifest `hash`）。仍未进官方 Scoop bucket：需自建 bucket 或社区 bucket PR。
 
 ```powershell
 # 私有 bucket 放入 packaging/scoop/qling.json 后可试装
