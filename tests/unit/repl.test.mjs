@@ -569,7 +569,7 @@ test("repl slash tasks lists local session task without model run", async () => 
       assert.equal(errors.length, 0);
       assert.deepEqual(agent.calls, []);
       const joined = logs.join("\n");
-      assert.match(joined, /当前 Session 任务/);
+      assert.match(joined, /Session Loop 任务/);
       assert.match(joined, /检查构建/);
     } finally {
       await closeRepl(repl);

@@ -117,6 +117,8 @@ export class StreamingREPL {
               updatedAt: s.updatedAt,
               turnCount: s.turnCount,
               messageCount: s.messageCount,
+              sessionTokens: s.sessionTokens,
+              workspaceDir: s.workspaceDir ?? null,
               active: s.sessionId === currentId,
             }))
           );
@@ -361,15 +363,23 @@ export class StreamingREPL {
         (this.ui as any).setModel?.(model);
         await this.refreshStatusLine();
       },
-      // slash / 切换器反馈走 notice，禁止 › 流式叠框
+      // slash 多行输出：只追加文本，禁止每行重画输入框
       writeLine: (line = "") => {
-        if (typeof (this.ui as any).appendNotice === "function") {
+        if (typeof (this.ui as any).appendSlashLine === "function") {
+          this.ui.appendSlashLine(line);
+        } else if (typeof (this.ui as any).appendNotice === "function") {
           this.ui.appendNotice(line);
         } else {
           this.ui.appendOutput(line);
         }
       },
-      writeError: (line = "") => this.ui.appendError(line),
+      writeError: (line = "") => {
+        if (typeof (this.ui as any).appendSlashLine === "function") {
+          this.ui.appendSlashLine(line ? `❌ ${line}` : "");
+        } else {
+          this.ui.appendError(line);
+        }
+      },
     };
   }
 
@@ -491,7 +501,10 @@ export class StreamingREPL {
     if (this.inputQueue.isProcessing || this.inputQueue.pendingCount > 0) return;
     await this.refreshStatusLine();
     // slash 已打开会话/选项切换器时，showPrompt 会叠空框；浮层自带输入区
-    if (this.ui.isOverlayOpen()) return;
+    if (this.ui.isOverlayOpen?.()) return;
+    // /clear 已 repaintChrome：跳过再叠空框
+    const t = cmd.trim();
+    if (t === "/clear" || t === "/reset" || t === "/new") return;
     this.ui.showPrompt();
   }
 
@@ -573,21 +586,20 @@ export class StreamingREPL {
     const handleSlashCommand = await resolveSlashHandler(this.handleSlashCommandOverride);
     const handled = await handleSlashCommand(input, this.createSlashContext());
     if (handled) {
-      // plan/model/permissions 等变更后刷新 chrome + statusline
-      // 注意：若 slash 打开了切换器，refresh 不得触发叠框（setChromeStatus 不重绘输入）
       await this.refreshStatusLine();
       if (this.immediatePrompt) {
-        // 有立即 prompt 时先关掉切换器（避免与 agent 流抢输入槽）
-        if (this.ui.isOverlayOpen()) {
+        if (this.ui.isOverlayOpen?.()) {
           this.ui.dismissOverlay();
         }
         const nextPrompt = this.immediatePrompt;
         this.immediatePrompt = null;
         await this.processPrompt(nextPrompt);
-      } else if (!this.ui.isOverlayOpen()) {
+      } else if (!this.ui.isOverlayOpen?.()) {
         await this.scheduler.runDueTasksOnce();
       }
-      // 切换器打开时不 showPrompt；由 handleUserInput 尾部统一判断
+      if (typeof (this.ui as any).clearInputIfSlashResidue === "function") {
+        (this.ui as any).clearInputIfSlashResidue();
+      }
       return;
     }
 

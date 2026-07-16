@@ -18,11 +18,18 @@ export interface SlashCatalogItem {
 export type FindSlashCompletion = (prefix: string, limit?: number) => SlashCatalogItem[];
 export type FormatSlashPanel = (prefix: string, selectedIndex?: number, width?: number, limit?: number) => string[];
 export type FormatGroupedSlashPanel = (width?: number) => string[];
+export type ListExecutableSlashCommands = () => Array<{
+  id: string;
+  label: string;
+  description: string;
+  argumentHint: string;
+}>;
 
 export interface SlashUiPorts {
   findSlashCompletion: FindSlashCompletion;
   formatSlashCommandPanel: FormatSlashPanel;
   formatGroupedSlashPanel: FormatGroupedSlashPanel;
+  listExecutableSlashCommands?: ListExecutableSlashCommands;
 }
 
 export interface SlashRuntimePorts {
@@ -58,5 +65,6 @@ export async function resolveSlashUiPorts(override?: SlashUiPorts): Promise<Slas
     findSlashCompletion: mod.findSlashCompletion,
     formatSlashCommandPanel: mod.formatSlashCommandPanel,
     formatGroupedSlashPanel: mod.formatGroupedSlashPanel,
+    listExecutableSlashCommands: mod.listExecutableSlashCommandsForPicker,
   };
 }

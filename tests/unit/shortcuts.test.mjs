@@ -14,6 +14,6 @@ test("shortcuts expose local ui entrypoints", () => {
   assert.match(text, /\/sk|slash|Slash|命令候选/);
   assert.match(text, /Tab 补全/);
   assert.match(text, /Shift\+Tab/);
-  assert.match(text, /Always Agree/);
+  assert.match(text, /Always-approve/);
   assert.match(text, /本地 TUI|local/i);
 });

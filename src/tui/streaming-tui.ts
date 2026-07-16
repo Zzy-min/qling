@@ -44,6 +44,7 @@ import {
   type SessionPickerItem,
   type TurnBrowseItem,
 } from "./overlay-panel.js";
+import { sortSessionFleet } from "./session-fleet.js";
 import { formatMarkdownForTerminal } from "./markdown.js";
 import { getPackageVersion } from "../package-version.js";
 import type { RecoveryState } from "../execution/types.js";
@@ -173,6 +174,14 @@ export class StreamUI {
    * 否则 resize/按键/validation 会把 spinner 画进框内。
    */
   private streamActive = false;
+  /**
+   * true = 顶栏与输入框仍紧挨（其间无对话流）。
+   * 此时 Shift+Tab 可用相对上移擦除「顶栏+输入」整块再重画，避免 Windows 清屏失败叠双顶栏。
+   * 一旦 ensureStreamMode / 对话输出，置 false，模式切换只原位改输入框。
+   */
+  private chromeContiguous = true;
+  /** 顶栏固定 2 行（产品行 + 分隔线） */
+  private readonly headerLineCount = 2;
   private recoveryState: RecoveryState | null = null;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
@@ -202,12 +211,17 @@ export class StreamUI {
         kind: "options";
         title: string;
         items: OptionPickerItem[];
+        /** filterable 时的完整列表 */
+        allItems?: OptionPickerItem[];
+        filterable?: boolean;
         selected: number;
         footerHint?: string;
         onPick: (item: OptionPickerItem) => void | Promise<void>;
         lineCount: number;
         blockLines: number;
       } = null;
+  /** slash 多行输出已擦掉输入框、正在追加中 */
+  private slashOutputActive = false;
   private turnLog: Array<{ preview: string; fullText: string }> = [];
   private lastToolOutputBlob: string | null = null;
   private onRequestSessionList: (() => void | Promise<void>) | null = null;
@@ -254,10 +268,10 @@ export class StreamUI {
   }
 
   /**
-   * 更新模式 chrome：顶栏 Mode + 输入框三态。
+   * 更新模式 chrome（Shift+Tab / /mode）。
    *
-   * 注意：Windows/ConPTY 上 \x1b[H 局部重写顶栏不可靠，会叠出第二行顶栏。
-   * 因此模式切换只走一次清屏重画（与 /theme 相同），保证顶栏只出现一次。
+   * - 顶栏仍紧挨输入框时：相对上移擦除「顶栏+输入」整块，再画一次（不依赖 Windows 清屏）
+   * - 已有对话流隔开时：只原位重画输入框（模式角标在框上，避免去动远处顶栏叠双份）
    */
   applySessionChrome(patch: {
     sessionMode?: string;
@@ -271,24 +285,69 @@ export class StreamUI {
     }
     if (!this.running) return;
     if (this.streamActive) return;
-    // 浮层打开时只更新状态，关闭后再由调用方刷新
     if (this.overlay) return;
-    // 单次清屏重画：顶栏 1 次 + 输入框 1 次，禁止 repaintTopBar+redraw 叠双顶栏
-    this.repaintChrome({ clearScreen: true });
+
+    if (this.chromeContiguous && this.promptLive) {
+      this.eraseContiguousChromeBlock();
+      this.printHeader();
+      this.printInputBar();
+      this.syncCursor();
+      return;
+    }
+    if (this.promptLive) {
+      this.redrawInput();
+    }
   }
 
-  /** 由 REPL 在拉到 sessions 后调用 */
+  /**
+   * 光标在输入区时，上移擦除「顶栏 2 行 + 输入框(+hints)」连续块。
+   * 不使用 \x1b[2J（Windows 常失败导致内容只追加不清除）。
+   */
+  private eraseContiguousChromeBlock(): void {
+    // 先到输入块底行
+    if (this.inputCursorAnchor === "current") {
+      const down = Math.max(
+        0,
+        this.lastInputContentLineCount + this.lastInputHintLineCount - this.lastInputCursorLineIndex
+      );
+      if (down > 0) process.stdout.write("\x1b[" + down + "B");
+    }
+    const inputBlock = Math.max(
+      1,
+      this.lastInputContentLineCount + this.lastInputHintLineCount
+    );
+    const total = this.headerLineCount + inputBlock;
+    // 底行上移 total-1 到顶栏第一行，再清到屏尾
+    const rowsUp = Math.max(1, total - 1);
+    process.stdout.write("\x1b[" + rowsUp + "A\r\x1b[J");
+    this.promptLive = false;
+    this.inputCursorAnchor = "current";
+    this.lastInputCursorLineIndex = 0;
+    this.lastInputContentLineCount = 1;
+    this.lastInputHintLineCount = 0;
+  }
+
+  /** 由 REPL 在拉到 sessions 后调用（G4 舰队：状态优先排序） */
   showSessionPicker(items: SessionPickerItem[]): void {
-    // 全量列表（按更新时间倒序）；可视窗口在 panel 内滑动，不再硬截断只留 24 条
+    // 全量列表；可视窗口在 panel 内滑动，不再硬截断只留 24 条
     // slash Enter 后 streamActive 可能为 true；切换器需可交互
     this.streamActive = false;
     // 若已有其它浮层（options/turns），先擦除再开，避免叠层
     if (this.overlay) {
       this.closeOverlay(undefined, true);
     }
-    const mapped = [...items].sort(
-      (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-    );
+    // G4：对标 Grok group_priority — active > idle > stale，同级 updatedAt 降序
+    // 排序在此完成，format 层保持 selected 下标稳定
+    const mapped = sortSessionFleet(items).map((row) => ({
+      sessionId: row.sessionId,
+      name: row.name,
+      updatedAt: row.updatedAt,
+      turnCount: row.turnCount,
+      messageCount: row.messageCount,
+      sessionTokens: row.sessionTokens,
+      workspaceDir: row.workspaceDir,
+      active: row.active,
+    }));
     this.armJumpRestore();
     this.focus = "scrollback";
     this.overlay = {
@@ -345,20 +404,27 @@ export class StreamUI {
     }
 
     this.armJumpRestore();
-    this.focus = "scrollback";
+    // filterable 斜杠/技能切换器：焦点仍在 prompt，可继续键入过滤（含空格）
+    this.focus = spec.filterable ? "prompt" : "scrollback";
+    const filterable = Boolean(spec.filterable);
     this.overlay = {
       kind: "options",
       title: spec.title || "选择",
       items,
+      allItems: filterable ? [...items] : undefined,
+      filterable,
       selected,
       footerHint: spec.footerHint,
       onPick: spec.onPick,
       lineCount: 0,
       blockLines: 0,
     };
-    // paintOverlay(false)：若刚 Enter 离开输入框，会用 lastInput* 高度擦掉
-    // 已提交的「/theme + 补全提示」旧块，再画切换器，避免叠层。
-    this.paintOverlay(false);
+    // 打开时若输入区已有检索词（如 /skill search foo），立即按词过滤
+    if (filterable && this.input.value.trim()) {
+      this.refilterSlashPicker();
+    } else {
+      this.paintOverlay(false);
+    }
   }
 
   openOptionPicker(spec: OptionPickerSpec): void {
@@ -422,14 +488,7 @@ export class StreamUI {
       return;
     }
     if (seq === " ") {
-      if (this.overlay?.kind === "turns" || this.focus === "scrollback") {
-        this.focusPromptFromScrollback("输入焦点");
-      } else if (this.overlay?.kind === "sessions" || this.overlay?.kind === "options") {
-        // 浮层占用输入槽：不插入空格、不误确认（与 sessions 一致）
-        return;
-      } else {
-        this.handleChar(" ");
-      }
+      this.handleSpaceKey();
       return;
     }
     if (seq === "\t") {
@@ -470,9 +529,36 @@ export class StreamUI {
       if (!this.overlay) this.handleCtrlO();
       return;
     }
-    if (seq.length === 1 && seq >= " ") {
-      if (!this.overlay) this.handleChar(seq);
+    // filterable 切换器：允许光标在输入区左右移动（↑↓ 仍用于列表）
+    if (seq === "\x1b[D") {
+      if (this.isFilterableOverlay()) this.handleLeft();
+      return;
     }
+    if (seq === "\x1b[C") {
+      if (this.isFilterableOverlay()) this.handleRight();
+      return;
+    }
+    if (seq === "\x1b[H" || seq === "\x1b[1~") {
+      if (this.isFilterableOverlay()) this.handleHome();
+      return;
+    }
+    if (seq === "\x1b[F" || seq === "\x1b[4~") {
+      if (this.isFilterableOverlay()) this.handleEnd();
+      return;
+    }
+    if (seq.length === 1 && seq >= " ") {
+      if (
+        !this.overlay ||
+        (this.overlay.kind === "options" && this.overlay.filterable)
+      ) {
+        this.handleChar(seq);
+      }
+    }
+  }
+
+  /** 斜杠/技能等可键入过滤的切换器：输入区应保留光标编辑 */
+  private isFilterableOverlay(): boolean {
+    return this.overlay?.kind === "options" && Boolean(this.overlay.filterable);
   }
 
   private armJumpRestore(): void {
@@ -569,6 +655,11 @@ export class StreamUI {
     for (const ch of draft) ch === "\n" ? this.input.insertNewline() : this.input.insertChar(ch);
     this.draftDisplaySource = draft.includes("\n") ? "typed" : null;
     this.redrawInput();
+  }
+
+  /** 测试 / slash 副作用：读取当前输入草稿 */
+  getInputDraft(): string {
+    return this.input.value;
   }
 
   private appendRecoveryCard(state: RecoveryState): void {
@@ -776,6 +867,8 @@ export class StreamUI {
       this.promptLive = false;
     }
     this.streamActive = true;
+    // 顶栏与输入之间将插入对话流，不再 contiguous
+    this.chromeContiguous = false;
   }
 
   private wrapInputVisualLines(value: string, width: number, cursor: number): {
@@ -1052,26 +1145,171 @@ export class StreamUI {
   }
 
   private formatCurrentSlashCompletionHints(): string[] {
+    // 斜杠一律走切换器过滤，禁止输入框下方旧列表
+    if (this.input.value.startsWith("/")) return [];
+    if (this.overlay?.kind === "options" && this.overlay.filterable) return [];
     if (!this.isSlashCompletionActive(this.input.value)) return [];
-    const ports = this.slashUi;
-    if (!ports) {
-      void this.slashUiPromise;
-      return [];
+    return [];
+  }
+
+  /** 打开可执行斜杠命令切换器（按 / 即开；保留 / 并可继续键入过滤） */
+  openSlashCommandPicker(): void {
+    if (!this.running) return;
+    if (this.overlay?.kind === "options" && this.overlay.filterable) {
+      // 已在斜杠切换器中：仅按当前输入重过滤
+      this.refilterSlashPicker();
+      return;
     }
-    const matches = ports.findSlashCompletion(this.input.value, 8);
-    if (matches.length > 0 && this.slashCompletionSelectedIndex >= matches.length) {
+    if (this.overlay?.kind === "options") return;
+    this.streamActive = false;
+    this.slashOutputActive = false;
+
+    const openWith = (listFn: () => Array<{
+      id: string;
+      label: string;
+      description: string;
+      argumentHint: string;
+    }>) => {
+      const raw = listFn();
+      if (!raw.length) return;
+      // 保留 `/` 输入，可继续打 /he… 过滤
+      if (!this.input.value.startsWith("/")) {
+        this.input.clear();
+        this.input.insertChar("/");
+      }
+      this.draftDisplaySource = null;
       this.slashCompletionSelectedIndex = 0;
+      const mapped = raw.map((c) => ({
+        id: c.id,
+        label: c.label,
+        description: c.argumentHint
+          ? `${c.description}  ${c.argumentHint}`
+          : c.description,
+        _argumentHint: c.argumentHint,
+      }));
+      const filtered = this.filterSlashItems(mapped, this.input.value);
+      this.showOptionPicker({
+        title: "命令切换 · Slash",
+        footerHint: "键入/粘贴检索 · 可带参数如 /dashboard web · ↑/↓ · Enter · Esc",
+        filterable: true,
+        items: filtered,
+        onPick: (item) => {
+          if (!item.id) return; // 无匹配占位
+          const full = raw.find((c) => c.id === item.id);
+          const needsArgs = Boolean(full?.argumentHint?.trim());
+          // 执行后下一次 `/` 不自动弹切换器
+          if (needsArgs) {
+            this.input.clear();
+            for (const ch of item.id + " ") {
+              if (ch === "\n") this.input.insertNewline();
+              else this.input.insertChar(ch);
+            }
+            this.draftDisplaySource = null;
+            this.streamActive = false;
+            this.redrawInput();
+            return;
+          }
+          this.input.clear();
+          this.draftDisplaySource = null;
+          if (this.inputCallback) {
+            void this.inputCallback(item.id);
+          }
+        },
+      });
+    };
+
+    const ports = this.slashUi;
+    const listFn = ports?.listExecutableSlashCommands;
+    if (typeof listFn === "function") {
+      openWith(listFn);
+      return;
     }
-    const inputVal = this.input.value || "";
-    if (inputVal === "/" || inputVal === "") {
-      return ports.formatGroupedSlashPanel(process.stdout.columns || 80);
+    void import("../commands/index.js").then((mod) => {
+      if (typeof mod.listExecutableSlashCommandsForPicker === "function") {
+        if (this.slashUi) {
+          this.slashUi.listExecutableSlashCommands =
+            mod.listExecutableSlashCommandsForPicker;
+        }
+        openWith(mod.listExecutableSlashCommandsForPicker);
+      }
+    });
+  }
+
+  /**
+   * 按输入检索最近命令 / skill：前缀匹配优先，其次包含匹配。
+   * 空或仅 `/` 时返回全量（按名称排序）。
+   *
+   * 斜杠带参数：`/dashboard web` 只按命令名段 `dashboard` 过滤，
+   * 避免参数 token 把合法命令滤成「无匹配」。
+   * skill 切换器（无前导 /）：空格分 token 全匹配 id/label/desc。
+   */
+  private filterSlashItems(
+    all: OptionPickerItem[],
+    prefix: string
+  ): OptionPickerItem[] {
+    const raw = prefix.trim();
+    const p = raw.toLowerCase();
+    if (!p || p === "/") {
+      return [...all].sort((a, b) => a.id.localeCompare(b.id));
     }
-    return ports.formatSlashCommandPanel(
-      inputVal,
-      this.slashCompletionSelectedIndex,
-      process.stdout.columns || 80,
-      8
+
+    // 斜杠命令：过滤键 = 命令名（第一段），忽略后续参数
+    const isSlashCmd = raw.startsWith("/");
+    const cmdHead = isSlashCmd
+      ? raw.split(/\s+/)[0]!.toLowerCase()
+      : p;
+    const rest = cmdHead.replace(/^\//, "").trim();
+    const freeTokens = isSlashCmd
+      ? []
+      : p.split(/\s+/).filter(Boolean);
+
+    const scored: Array<{ item: OptionPickerItem; score: number }> = [];
+    for (const it of all) {
+      const id = it.id.toLowerCase();
+      const label = it.label.toLowerCase();
+      const desc = (it.description || "").toLowerCase();
+      const hay = `${id} ${label} ${desc}`;
+      let score = -1;
+      if (id === cmdHead || id === `/${rest}` || label === rest || label === cmdHead) {
+        score = 100;
+      } else if (id.startsWith(cmdHead) || id.startsWith(`/${rest}`)) {
+        score = 90 - Math.min(20, id.length - Math.min(id.length, cmdHead.length));
+      } else if (id.includes(cmdHead) || label.startsWith(rest)) score = 70;
+      else if (label.includes(rest) || desc.includes(rest)) score = 40;
+      else if (
+        freeTokens.length > 1 &&
+        freeTokens.every((t) => hay.includes(t))
+      ) {
+        score = 55;
+      } else if (
+        freeTokens.length === 1 &&
+        (id.includes(freeTokens[0]!) ||
+          label.includes(freeTokens[0]!) ||
+          desc.includes(freeTokens[0]!))
+      ) {
+        score = 45;
+      }
+      if (score >= 0) scored.push({ item: it, score });
+    }
+    scored.sort(
+      (a, b) =>
+        b.score - a.score || a.item.id.localeCompare(b.item.id)
     );
+    return scored.map((s) => s.item);
+  }
+
+  /** 斜杠切换器打开时：按当前输入重过滤并原地重画 */
+  private refilterSlashPicker(): void {
+    if (this.overlay?.kind !== "options" || !this.overlay.filterable) return;
+    const all = this.overlay.allItems ?? this.overlay.items;
+    const filtered = this.filterSlashItems(all, this.input.value);
+    // 无匹配时显示空列表提示项，不回退全量（避免「越打字越乱」）
+    this.overlay.items =
+      filtered.length > 0
+        ? filtered
+        : [{ id: "", label: "(无匹配)", description: "继续输入或 Backspace" }];
+    this.overlay.selected = 0;
+    this.paintOverlay(true);
   }
 
   private isSlashCompletionPrefix(value: string): boolean {
@@ -1126,6 +1364,9 @@ export class StreamUI {
     }
     this.inputStartRow = 0;
     this.streamActive = false;
+    this.slashOutputActive = false;
+    // slash 执行后清掉残留的单独 `/`
+    this.clearInputIfSlashResidue();
     // 已有活动输入框时只重绘，避免任务结束后再叠一份空框
     if (this.promptLive) {
       this.redrawInput();
@@ -1136,6 +1377,17 @@ export class StreamUI {
     this.writeInputValue(true);
     this.syncCursor();
     this.promptLive = true;
+    // slash 输出后恢复 contiguous=false（上面已有对话）
+    this.chromeContiguous = false;
+  }
+
+  /** slash 执行后：输入仅为 `/` 时清空 */
+  clearInputIfSlashResidue(): void {
+    if (this.input.value === "/" || this.input.value.trim() === "/") {
+      this.input.clear();
+      this.draftDisplaySource = null;
+      this.slashCompletionSelectedIndex = 0;
+    }
   }
 
   /** 测试与 slash 复用：当前是否默认展开长工具输出 */
@@ -1187,28 +1439,14 @@ export class StreamUI {
         return;
       }
 
-      // 非 bracketed 粘贴保护
-      let isMultilinePaste = false;
+      // 非 bracketed 粘贴：多字符纯文本整块插入（含单行 /dashboard web）
       if (!bracketedPaste && !chunk.includes("\x1b") && chunk.length > 1) {
         const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-        const withoutTrailing = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
-        if (withoutTrailing.includes("\n")) {
-          isMultilinePaste = true;
+        // 允许 filterable 浮层粘贴；其它浮层拒绝
+        if (!this.overlay || this.isFilterableOverlay()) {
+          this.insertBulkText(normalized);
+          return;
         }
-      }
-
-      if (isMultilinePaste) {
-        const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-        for (const ch of normalized) {
-          if (ch === "\n") {
-            this.input.insertNewline();
-          } else if (ch >= " " || ch === "\t") {
-            this.input.insertChar(ch);
-          }
-        }
-        this.markPastedDraft();
-        this.redrawInput();
-        return;
       }
 
       for (const ch of chunk) {
@@ -1226,18 +1464,23 @@ export class StreamUI {
           partial = "";
           bracketedPaste = false;
           pasteSawCarriageReturn = false;
-          this.markPastedDraft();
-          this.redrawInput();
+          this.afterPasteCommit();
         } else if (seq === "\x1b[" || /^\x1b\[\d*(?:;\d*)?$/.test(seq)) {
           partial = seq;
         } else if (bracketedPaste) {
           partial = "";
+          // filterable / 无浮层：写入；其它浮层丢弃粘贴内容
+          if (this.overlay && !this.isFilterableOverlay()) {
+            continue;
+          }
           if (seq === "\r") {
-            this.input.insertNewline();
+            if (this.isFilterableOverlay()) this.input.insertChar(" ");
+            else this.input.insertNewline();
             pasteSawCarriageReturn = true;
           } else if (seq === "\n") {
             if (!pasteSawCarriageReturn) {
-              this.input.insertNewline();
+              if (this.isFilterableOverlay()) this.input.insertChar(" ");
+              else this.input.insertNewline();
             }
             pasteSawCarriageReturn = false;
           } else if (ch >= " " || ch === "\t") {
@@ -1250,14 +1493,7 @@ export class StreamUI {
           else this.handleEnter();
         } else if (seq === " ") {
           partial = "";
-          // 对标 panes.rs：scrollback 下 Space → FocusPrompt
-          if (this.overlay?.kind === "turns" || this.focus === "scrollback") {
-            this.focusPromptFromScrollback("输入焦点");
-          } else if (this.overlay?.kind === "sessions" || this.overlay?.kind === "options") {
-            // 浮层：空格不插入、不确认
-          } else {
-            this.handleChar(" ");
-          }
+          this.handleSpaceKey();
         } else if (seq === "\t") {
           partial = "";
           this.handleTab();
@@ -1265,6 +1501,10 @@ export class StreamUI {
           partial = "";
           if (this.overlay) return;
           this.handleShiftTab();
+        } else if (seq === "\x16") {
+          // Ctrl+V：从系统剪贴板粘贴（Windows Terminal 右键粘贴走 bracketed；Ctrl+V 常发此码）
+          partial = "";
+          void this.pasteFromClipboard();
         } else if (seq === "\x03") {
           partial = "";
           if (this.overlay) {
@@ -1274,7 +1514,9 @@ export class StreamUI {
           this.handleCtrlC();
         } else if (seq === "\x7f") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !(this.overlay.kind === "options" && this.overlay.filterable)) {
+            return;
+          }
           this.handleBackspace();
         } else if (seq === "\x01") {
           partial = "";
@@ -1336,35 +1578,37 @@ export class StreamUI {
           else this.handleLineDown();
         } else if (seq === "\x1b[3~") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleDelete();
         } else if (seq === "\x1bd" || seq === "\x1b[3;5~" || seq === "\x1b[3;3~") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleAltD();
         } else if (seq === "\x1bb" || seq === "\x1b[1;3D" || seq === "\x1b[1;5D" || seq === "\x1b[5D") {
           partial = "";
-          if (this.overlay) return;
+          // filterable 浮层：词级左移仍作用于输入草稿
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleWordLeft();
         } else if (seq === "\x1bf" || seq === "\x1b[1;3C" || seq === "\x1b[1;5C" || seq === "\x1b[5C") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleWordRight();
         } else if (seq === "\x1b[C") {
           partial = "";
-          if (this.overlay) return;
+          // ↑↓ 管列表；←→ 在 filterable 时编辑输入（否则吞掉避免误触）
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleRight();
         } else if (seq === "\x1b[D") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleLeft();
         } else if (seq === "\x1b[H" || seq === "\x1b[1~") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleHome();
         } else if (seq === "\x1b[F" || seq === "\x1b[4~") {
           partial = "";
-          if (this.overlay) return;
+          if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleEnd();
         } else if (seq === "\x0f") {
           partial = "";
@@ -1383,7 +1627,10 @@ export class StreamUI {
           this.handleSessionPickerToggle();
         } else if (ch >= " " || ch === "\t") {
           partial = "";
-          if (this.overlay) return;
+          // 斜杠切换器可键入过滤；其它浮层吞掉可打印键
+          if (this.overlay && !(this.overlay.kind === "options" && this.overlay.filterable)) {
+            return;
+          }
           this.handleChar(ch);
         } else {
           partial = "";
@@ -1397,16 +1644,122 @@ export class StreamUI {
     const cmd = this.input.value.trim();
     if (!cmd) return;
     this.lastEmptyCtrlCAt = 0;
+    // 仅 `/` → 打开命令切换器（不提交）
+    if (cmd === "/") {
+      if (this.slashUi) this.openSlashCommandPicker();
+      else void this.slashUiPromise.then(() => this.openSlashCommandPicker());
+      return;
+    }
+    this.submitSlashDraft(cmd);
+  }
+
+  /**
+   * 提交斜杠/普通命令草稿（关闭浮层后的统一出口）。
+   * 供 handleEnter 与 filterable 浮层「带参数 Enter」共用。
+   */
+  private submitSlashDraft(cmd: string): void {
+    const text = cmd.trim();
+    if (!text) return;
+    if (this.overlay) {
+      this.closeOverlay(undefined, false);
+    }
+    this.focus = "prompt";
+    // 写入草稿再 submit，保证进历史
+    this.input.clear();
+    for (const ch of text) {
+      if (ch === "\n") this.input.insertNewline();
+      else this.input.insertChar(ch);
+    }
     this.inputStartRow = 0;
     this.moveAfterInputFrame();
     process.stdout.write("\n");
-    // 提交后进入流式区：后续 tool/validation/resize 不得再画输入框
     this.promptLive = false;
     this.streamActive = true;
     this.input.submit();
     this.draftDisplaySource = null;
     if (this.inputCallback) {
-      this.inputCallback(cmd);
+      void this.inputCallback(text);
+    }
+  }
+
+  /** 粘贴结束后：filterable 重过滤，否则重画输入 */
+  private afterPasteCommit(): void {
+    this.markPastedDraft();
+    if (this.isFilterableOverlay()) {
+      this.refilterSlashPicker();
+      return;
+    }
+    this.redrawInput();
+  }
+
+  /** 向输入区批量插入文本（粘贴 / Ctrl+V） */
+  private insertBulkText(text: string): void {
+    if (!text) return;
+    // 非 filterable 浮层：不允许粘贴进输入
+    if (this.overlay && !this.isFilterableOverlay()) return;
+    const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    for (const ch of normalized) {
+      if (ch === "\n") {
+        // 斜杠过滤框内换行无意义，压成空格
+        if (this.isFilterableOverlay()) this.input.insertChar(" ");
+        else this.input.insertNewline();
+      } else if (ch >= " " || ch === "\t") {
+        this.input.insertChar(ch);
+      }
+    }
+    this.afterPasteCommit();
+  }
+
+  /**
+   * Ctrl+V 剪贴板粘贴。
+   * Windows: PowerShell Get-Clipboard；其它: pbpaste / xclip（有则用）。
+   * 失败时静默（用户仍可用终端右键 / Ctrl+Shift+V 的 bracketed paste）。
+   */
+  private async pasteFromClipboard(): Promise<void> {
+    if (this.overlay && !this.isFilterableOverlay()) return;
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+      let text = "";
+      if (process.platform === "win32") {
+        const { stdout } = await execFileAsync(
+          "powershell.exe",
+          ["-NoProfile", "-Command", "Get-Clipboard -Raw"],
+          { encoding: "utf8", timeout: 3000, windowsHide: true }
+        );
+        text = String(stdout ?? "");
+      } else if (process.platform === "darwin") {
+        const { stdout } = await execFileAsync("pbpaste", [], {
+          encoding: "utf8",
+          timeout: 3000,
+        });
+        text = String(stdout ?? "");
+      } else {
+        try {
+          const { stdout } = await execFileAsync(
+            "xclip",
+            ["-selection", "clipboard", "-o"],
+            { encoding: "utf8", timeout: 3000 }
+          );
+          text = String(stdout ?? "");
+        } catch {
+          const { stdout } = await execFileAsync(
+            "xsel",
+            ["--clipboard", "--output"],
+            { encoding: "utf8", timeout: 3000 }
+          );
+          text = String(stdout ?? "");
+        }
+      }
+      // 去掉结尾多余换行；filterable 内整段粘贴
+      text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      if (this.isFilterableOverlay()) {
+        text = text.replace(/\n+/g, " ").trimEnd();
+      }
+      if (text) this.insertBulkText(text);
+    } catch {
+      // 静默：依赖终端原生粘贴
     }
   }
 
@@ -1519,7 +1872,33 @@ export class StreamUI {
     this.appendFeedbackAndRedraw(S.g("已恢复草稿"));
   }
 
+  private handleCtrlA(): void {
+    this.input.moveStart();
+    this.redrawInput();
+  }
+
+  private handleCtrlE(): void {
+    this.input.moveEnd();
+    this.redrawInput();
+  }
+
   private handleBackspace(): void {
+    if (this.overlay?.kind === "options" && this.overlay.filterable) {
+      const before = this.input.value;
+      const beforeCursor = this.input.cursorPos;
+      this.input.backspace();
+      if (this.input.value === before && this.input.cursorPos === beforeCursor) {
+        this.syncCursor();
+        return;
+      }
+      if (!this.input.value) {
+        // Esc 式关掉：下次 `/` 可再开切换器
+        this.closeOverlay(undefined, true);
+        return;
+      }
+      this.refilterSlashPicker();
+      return;
+    }
     const beforeValue = this.input.value;
     const beforeCursor = this.input.cursorPos;
     this.input.backspace();
@@ -1532,17 +1911,8 @@ export class StreamUI {
     this.redrawInput();
   }
 
-  private handleCtrlA(): void {
-    this.input.moveStart();
-    this.redrawInput();
-  }
-
-  private handleCtrlE(): void {
-    this.input.moveEnd();
-    this.redrawInput();
-  }
-
   private handleCtrlU(): void {
+    if (this.overlay?.kind === "options" && this.overlay.filterable) return;
     this.input.deleteBeforeCursor();
     this.resetDraftDisplaySourceIfEmpty();
     this.redrawInput();
@@ -1583,24 +1953,45 @@ export class StreamUI {
   }
 
   /**
-   * 主题/chrome 变更后立即重绘可见 UI。
-   * append-only 终端无法改写已输出的顶栏 ANSI，必须清屏重画才能「直接改主题」。
+   * 主题 / Ctrl+L：整页刷新。
+   * 清屏用 Node TTY API + CSI（含 Windows Terminal 的 3J 清 scrollback）。
    */
   repaintChrome(options: { clearScreen?: boolean } = {}): void {
     if (!this.running) return;
     this.streamActive = false;
     if (this.overlay) {
-      // 不 restore jump：主题切换是主动确认
       this.overlay = null;
       this.jumpRestore = null;
       this.focus = "prompt";
     }
     if (options.clearScreen !== false) {
-      process.stdout.write("\x1b[2J\x1b[H");
+      this.clearViewport();
     }
+    this.chromeContiguous = true;
     this.printHeader();
     this.printInputBar();
     this.syncCursor();
+  }
+
+  /** 尽量可靠地清空当前视口（Windows ConPTY 友好） */
+  private clearViewport(): void {
+    const out = process.stdout;
+    try {
+      if (typeof out.cursorTo === "function") {
+        out.cursorTo(0, 0);
+      } else {
+        out.write("\x1b[H");
+      }
+      if (typeof out.clearScreenDown === "function") {
+        out.clearScreenDown();
+      } else {
+        out.write("\x1b[0J");
+      }
+    } catch {
+      // fall through to CSI
+    }
+    // 2J=清屏 3J=清回滚（WT）H=回原点
+    out.write("\x1b[2J\x1b[3J\x1b[H");
   }
 
   private handleCtrlO(): void {
@@ -1684,12 +2075,51 @@ export class StreamUI {
     this.redrawInput();
   }
 
+  /**
+   * 空格键语义（对标 Grok panes + filterable slash）：
+   * 1. filterable 切换器（斜杠 / skill）：插入空格并重过滤（可搜多词）
+   * 2. sessions / 非 filterable options：吞掉，绝不误关切换器
+   * 3. turns 浮层或纯 scrollback 焦点：Space → FocusPrompt
+   * 4. 其余：正常插入
+   */
+  private handleSpaceKey(): void {
+    if (this.overlay?.kind === "options" && this.overlay.filterable) {
+      this.handleChar(" ");
+      return;
+    }
+    // 必须先于 scrollback 判断：非 filterable options 的 focus 也是 scrollback
+    if (this.overlay?.kind === "sessions" || this.overlay?.kind === "options") {
+      return;
+    }
+    if (this.overlay?.kind === "turns" || this.focus === "scrollback") {
+      this.focusPromptFromScrollback("输入焦点");
+      return;
+    }
+    this.handleChar(" ");
+  }
+
   private handleChar(ch: string): void {
+    // 斜杠 / 技能等 filterable 切换器：键入即在切换器内检索（含空格）
+    if (this.overlay?.kind === "options" && this.overlay.filterable) {
+      this.input.insertChar(ch);
+      if (this.draftDisplaySource !== "pasted") {
+        this.draftDisplaySource = "typed";
+      }
+      this.refilterSlashPicker();
+      return;
+    }
+
     this.input.insertChar(ch);
     if (this.draftDisplaySource !== "pasted") {
       this.draftDisplaySource = "typed";
     }
     this.slashCompletionSelectedIndex = 0;
+
+    // 每次输入恰好为 `/`：立刻打开切换器（可继续键入过滤）
+    if (this.input.value === "/") {
+      this.openSlashCommandPicker();
+      return;
+    }
     this.redrawInput();
   }
 
@@ -1733,14 +2163,25 @@ export class StreamUI {
       return;
     }
     if (this.overlay.kind === "options") {
+      // 斜杠切换器：输入已含参数时提交完整草稿（如 /dashboard web）
+      // 不能只 onPick 选中项，否则参数永远丢失
+      const filterable = Boolean(this.overlay.filterable);
+      const draftBefore = this.input.value.trim();
+      if (filterable && draftBefore.startsWith("/") && /\s+\S/.test(draftBefore)) {
+        this.submitSlashDraft(draftBefore);
+        return;
+      }
       const item = this.overlay.items[this.overlay.selected];
       const onPick = this.overlay.onPick;
       this.closeOverlay(undefined, false);
       this.focus = "prompt";
-      if (item && onPick) {
+      if (item && item.id && onPick) {
         void Promise.resolve(onPick(item)).catch(() => {
           // onPick 错误不抛到键盘路径
         });
+      } else if (filterable && draftBefore.startsWith("/") && draftBefore.length > 1) {
+        // 无有效选中项：若草稿是完整斜杠命令仍提交
+        this.submitSlashDraft(draftBefore);
       }
       return;
     }
@@ -1882,6 +2323,7 @@ export class StreamUI {
    */
   private closeOverlay(hint?: string, restoreJump = true): void {
     if (!this.overlay) return;
+    const wasOptions = this.overlay.kind === "options";
     if (this.overlay.blockLines > 0) {
       this.eraseOverlayBlock();
     } else {
@@ -1896,6 +2338,13 @@ export class StreamUI {
       this.focus = "prompt";
     }
     this.jumpRestore = null;
+
+    // Esc 取消命令切换器：清空残留 `/`（不强制 suppress，方便马上再按 / 打开）
+    if (wasOptions && restoreJump) {
+      if (this.input.value === "/" || this.input.value.trim() === "") {
+        this.input.clear();
+      }
+    }
 
     if (hint) {
       process.stdout.write(DIM(hint) + "\n");
@@ -2011,30 +2460,61 @@ export class StreamUI {
   }
 
   /**
-   * Slash / 切换器确认后的本地一行反馈（非 agent 流）。
-   * 避免 appendOutput 的 › 聊天样式 + ensureStreamMode 叠框。
+   * Slash 多行输出：先擦掉输入框（避免「空框还在 + 正文 + 新框」），再只追加文本。
+   */
+  appendSlashLine(text: string = ""): void {
+    if (!this.running) return;
+    if (this.overlay) {
+      this.closeOverlay(undefined, false);
+    }
+    // 首行：擦掉当前/刚提交残留的输入框，不留 orphan
+    if (!this.slashOutputActive) {
+      if (this.promptLive) {
+        this.backToPrompt();
+      } else {
+        this.eraseSubmittedInputBlock();
+      }
+      this.slashOutputActive = true;
+    }
+    this.streamActive = true;
+    this.promptLive = false;
+    if (this.input.value === "/" || this.input.value.trim() === "/") {
+      this.input.clear();
+    }
+    process.stdout.write(String(text ?? "") + "\n");
+  }
+
+  /**
+   * 单行本地提示（模式切换等）。多行 slash 报告请用 appendSlashLine。
    */
   appendNotice(text: string): void {
     if (!this.running) return;
     const msg = String(text ?? "").trim();
     if (!msg) return;
-    this.streamActive = false;
-    // 浮层仍开着时不抢画（确认路径应先 close）
+    // 已在 slash 流式输出中：只追加一行
+    if (this.streamActive && !this.promptLive) {
+      process.stdout.write(S.d(msg) + "\n");
+      return;
+    }
     if (this.overlay) return;
 
     const painted = S.d(msg);
     if (this.promptLive) {
       this.moveAfterInputFrame();
       process.stdout.write("\n" + painted + "\n");
-      this.writeInputValue(true);
+      // 不要带 slash 补全地重画：先清掉单独的 /
+      if (this.input.value === "/") this.input.clear();
+      this.writeInputValue(!this.input.value);
       this.syncCursor();
       this.promptLive = true;
       return;
     }
     process.stdout.write("\n" + painted + "\n");
+    if (this.input.value === "/") this.input.clear();
     this.writeInputValue(true);
     this.syncCursor();
     this.promptLive = true;
+    this.streamActive = false;
   }
 
   appendUserInput(text: string): void {

@@ -4,6 +4,12 @@
 
 import { getBorderChars, paint } from "./theme.js";
 import { padVisible, truncateVisible, visibleWidth } from "./shell.js";
+import {
+  FLEET_EMPTY_HINT,
+  FLEET_PANEL_TITLE,
+  buildSessionFleetRow,
+  type SessionFleetInput,
+} from "./session-fleet.js";
 
 export interface SessionPickerItem {
   sessionId: string;
@@ -11,6 +17,8 @@ export interface SessionPickerItem {
   updatedAt: string;
   turnCount: number;
   messageCount: number;
+  sessionTokens?: number;
+  workspaceDir?: string | null;
   active?: boolean;
 }
 
@@ -33,18 +41,11 @@ export interface OptionPickerSpec {
   /** 初始选中 id；缺省取 active 或 0 */
   selectedId?: string;
   footerHint?: string;
+  /**
+   * true：斜杠命令切换器 — 保留输入区 `/` 前缀，键入时过滤列表
+   */
+  filterable?: boolean;
   onPick: (item: OptionPickerItem) => void | Promise<void>;
-}
-
-function formatUpdated(iso: string): string {
-  const ts = Date.parse(iso);
-  if (Number.isNaN(ts)) return iso.slice(0, 16);
-  return new Date(ts).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function frameLines(title: string, body: string[], width: number, footer: string): string[] {
@@ -70,15 +71,22 @@ function frameLines(title: string, body: string[], width: number, footer: string
  */
 const SESSION_PICKER_WINDOW = 12;
 
-/** 会话切换器面板（无 ANSI，便于测宽；着色在 TUI 层） */
+/**
+ * 会话舰队面板（G4 · 对标 Grok Agent Dashboard 行可扫性）。
+ * 无 ANSI，便于测宽；着色在 TUI 层。
+ *
+ * 注意：调用方传入的 items 顺序即导航顺序；本函数不再重排，
+ * 以免 selected 下标与数据源错位。排序应在 showSessionPicker 完成。
+ */
 export function formatSessionPickerPanel(
   items: SessionPickerItem[],
   selected: number,
-  width = 80
+  width = 80,
+  nowMs: number = Date.now()
 ): string[] {
   const body: string[] = [];
   if (items.length === 0) {
-    body.push("(无已保存会话)");
+    body.push(FLEET_EMPTY_HINT);
   } else {
     // 围绕 selected 的滑动窗口；▲/▼ 行始终占位，保证 lineCount 恒定便于原地擦除
     const n = items.length;
@@ -98,13 +106,10 @@ export function formatSessionPickerPanel(
     }
     for (let i = start; i < end; i++) {
       const item = items[i]!;
+      const fleet = buildSessionFleetRow(item as SessionFleetInput, nowMs);
       const mark = i === selected ? "▸" : " ";
-      const active = item.active ? " ●" : "";
-      const label = `${mark} ${item.name}${active}`;
-      const meta = `${formatUpdated(item.updatedAt)} · ${item.turnCount}t · ${item.messageCount}m`;
-      const id = item.sessionId.length > 18 ? item.sessionId.slice(0, 16) + "…" : item.sessionId;
-      body.push(truncateVisible(`${label}`, 70));
-      body.push(truncateVisible(`   ${id}  ${meta}`, 70));
+      body.push(truncateVisible(`${mark} ${fleet.primaryLabel}`, 70));
+      body.push(truncateVisible(`   ${fleet.secondaryLine}`, 70));
     }
     if (needsChrome) {
       body.push(
@@ -120,9 +125,11 @@ export function formatSessionPickerPanel(
   const n = items.length;
   const footer =
     n > SESSION_PICKER_WINDOW
-      ? `↑/↓ 浏览全部 ${n} 条 · Enter 恢复 · Esc 取消 · Ctrl+\\`
-      : `↑/↓ 选择 · Enter 恢复 · Esc 取消 · 共 ${n} 条`;
-  return frameLines("会话切换 · Sessions", body, width, footer);
+      ? `↑/↓ 浏览全部 ${n} 条 · Enter 恢复 · Esc 取消 · /dashboard web`
+      : n === 0
+        ? `Esc 关闭 · 输入消息开始 · /dashboard web 开任务台`
+        : `↑/↓ 选择 · Enter 恢复 · Esc 取消 · 共 ${n} 条 · /dashboard web`;
+  return frameLines(FLEET_PANEL_TITLE, body, width, footer);
 }
 
 export function paintSessionPickerPanel(lines: string[], _selected: number): string {

@@ -187,7 +187,7 @@ test("model/theme/mode prefer picker when openOptionPicker present", async () =>
   assert.equal(lines.filter((l) => /可用 Provider 预设/.test(l)).length, 0);
 });
 
-test("applySessionChrome repaints top bar once (no stacked headers)", async () => {
+test("applySessionChrome contiguous: relative erase, single Mode:plan (no stack)", async () => {
   await withCapturedStdout(async (getOutput, clear) => {
     const ui = new StreamUI("m", 0, {
       slashUi: {
@@ -202,14 +202,13 @@ test("applySessionChrome repaints top bar once (no stacked headers)", async () =
       ui.applySessionChrome({ sessionMode: "plan", permissionMode: "ask" });
       const out = getOutput();
       const plain = stripAnsi(out);
-      // 清屏一次
-      const clears = (out.match(/\x1b\[2J/g) || []).length;
-      assert.equal(clears, 1, `expected single clearScreen, got ${clears}`);
-      // Mode:plan 只应出现一次（顶栏一行）
+      // 应上移擦除（CSI A），而不是只追加第二份顶栏
+      assert.match(out, /\x1b\[\d+A/);
       const modes = plain.match(/Mode:plan/g) || [];
       assert.equal(modes.length, 1, `expected single Mode:plan, got ${modes.length}\n${plain}`);
-      assert.match(plain, /plan|规划/);
-      assert.doesNotMatch(plain, /Mode:plan[\s\S]*Mode:normal|Mode:normal[\s\S]*Mode:plan/);
+      assert.match(plain, /plan|规划|只读/);
+      // 不应同时残留 Mode:normal 与 Mode:plan 两套顶栏文案
+      assert.doesNotMatch(plain, /Mode:normal/);
     } finally {
       ui.stop();
     }
@@ -234,8 +233,9 @@ test("repaintChrome clears and reprints header after setTheme", async () => {
       clear();
       ui.repaintChrome({ clearScreen: true });
       const out = getOutput();
-      // 清屏 + 顶栏 + 输入框
-      assert.match(out, /\x1b\[2J\x1b\[H/);
+      // 清屏序列（含 2J / 3J / H）+ 顶栏 + 输入框
+      assert.match(out, /\x1b\[2J/);
+      assert.match(out, /\x1b\[H/);
       assert.match(stripAnsi(out), /轻灵|Qling|Mode:/);
     } finally {
       const { setTheme } = await import("../../dist/tui/theme.js");

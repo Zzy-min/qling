@@ -92,7 +92,14 @@ function renderSessions(): void {
   if (!rail || !snapshot) return;
   const sessions = snapshot.sessions ?? [];
   if (sessions.length === 0) {
-    rail.replaceChildren(node("span", "muted", "暂无会话。在 TUI 对话后会出现在此。"));
+    // G4.4 空态：引导在 TUI 开始对话（Web 不替代舰队）
+    rail.replaceChildren(
+      node(
+        "span",
+        "muted",
+        "暂无会话。在 TUI 输入第一条消息，或运行 qling --resume <id>。任务请用 /mission。"
+      )
+    );
     return;
   }
   rail.replaceChildren(
@@ -100,12 +107,18 @@ function renderSessions(): void {
       const chip = node("div", s.active ? "session-chip active" : "session-chip");
       const sid = node("span", "sid", s.name || s.sessionId);
       sid.title = s.sessionId;
+      const resume =
+        s.resumeCommand ||
+        (s.sessionId ? `qling --resume ${s.sessionId}` : "qling --resume <id>");
       const meta = node(
         "div",
         "meta",
         `${s.turnCount} turns · ${s.sessionTokens} tok${s.active ? " · 当前" : ""}`
       );
-      chip.append(sid, meta);
+      // G4.3 深链：title 与可见行双通道，便于复制
+      const deep = node("div", "meta deep-link", resume);
+      deep.title = `在终端执行以恢复：${resume}`;
+      chip.append(sid, meta, deep);
       return chip;
     })
   );

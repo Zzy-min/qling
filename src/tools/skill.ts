@@ -24,10 +24,23 @@ export function getPackageRootForSkills(): string {
   return resolve(here, "..", "..");
 }
 
-// Skill 查找路径
-// 支持两种格式：
-//   name="foo"        → 搜索 skills/foo.md
-//   name="@scope/foo" → 搜索 skills/scopes/scope/foo.md
+/**
+ * Skill 查找路径（对标 Grok 08-skills 发现顺序的轻量子集）。
+ *
+ * 优先级（后写的不覆盖先写的：catalog 先出现优先）：
+ * 1. 包内 bundled skills
+ * 2. 用户：~/.qling · ~/.grok · ~/.agents · ~/.claude · ~/.cursor
+ * 3. 工作区：skills · .qling · .grok · .agents · .claude · .cursor
+ * 4. 可选 Hermes（QLING_INCLUDE_HERMES_SKILLS=1）
+ *
+ * 兼容开关（默认开，与 Grok 类似）：
+ * - QLING_CLAUDE_SKILLS_ENABLED=0 关闭 .claude 扫描
+ * - QLING_CURSOR_SKILLS_ENABLED=0 关闭 .cursor 扫描
+ * - QLING_GROK_SKILLS_ENABLED=0 关闭 .grok 扫描
+ * - QLING_AGENTS_SKILLS_ENABLED=0 关闭 .agents 扫描
+ *
+ * 支持 name="foo" 与 name="@scope/foo"。
+ */
 export function getSkillDirs(): string[] {
   const dirs: string[] = [];
   const seen = new Set<string>();
@@ -37,16 +50,60 @@ export function getSkillDirs(): string[] {
     seen.add(abs);
     dirs.push(abs);
   };
+  const envOn = (key: string, defaultOn = true): boolean => {
+    const raw = String(process.env[key] ?? "")
+      .trim()
+      .toLowerCase();
+    if (!raw) return defaultOn;
+    if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
+    if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return true;
+    return defaultOn;
+  };
 
-  // 1) 随包发布的 skills（全局 npm 安装仍可用）
-  add(join(getPackageRootForSkills(), "skills"));
+  const cwd = process.cwd();
+  const home = homedir();
+
+  // catalog / curate 采用「先出现优先」。顺序对标 Grok：
+  // Local (cwd) > User (home) > bundled（包内垫底，不抢项目同名 skill）
+  // 1) 当前工作区 local
+  add(resolve(cwd, "skills"));
+  add(resolve(cwd, ".qling", "skills"));
+  if (envOn("QLING_GROK_SKILLS_ENABLED")) {
+    add(resolve(cwd, ".grok", "skills"));
+    add(resolve(cwd, ".grok", "commands"));
+  }
+  if (envOn("QLING_AGENTS_SKILLS_ENABLED")) {
+    add(resolve(cwd, ".agents", "skills"));
+  }
+  if (envOn("QLING_CLAUDE_SKILLS_ENABLED")) {
+    add(resolve(cwd, ".claude", "skills"));
+    add(resolve(cwd, ".claude", "commands"));
+  }
+  if (envOn("QLING_CURSOR_SKILLS_ENABLED")) {
+    add(resolve(cwd, ".cursor", "skills"));
+  }
+
   // 2) 用户全局
-  add(join(homedir(), ".qling", "skills"));
-  // 3) 当前工作区
-  add(resolve(process.cwd(), "skills"));
-  add(resolve(process.cwd(), ".qling", "skills"));
-  // 4) 可选 Hermes 兼容路径（默认关闭：多数为他端 skill，轻灵无法完整执行）
-  //    需要时设 QLING_INCLUDE_HERMES_SKILLS=1
+  add(join(home, ".qling", "skills"));
+  if (envOn("QLING_GROK_SKILLS_ENABLED")) {
+    add(join(home, ".grok", "skills"));
+    add(join(home, ".grok", "commands"));
+  }
+  if (envOn("QLING_AGENTS_SKILLS_ENABLED")) {
+    add(join(home, ".agents", "skills"));
+  }
+  if (envOn("QLING_CLAUDE_SKILLS_ENABLED")) {
+    add(join(home, ".claude", "skills"));
+    add(join(home, ".claude", "commands"));
+  }
+  if (envOn("QLING_CURSOR_SKILLS_ENABLED")) {
+    add(join(home, ".cursor", "skills"));
+  }
+
+  // 3) 随包 bundled（无同名覆盖时仍可用）
+  add(join(getPackageRootForSkills(), "skills"));
+
+  // 4) 可选 Hermes 兼容路径（默认关闭）
   const includeHermes = String(process.env.QLING_INCLUDE_HERMES_SKILLS ?? "")
     .trim()
     .toLowerCase();

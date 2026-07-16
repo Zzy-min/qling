@@ -30,11 +30,22 @@ test("session picker panel lists items and footer", () => {
     80
   );
   const text = lines.join("\n");
-  assert.match(text, /会话切换/);
+  // G4 舰队标题（对标 Grok Agent Dashboard）
+  assert.match(text, /会话舰队|Session Dashboard/);
   assert.match(text, /工作台/);
   assert.match(text, /sess-aaa/);
   assert.match(text, /Enter 恢复/);
   assert.match(text, /▸/);
+  assert.match(text, /●/); // active 状态图标
+  assert.match(text, /当前/);
+});
+
+test("session fleet empty state guides first message", () => {
+  const lines = formatSessionPickerPanel([], 0, 80);
+  const text = lines.join("\n");
+  assert.match(text, /尚无会话/);
+  assert.match(text, /第一轮对话|开始/);
+  assert.match(text, /会话舰队|Session Dashboard/);
 });
 
 test("turn browse panel shows previews", () => {

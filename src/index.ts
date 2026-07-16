@@ -23,6 +23,7 @@ import {
   findSlashCompletion,
   formatSlashCommandPanel,
   formatGroupedSlashPanel,
+  listExecutableSlashCommandsForPicker,
 } from "./commands/index.js";
 import { buildHelpText, formatCliError, parseCliArgs } from "./cli/startup-contract.js";
 import { runBootstrap } from "./cli/bootstrap.js";
@@ -1313,6 +1314,7 @@ async function main() {
         findSlashCompletion,
         formatSlashCommandPanel,
         formatGroupedSlashPanel,
+        listExecutableSlashCommands: listExecutableSlashCommandsForPicker,
       },
     });
 

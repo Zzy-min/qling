@@ -12,7 +12,7 @@ test("hooks report summarizes default local hook pipeline", () => {
   assert.match(text, /本地 Hooks 状态/);
   assert.match(text, /Guard\s*:/);
   assert.match(text, /PreToolUse/);
-  assert.match(text, /permission=allow/);
+  assert.match(text, /permission=ask/);
   assert.match(text, /classifier=on/);
   assert.match(text, /PostToolUse/);
   assert.match(text, /PostToolUseFailure/);

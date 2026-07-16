@@ -283,13 +283,14 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     for (const ch of "draft prompt") ui.input.insertChar(ch);
     ui.input.moveLeft();
     ui.input.moveLeft();
+    ui.running = true;
 
     ui.handleCtrlL();
 
     assert.equal(ui.input.value, "draft prompt");
     assert.equal(ui.input.cursorPos, "draft prom".length);
     assert.deepEqual(submitted, []);
-    assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
+    assert.match(getOutput(), /\x1b\[2J\x1b\[3J\x1b\[H/);
     assert.match(getOutput(), /轻灵 Qling v/);
     assert.match(getOutput(), /Workspace:/);
     assert.match(getOutput(), /Model: test-model/);
@@ -305,6 +306,7 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.doesNotMatch(getOutput(), /model=test session=session-1/);
     assert.doesNotMatch(getOutput(), /\/model 切换模型/);
     assert.match(plain, /draft prompt/);
+    ui.running = false;
   });
 });
 
@@ -481,7 +483,7 @@ test("stream ui session picker opens via handler", async () => {
     ui.openSessionPicker();
     assert.equal(ui.isOverlayOpen(), true);
     const plain = stripAnsi(getOutput());
-    assert.match(plain, /会话切换/);
+    assert.match(plain, /会话舰队|会话/);
     assert.match(plain, /beta/);
     assert.match(plain, /alpha/);
     ui.stop();
@@ -539,9 +541,8 @@ test("stream ui shows slash completion hints while typing slash prefix", async (
     assert.deepEqual(submitted, []);
     const output = getOutput();
     const plain = stripAnsi(output);
-    assert.match(output, /\/skill/);
-    assert.match(output, /Tab 补全|Tab/);
-    assert.match(output, /skill|command|session|local/);
+    assert.match(output, /› \/sk/);
+    assert.match(plain, /工具默认 ask · Shift\+Tab 切模式/);
     assert.match(plain, /[╰└]/);
   });
 });
@@ -674,7 +675,7 @@ test("stream ui dispatches ctrl+l from raw stdin without submitting", async () =
 
       assert.equal(ui.input.value, "draft");
       assert.deepEqual(submitted, []);
-      assert.match(getOutput(), /\x1b\[2J\x1b\[H/);
+      assert.match(getOutput(), /\x1b\[2J\x1b\[3J\x1b\[H/);
 
       ui.running = false;
     });

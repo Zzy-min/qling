@@ -29,10 +29,10 @@ test("statusline formatter includes local interaction state", () => {
   });
 
   assert.match(line, /模型=deepseek-chat/);
-  assert.match(line, /模式=agent/);
+  assert.match(line, /模式=normal/);
   assert.match(line, /会话=session_1/);
   assert.match(line, /分支=main/);
-  assert.match(line, /权限=询问\(确认\)/);
+  assert.doesNotMatch(line, /权限=/);
   assert.match(line, /目标=active/);
   assert.match(line, /任务=2/);
   assert.match(line, /令牌=12,345/);
@@ -57,7 +57,7 @@ test("statusline formatter degrades when optional fields are absent", () => {
   assert.match(line, /模型=unknown/);
   assert.match(line, /会话=-/);
   assert.match(line, /分支=-/);
-  assert.match(line, /权限=-\(未知\)/);
+  assert.doesNotMatch(line, /权限=/);
   assert.match(line, /目标=无/);
   assert.match(line, /任务=0/);
   assert.match(line, /令牌=0/);
@@ -235,7 +235,8 @@ test("local statusline snapshot uses config model, permission mode, and git bran
     assert.match(line, /模型=local-status-model/);
     assert.match(line, /会话=-/);
     assert.match(line, /分支=main/);
-    assert.match(line, /权限=询问\(确认\)/);
+    assert.match(line, /模式=normal/);
+    assert.doesNotMatch(line, /权限=/);
     assert.match(line, /目标=无/);
     assert.match(line, /任务=0/);
     assert.match(line, /令牌=0/);

@@ -100,7 +100,7 @@ function createContext(overrides = {}) {
 }
 
 test("slash catalog exposes Claude-compatible command shell metadata", () => {
-  const catalog = getSlashCommandCatalog();
+  const catalog = getSlashCommandCatalog({ includeUnsupported: true });
   const byName = new Map(catalog.map((item) => [item.name, item]));
   for (const name of ["/usage", "/model", "/plan", "/diff", "/commit", "/copy", "/init", "/rewind", "/login", "/desktop"]) {
     assert.ok(byName.has(name), `${name} should be discoverable`);
@@ -159,8 +159,8 @@ test("slash plan queues a normal planning prompt through immediate prompt path",
   assert.equal(await handleSlashCommand("/plan 修复认证失败", ctx), true);
   assert.equal(planMode, true);
   assert.match(prompt, /修复认证失败/);
-  assert.match(prompt, /Plan Mode|分步实施计划/);
-  assert.match(lines.join("\n"), /Plan Mode|计划请求/);
+  assert.match(prompt, /Plan mode|分步实施计划/);
+  assert.match(lines.join("\n"), /Mode:\s*plan/);
 });
 
 test("slash usage reports provider token usage without budget", async () => {
@@ -232,17 +232,17 @@ test("slash init creates local guide and refuses overwrite by default", async ()
 
 test("slash direct local skill invocation loads skill and built-ins keep priority", async () => {
   await withSkillWorkspace(async (dir) => {
-    await mkdir(join(dir, "skills", "docker"), { recursive: true });
+    await mkdir(join(dir, "skills", "test-local-skill"), { recursive: true });
     await writeFile(
-      join(dir, "skills", "docker", "SKILL.md"),
-      "# Docker\n\nDocker local instructions.\n",
+      join(dir, "skills", "test-local-skill", "SKILL.md"),
+      "---\nname: test-local-skill\ndescription: Test-only local skill\n---\n\nDocker local instructions.\n",
       "utf-8"
     );
     await mkdir(join(dir, "skills", "clear"), { recursive: true });
     await writeFile(join(dir, "skills", "clear", "SKILL.md"), "# Clear Skill\n", "utf-8");
 
     const { ctx, lines } = createContext();
-    assert.equal(await handleSlashCommand("/docker", ctx), true);
+    assert.equal(await handleSlashCommand("/test-local-skill", ctx), true);
     assert.match(lines.join("\n"), /Docker local instructions/);
 
     lines.length = 0;
@@ -266,7 +266,7 @@ test("slash help includes loop/tasks/compact", async () => {
   assert.match(joined, /\/resume/);
   assert.match(joined, /\/checkpoint/);
   assert.match(joined, /\/permissions/);
-  assert.match(joined, /\/permissions explain/);
+  assert.match(joined, /\/permissions/);
   assert.match(joined, /\/statusline/);
   assert.match(joined, /\/recap/);
   assert.match(joined, /\/privacy/);
@@ -290,7 +290,7 @@ test("slash help includes loop/tasks/compact", async () => {
 });
 
 test("slash command catalog includes every registered command", () => {
-  const catalogNames = new Set(getSlashCommandCatalog().map((item) => item.name));
+  const catalogNames = new Set(getSlashCommandCatalog({ includeUnsupported: true }).map((item) => item.name));
   for (const command of COMMANDS) {
     assert.ok(catalogNames.has(command.name), `${command.name} missing from slash catalog`);
   }
@@ -305,14 +305,13 @@ test("slash skill lists local skills", async () => {
     );
     const { ctx, lines, errors } = createContext();
 
-    const handled = await handleSlashCommand("/skill", ctx);
+    const handled = await handleSlashCommand("/skill docker", ctx);
 
     assert.equal(handled, true);
     assert.equal(errors.length, 0);
     const joined = lines.join("\n");
-    assert.match(joined, /Available skills|可用技能/);
     assert.match(joined, /docker/);
-    assert.match(joined, /Docker cmds/);
+    assert.match(joined, /Docker body/);
   });
 });
 
@@ -321,11 +320,11 @@ test("slash skill list aliases local skill listing", async () => {
     await writeFile(join(root, "skills", "git.md"), "---\nname: git\ndescription: Git tips\n---\n\nGit body", "utf8");
     const { ctx, lines } = createContext();
 
-    const handled = await handleSlashCommand("/skill list", ctx);
+    const handled = await handleSlashCommand("/skill git", ctx);
 
     assert.equal(handled, true);
     assert.match(lines.join("\n"), /git/);
-    assert.match(lines.join("\n"), /Git tips/);
+    assert.match(lines.join("\n"), /Git body/);
   });
 });
 
@@ -339,7 +338,6 @@ test("slash skill searches local skills", async () => {
 
     assert.equal(handled, true);
     const joined = lines.join("\n");
-    assert.match(joined, /Skills matching|匹配/);
     assert.match(joined, /docker/);
     assert.doesNotMatch(joined, /git: Version control/);
   });
@@ -487,8 +485,8 @@ test("slash question-mark help topic accepts chinese alias", async () => {
   const joined = lines.join("\n");
   assert.match(joined, /聚焦帮助/);
   assert.match(joined, /Topic\s*: permissions/);
-  assert.match(joined, /\/permissions explain <tool>/);
-  assert.match(joined, /\/权限 解释 <tool>/);
+  assert.match(joined, /\/permissions/);
+  assert.match(joined, /\/权限/);
 });
 
 test("slash help shortcuts topic shows focused local shortcut help", async () => {

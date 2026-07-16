@@ -152,7 +152,7 @@ xai-acp-lib            Agent Client Protocol
 | ID | 交付 | 对标 |
 |----|------|------|
 | G5.1 | `qling run --json` / headless 事件流 | `grok -p` |
-| G5.2 | Skills 扫描 `.claude` / `.cursor` / `.agents` 兼容路径 | 08-skills |
+| G5.2 | Skills 扫描 `.claude` / `.cursor` / `.agents` 兼容路径 | 08-skills · **部分完成 2026-07-16**（路径+斜杠空格+参数） |
 | G5.3 | Hooks JSON 生命周期（Pre/PostToolUse, SessionStart） | 10-hooks |
 | G5.4 | 插件/技能安装源（自建 registry，不做 xAI marketplace 克隆） | 09-plugins |
 | G5.5 | （可选）ACP 适配器 | 编辑器嵌入 · 工作量大 |

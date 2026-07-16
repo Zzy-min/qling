@@ -37,17 +37,24 @@ export const skillCommand: SlashCommand = {
         }
         return false;
       }
+      // Grok 对齐：filterable 切换器内可键入（含空格）检索 skill
+      // 打开前清空输入区，避免残留 `/skill` 干扰过滤
+      if (typeof context.setInputDraft === "function") {
+        context.setInputDraft(query ? String(query) : "");
+      }
       return openOptionPickerOrFallback(
         context,
         {
           title: query ? `技能 · ${query}` : "技能切换 · Skills",
-          footerHint: `↑/↓ 选择 · Enter 加载 · Esc 取消 · 可用 ${usable.length} · 归档 ${archived.length}`,
+          footerHint: `键入检索(可空格) · ↑/↓ · Enter 加载 · Esc · 可用 ${usable.length} · 归档 ${archived.length}`,
+          filterable: true,
           items: usable.slice(0, 80).map((s) => ({
             id: s.name,
             label: s.name,
             description: (s.description || "").slice(0, 60),
           })),
           onPick: async (item) => {
+            if (!item.id) return;
             const result = await runSkill({ name: item.id });
             if (result.is_error) {
               context.writeError(result.output);

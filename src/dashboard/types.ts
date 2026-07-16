@@ -46,6 +46,8 @@ export interface DashboardSessionSummary {
   messageCount: number;
   sessionTokens: number;
   active: boolean;
+  /** G4.3 深链：在 TUI 恢复该会话的 CLI 命令 */
+  resumeCommand?: string;
 }
 
 export interface DashboardAgentLive {

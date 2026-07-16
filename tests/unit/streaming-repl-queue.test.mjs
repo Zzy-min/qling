@@ -76,6 +76,8 @@ function createUiRecorder() {
       stopped = true;
     },
     setStatusLineEnabled: () => {},
+    isOverlayOpen: () => false,
+    dismissOverlay: () => {},
   };
 }
 
@@ -420,7 +422,7 @@ test("streaming repl does not persist slash control commands to input history", 
       seen.push(input);
     };
 
-    await repl.handleUserInput("/sessions");
+    await repl.handleUserInput("/sessions list");
 
     assert.deepEqual(seen, []);
     assert.equal(await pathExists(join(stateDir, "input-history.json")), false);
@@ -449,7 +451,7 @@ test("streaming repl routes slash command output through ui instead of console",
     };
     repl.processPrompt = async () => {};
 
-    await repl.handleUserInput("/sessions");
+    await repl.handleUserInput("/sessions list");
 
     assert.deepEqual(consoleLines, []);
     assert.equal(ui.outputs.some((line) => /已保存会话|\(无\)/.test(line)), true);
@@ -476,7 +478,7 @@ test("streaming repl restores exactly one input frame after skill command comple
       throw new Error("skill listing must not invoke the model");
     };
 
-    await repl.handleUserInput("/skill list");
+    await repl.handleUserInput("/skill lifecycle-build");
 
     assert.equal(ui.prompts.length, 1);
     assert.equal(ui.outputs.length > 0, true);
@@ -611,7 +613,7 @@ test("streaming repl does not render slash commands as user prompt blocks", asyn
       throw new Error("slash command should not run as a prompt");
     };
 
-    await repl.handleUserInput("/sessions");
+    await repl.handleUserInput("/sessions list");
 
     assert.deepEqual(ui.userInputs, []);
     assert.equal(ui.outputs.some((line) => /已保存会话|\(无\)/.test(line)), true);

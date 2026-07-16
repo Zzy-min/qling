@@ -305,6 +305,8 @@ export class DashboardServer {
         messageCount: s.messageCount,
         sessionTokens: s.sessionTokens,
         active: s.sessionId === currentId,
+        // G4.3 双向深链：Web → TUI
+        resumeCommand: `qling --resume ${s.sessionId}`,
       }));
     } catch {
       sessions = [
@@ -316,6 +318,7 @@ export class DashboardServer {
           messageCount: 0,
           sessionTokens: 0,
           active: true,
+          resumeCommand: `qling --resume ${this.getSessionId()}`,
         },
       ];
     }

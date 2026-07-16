@@ -50,7 +50,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     <section class="session-band" aria-labelledby="session-heading">
       <div class="section-heading">
         <div><p class="eyebrow">SESSIONS</p><h2 id="session-heading">最近会话</h2></div>
-        <span id="session-hint">只读 · TUI 用 /resume &lt;id&gt;</span>
+        <span id="session-hint">只读 · 深链 qling --resume &lt;id&gt; · TUI 舰队 /dashboard</span>
       </div>
       <div class="session-rail" id="session-list" aria-live="polite">
         <span class="muted">等待会话…</span>
@@ -147,6 +147,14 @@ export const DASHBOARD_CSS = `
 .session-chip.active { border-color: var(--line-strong); box-shadow: var(--glow-shadow); }
 .session-chip .sid { color: var(--ink); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session-chip .meta { color: var(--dim); margin-top: .2rem; }
+.session-chip .deep-link {
+  color: var(--accent, var(--primary, #3d7a5a));
+  margin-top: .15rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .78em;
+  user-select: all;
+  word-break: break-all;
+}
 * { box-sizing: border-box; }
 body {
   margin: 0;

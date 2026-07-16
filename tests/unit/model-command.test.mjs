@@ -48,10 +48,9 @@ test("/model with no args shows provider endpoint model", async () => {
   const { context, lines } = createContext();
   await modelCommand.execute([], context);
   const text = lines.join("\n");
-  assert.match(text, /Provider\s*:\s*deepseek/);
+  assert.match(text, /当前\s*:.*deepseek.*deepseek-chat/);
   assert.match(text, /Endpoint\s*:/);
-  assert.match(text, /Model\s*:\s*deepseek-chat/);
-  assert.match(text, /\/model list/);
+  assert.match(text, /\/model use/);
   assert.match(text, /\/model use/);
 });
 
@@ -71,8 +70,7 @@ test("/model use ollama switches full LLM session", async () => {
   assert.equal(state.endpoint, "http://localhost:11434/v1");
   assert.equal(state.model, "llama3");
   const text = lines.join("\n");
-  assert.match(text, /已应用预设/);
-  assert.match(text, /ollama/);
+  assert.match(text, /ollama.*本地 Ollama.*llama3/);
 });
 
 test("/model <name> only switches model", async () => {

@@ -160,7 +160,7 @@ test("patch: outside workspace path validation rejects", async () => {
     });
 
     assert.equal(result.is_error, true);
-    assert.match(result.error?.message ?? result.output, /outside (allowed roots|write sandbox)/i);
+    assert.match(result.error?.message ?? result.output, /outside (allowed roots|write sandbox|sandbox profile)/i);
   });
 });
 

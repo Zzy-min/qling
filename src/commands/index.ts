@@ -58,8 +58,13 @@ import { rewindCommand } from "./rewind.js";
 import { forkCommand } from "./fork.js";
 import { getSkillDirs, runSkill } from "../tools/skill.js";
 import { listSkills } from "../skills/registry.js";
-import { existsSync, readdirSync, type Dirent } from "fs";
-import { basename } from "path";
+import { parseFrontmatter } from "../skills/registry.js";
+import {
+  isNonExecutableSkill,
+  shouldSkipSkillDirName,
+} from "../skills/skill-catalog.js";
+import { existsSync, readdirSync, readFileSync, type Dirent } from "fs";
+import { basename, join } from "path";
 
 export const COMMANDS: SlashCommand[] = [
   helpCommand,
@@ -193,7 +198,14 @@ function scoreSlashCandidate(input: string, candidate: string): number | null {
   return 45 - distance * 8 - Math.abs(normalizedCandidate.length - normalizedInput.length) + endingBoost;
 }
 
-export function getSlashCommandCatalog(): SlashCommandCatalogItem[] {
+/**
+ * 斜杠命令目录（命令面板 / 补全 / 切换器共用）。
+ * 默认排除 Claude 不可用占位命令与归档 skill。
+ */
+export function getSlashCommandCatalog(options?: {
+  includeUnsupported?: boolean;
+}): SlashCommandCatalogItem[] {
+  const includeUnsupported = options?.includeUnsupported === true;
   const commands = COMMANDS.map((command) => ({
     name: command.name,
     aliases: [...(command.aliases ?? [])],
@@ -204,7 +216,9 @@ export function getSlashCommandCatalog(): SlashCommandCatalogItem[] {
     availability: command.availability ?? "local",
     examples: [...(command.examples ?? [])],
     claudeCompatibleName: command.claudeCompatibleName,
-  }));
+  })).filter(
+    (item) => includeUnsupported || item.availability !== "unsupported"
+  );
   return [...commands, ...getLocalSkillCatalogItems(commands)];
 }
 
@@ -212,9 +226,17 @@ function getSlashCommandNames(item: SlashCommandCatalogItem): string[] {
   return [item.name, ...item.aliases];
 }
 
+/**
+ * 将本地 skill 暴露为 /name 快捷入口。
+ * - 跳过 archive / templates / examples
+ * - 跳过占位/模板 skill
+ * - 使用 frontmatter 真实描述（不再统一「本地 skill 直接调用」）
+ */
 function getLocalSkillCatalogItems(existing: SlashCommandCatalogItem[]): SlashCommandCatalogItem[] {
   const builtinNames = new Set(existing.flatMap(getSlashCommandNames).map(normalizeSlashName));
   const items: SlashCommandCatalogItem[] = [];
+  const seen = new Set<string>();
+
   for (const dir of getSkillDirs()) {
     if (!existsSync(dir)) continue;
     let entries: Dirent[];
@@ -225,26 +247,67 @@ function getLocalSkillCatalogItems(existing: SlashCommandCatalogItem[]): SlashCo
     }
 
     for (const entry of entries) {
-      const skillName = entry.isDirectory()
-        ? entry.name
-        : entry.isFile() && entry.name.toLowerCase().endsWith(".md")
-          ? basename(entry.name, ".md")
-          : "";
-      const normalized = normalizeSlashName(skillName);
-      if (!normalized || normalized === "skill" || normalized === "index") continue;
-      if (builtinNames.has(normalized)) continue;
-      const slashName = `/${skillName}`;
-      if (items.some((item) => item.name === slashName)) continue;
-      items.push({
-        name: slashName,
-        aliases: [],
-        description: "本地 skill 直接调用",
-        usage: slashName,
-        category: "skill",
-        argumentHint: "",
-        availability: "local",
-        examples: [slashName, `/skill ${skillName}`],
-      });
+      if (entry.isDirectory()) {
+        if (shouldSkipSkillDirName(entry.name)) continue;
+        const skillMd = join(dir, entry.name, "SKILL.md");
+        const indexMd = join(dir, entry.name, "index.md");
+        const filePath = existsSync(skillMd)
+          ? skillMd
+          : existsSync(indexMd)
+            ? indexMd
+            : "";
+        if (!filePath) continue;
+        let meta;
+        try {
+          meta = parseFrontmatter(readFileSync(filePath, "utf8"), filePath);
+        } catch {
+          continue;
+        }
+        if (isNonExecutableSkill(meta)) continue;
+        const normalized = normalizeSlashName(meta.name || entry.name);
+        if (!normalized || builtinNames.has(normalized) || seen.has(normalized)) continue;
+        seen.add(normalized);
+        const slashName = `/${meta.name || entry.name}`;
+        items.push({
+          name: slashName,
+          aliases: [],
+          description: (meta.description || `技能 ${meta.name}`).slice(0, 80),
+          usage: slashName,
+          category: "skill",
+          argumentHint: "",
+          availability: "local",
+          examples: [slashName, `/skill ${meta.name || entry.name}`],
+        });
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        const skillName = basename(entry.name, ".md");
+        const normalized = normalizeSlashName(skillName);
+        if (!normalized || normalized === "skill" || normalized === "index") continue;
+        if (shouldSkipSkillDirName(normalized)) continue;
+        if (builtinNames.has(normalized) || seen.has(normalized)) continue;
+        const filePath = join(dir, entry.name);
+        let meta;
+        try {
+          meta = parseFrontmatter(readFileSync(filePath, "utf8"), filePath);
+        } catch {
+          continue;
+        }
+        if (isNonExecutableSkill(meta)) continue;
+        seen.add(normalized);
+        const slashName = `/${meta.name || skillName}`;
+        items.push({
+          name: slashName,
+          aliases: [],
+          description: (meta.description || `技能 ${meta.name || skillName}`).slice(0, 80),
+          usage: slashName,
+          category: "skill",
+          argumentHint: "",
+          availability: "local",
+          examples: [slashName, `/skill ${meta.name || skillName}`],
+        });
+      }
     }
   }
   return items;
@@ -357,7 +420,8 @@ function getChineseCategory(cat: string, t: any): string {
 
 export function formatGroupedSlashPanel(width = 80): string[] {
   const t = getLocalizedText();
-  const catalog = getSlashCommandCatalog();
+  // 仅可执行命令；不含 Claude 占位、不含归档 skill
+  const catalog = getSlashCommandCatalog({ includeUnsupported: false });
   const safeWidth = Math.max(30, Math.floor(Number(width) || 80));
   const groups: Record<string, SlashCommandCatalogItem[]> = {};
 
@@ -369,7 +433,9 @@ export function formatGroupedSlashPanel(width = 80): string[] {
 
   const order = ["local", "core", "session", "git", "memory", "cloud", "skill"];
   const lines: string[] = [];
-  const panelHint = t.tui?.hints?.panel || "提示    : ↑/↓ 选择 · Tab 补全 · Enter 执行当前输入";
+  const panelHint =
+    t.tui?.hints?.panel ||
+    "提示    : 继续输入过滤 · Enter 打开命令切换器 · Tab 补全";
   const merged: Record<string, SlashCommandCatalogItem[]> = {};
 
   for (const key of order) {
@@ -380,21 +446,42 @@ export function formatGroupedSlashPanel(width = 80): string[] {
     merged[cn].push(...items);
   }
 
-  lines.push(truncatePanelLine("轻灵命令面板 (按 / + Tab 过滤)", safeWidth));
+  lines.push(truncatePanelLine("轻灵命令 (可执行 · Enter 打开切换器)", safeWidth));
   lines.push(truncatePanelLine("─".repeat(Math.min(safeWidth, 60)), safeWidth));
 
   for (const [cn, items] of Object.entries(merged)) {
-    lines.push(truncatePanelLine(`【${cn}】`, safeWidth));
-    for (const item of items.slice(0, 5)) {
+    lines.push(truncatePanelLine(`【${cn}】 ${items.length}`, safeWidth));
+    for (const item of items.slice(0, 4)) {
       const args = item.argumentHint ? ` ${item.argumentHint}` : "";
-      const desc = item.description.length > 30 ? item.description.slice(0, 28) + "…" : item.description;
+      const desc =
+        item.description.length > 28
+          ? item.description.slice(0, 26) + "…"
+          : item.description;
       lines.push(truncatePanelLine(`  ${item.name}${args}  ${desc}`, safeWidth));
+    }
+    if (items.length > 4) {
+      lines.push(truncatePanelLine(`  … 另 ${items.length - 4} 条 · Enter 切换器全览`, safeWidth));
     }
   }
 
   lines.push(truncatePanelLine("─".repeat(Math.min(safeWidth, 60)), safeWidth));
   lines.push(truncatePanelLine(panelHint, safeWidth));
   return lines;
+}
+
+/** 供 TUI 命令切换器：扁平可执行命令列表 */
+export function listExecutableSlashCommandsForPicker(): Array<{
+  id: string;
+  label: string;
+  description: string;
+  argumentHint: string;
+}> {
+  return getSlashCommandCatalog({ includeUnsupported: false }).map((item) => ({
+    id: item.name,
+    label: item.name,
+    description: item.description,
+    argumentHint: item.argumentHint || "",
+  }));
 }
 
 function findExactSlashCommandForArgumentHint(input: string): SlashCommandCatalogItem | null {
@@ -453,7 +540,7 @@ export async function handleSlashCommand(
     return true;
   }
 
-  if (await tryRunDirectSkill(cmdName, context)) {
+  if (await tryRunDirectSkill(cmdName, args, context)) {
     return true;
   }
 
@@ -466,17 +553,33 @@ export async function handleSlashCommand(
   return true;
 }
 
-async function tryRunDirectSkill(cmdName: string, context: SlashCommandContext): Promise<boolean> {
+/**
+ * Grok 对齐：`/skill-name args…` 直接加载 skill 正文（与 slash 菜单项一致）。
+ * args 以注释块附在输出前，便于模型按参数执行（对标 Grok /commit fix the build）。
+ */
+async function tryRunDirectSkill(
+  cmdName: string,
+  args: string[],
+  context: SlashCommandContext
+): Promise<boolean> {
   const name = normalizeSlashName(cmdName);
   if (!/^[a-z0-9_@/-]+$/i.test(name)) return false;
+  // 归档目录名禁止当 skill 执行
+  if (shouldSkipSkillDirName(name)) return false;
   const skills = await listSkills(getSkillDirs());
-  if (!skills.some((skill) => normalizeSlashName(skill.name) === name)) return false;
+  const hit = skills.find((skill) => normalizeSlashName(skill.name) === name);
+  if (!hit || isNonExecutableSkill(hit)) return false;
 
   const result = await runSkill({ name });
   if (result.is_error) {
     context.writeError(result.output);
-  } else {
-    context.writeLine(result.output);
+    return true;
   }
+  const argText = args.join(" ").trim();
+  if (argText) {
+    context.writeLine(`📎 skill 参数: ${argText}`);
+    context.writeLine("");
+  }
+  context.writeLine(result.output);
   return true;
 }
