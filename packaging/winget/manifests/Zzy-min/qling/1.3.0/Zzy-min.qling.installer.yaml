@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+PackageIdentifier: Zzy-min.qling
+PackageVersion: 1.3.0
+InstallerLocale: en-US
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.17763.0
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: qling-win-x64\qling.exe
+    PortableCommandAlias: qling
+Commands:
+  - qling
+UpgradeBehavior: uninstallPrevious
+ReleaseDate: 2026-07-17
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.3.0/qling-win-x64.zip
+    InstallerSha256: 0faa5bb24805cf754fb6e29a72236dad29d6830386ba0d88a1c9348fe829e4d0
+ManifestType: installer
+ManifestVersion: 1.12.0

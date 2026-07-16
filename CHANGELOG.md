@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v1.3.0 (2026-07-17)
+
+Grok Build 对标能力大版本：双表面 Dashboard、Plan/后台/权限/沙箱、斜杠 Skills、headless JSON、ACP、隐私安全 OTEL，以及 Linux CI 跨平台路径修复。
+
+### Highlights
+
+- **TUI 会话舰队**：`/dashboard` · `/sessions` · `Ctrl+\`；状态点与深链 `qling --resume <id>`
+- **Web Mission Control**：`qling dashboard start` · `/dashboard web`
+- **斜杠体验**：可过滤命令菜单；空格/粘贴/←→；带参数提交（如 `/dashboard web`）
+- **Plan · 后台 · 权限 · 沙箱 · 主题**：G3 产品化面
+- **Skills**：`.qling` / `.grok` / `.agents` / `.claude` / `.cursor` 兼容扫描
+- **Headless**：`qling run --json` 事件流
+- **ACP v1**：`qling acp` stdio 适配器
+- **OTEL**：默认关闭的隐私安全 metadata 导出
+- **CI**：跨平台路径消毒；Linux unit+smoke 与 Windows unit 全绿
+
+### Details
+
+- G4 双表面 Dashboard 与会话舰队行模型
+- G5.1 headless JSON / G5.2 skill 路径与斜杠空格
+- ACP session/mode、json hooks、local plugin 安装
+- Anchored edit eval 门禁脚本
+- `sanitizeWorkspaceLabel` + plan 路径分隔符规范化（Linux CI）
+
 ## v1.2.2 (2026-07-15)
 
 - Fix CRLF skill frontmatter parsing on Windows CI.

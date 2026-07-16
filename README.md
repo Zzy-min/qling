@@ -2,7 +2,7 @@
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#环境要求)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.2-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)](CHANGELOG.md)
 
 [English](README.en.md) · [安装指南](docs/install.md) · [CHANGELOG](CHANGELOG.md)
 
@@ -10,7 +10,7 @@
 
 > 一句话：轻灵让 Agent 像一个本地工作台，而不是一个黑盒聊天窗口。
 
-> 想试用或参与改进？从 [v1.2.2 Release](https://github.com/Zzy-min/qling/releases/tag/v1.2.2) 或 npm 开始；真实工作流反馈、复现步骤和改进建议都欢迎提交到 [Issues](https://github.com/Zzy-min/qling/issues)。
+> 想试用或参与改进？从 [v1.3.0 Release](https://github.com/Zzy-min/qling/releases/tag/v1.3.0) 或 npm 开始；真实工作流反馈、复现步骤和改进建议都欢迎提交到 [Issues](https://github.com/Zzy-min/qling/issues)。
 
 ## 为什么是轻灵
 
@@ -65,7 +65,7 @@ qling
 # 或从 GitHub 直接全局安装
 npm install -g github:Zzy-min/qling
 
-# npm 官方包（已发布 1.2.2；作用域名，CLI 仍是 qling）
+# npm 官方包（已发布 1.3.0；作用域名，CLI 仍是 qling）
 # 若默认 registry 是国内镜像，请显式指定官方源
 npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/
 ```
@@ -409,7 +409,7 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 
 ## 版本与变更
 
-- 当前版本：`1.2.2`
+- 当前版本：`1.3.0`
 
 - 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
 - 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)

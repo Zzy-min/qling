@@ -1,5 +1,5 @@
 {
-    "version": "1.2.2",
+    "version": "1.3.0",
     "description": "Local-first Chinese AI Agent CLI workbench (Qling / 轻灵).",
     "homepage": "https://github.com/Zzy-min/qling",
     "license": "MIT",
@@ -10,8 +10,8 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/Zzy-min/qling/releases/download/v1.2.2/qling-win-x64.zip",
-            "hash": "4447130fad0a1e51cf23dc3da707ed23bb1f3087c6338ef4e029ffcd8dc89f0f",
+            "url": "https://github.com/Zzy-min/qling/releases/download/v1.3.0/qling-win-x64.zip",
+            "hash": "0faa5bb24805cf754fb6e29a72236dad29d6830386ba0d88a1c9348fe829e4d0",
             "extract_dir": "qling-win-x64"
         }
     },
