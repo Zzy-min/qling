@@ -59,7 +59,7 @@ function createUnavailableCommand(
 export const usageCommand: SlashCommand = {
   name: "/usage",
   aliases: ["/cost", "/stats"],
-  description: "查看 provider 官方 token usage（无预算）",
+  description: "查看 provider usage、成本完整性与压缩次数",
   usage: "/usage",
   category: "session",
   availability: "local",
@@ -89,8 +89,11 @@ export const usageCommand: SlashCommand = {
     context.writeLine(`Input     : ${promptTokens.toLocaleString()}`);
     context.writeLine(`Output    : ${completionTokens.toLocaleString()}`);
     context.writeLine(`Source    : ${stats.tokenSource ?? "unknown"}`);
+    context.writeLine(
+      `Cost      : ${stats.costUsd && !stats.costIsPartial && !stats.usageIsIncomplete ? `$${stats.costUsd} (complete)` : "omitted (partial/incomplete)"}`
+    );
     context.writeLine(`Compacts  : ${Number(stats.compactions ?? 0)}`);
-    context.writeLine("边界      : 仅累加模型 API 返回的 usage；无本地字符估算、无 token 预算。");
+    context.writeLine("边界      : token 仅采用 provider usage；价格或子代理 usage 缺失时不展示精确总成本。");
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },
@@ -652,6 +655,5 @@ export const unavailableClaudeCommands: SlashCommand[] = [
   ),
   createUnavailableCommand("/branch", "Claude 会话分支", "/fork 分叉当前会话，或 /checkpoint 与 /resume", [], "[name]"),
   createUnavailableCommand("/remote-control", "Claude remote control", "/sessions 与 /resume 使用本地会话", ["/rc"]),
-  createUnavailableCommand("/plugin", "Claude 插件管理", "/mcp 查看轻灵本地 MCP", [], "[subcommand]"),
   createUnavailableCommand("/tui", "Claude renderer 切换", "/statusline 查看轻灵 TUI 状态线", [], "[default|fullscreen]"),
 ];

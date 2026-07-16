@@ -30,11 +30,12 @@ export function isToolOnlyAssistantText(text: string): boolean {
  * 找不到则返回空串（调用方回退到 sessionId/name）。
  */
 export function deriveSessionTitle(
-  messages: Array<{ role?: string; content?: unknown }>,
+  messages: Array<{ role?: string; content?: unknown; synthetic_reason?: string }>,
   maxLen = 40
 ): string {
   for (const message of messages) {
     if (message?.role !== "user") continue;
+    if (message.synthetic_reason) continue;
     const raw =
       typeof message.content === "string"
         ? message.content

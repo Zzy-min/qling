@@ -96,6 +96,7 @@
     "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.2.1",
     "axios": "^1.7.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.0",

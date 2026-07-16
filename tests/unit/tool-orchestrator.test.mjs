@@ -52,6 +52,8 @@ test("prepareToolCalls enforces per-signature repeat limit", () => {
   assert.equal(prepared.length, 2);
   assert.equal(prepared[0].immediateResult, undefined);
   assert.equal(prepared[1].immediateResult?.error?.code, "TOOL_REPEAT_LIMIT_EXCEEDED");
+  assert.equal(prepared[1].loopDetected?.count, 2);
+  assert.equal(prepared[1].loopDetected?.limit, 1);
 });
 
 test("prepareToolCalls marks invalid arguments immediately", () => {

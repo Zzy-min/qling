@@ -103,8 +103,12 @@ test("g1 turn browse reecho and dismiss returns prompt", async () => {
       assert.equal(ui.getOverlayKind(), "turns");
       assert.equal(ui.getFocus(), "scrollback");
       let plain = stripAnsi(getOutput());
-      assert.match(plain, /turn-one-analyze-repo/);
       assert.match(plain, /turn-two-fix-tui-focus/);
+
+      clear();
+      ui.dispatchKey("\x1b[A");
+      plain = stripAnsi(getOutput());
+      assert.match(plain, /turn-one-analyze-repo/);
 
       clear();
       ui.confirmOverlay();
@@ -115,6 +119,45 @@ test("g1 turn browse reecho and dismiss returns prompt", async () => {
 
       ui.openTurnBrowser(0);
       ui.dispatchKey(" ");
+      assert.equal(ui.isOverlayOpen(), false);
+      assert.equal(ui.getFocus(), "prompt");
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+test("g1 managed viewport renders actual assistant and tool evidence with paging", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = createUi();
+    ui.start();
+    try {
+      ui.appendUserInput("inspect-current-repo");
+      ui.appendThinking("assistant-found-main-branch");
+      ui.appendToolSuccess(
+        "git",
+        "git status --short",
+        Array.from({ length: 60 }, (_, i) => `evidence-line-${i + 1}`).join("\n"),
+        8
+      );
+      clear();
+
+      ui.openTurnBrowser(0);
+      assert.equal(ui.getOverlayKind(), "turns");
+      const tail = ui.getViewportSnapshot(60, 6);
+      assert.ok(tail.pageCount > 1);
+      let plain = stripAnsi(getOutput());
+      assert.match(plain, /Scrollback/);
+      assert.match(plain, /evidence-line-60/);
+
+      clear();
+      ui.dispatchKey("\x1b[5~");
+      const previous = ui.getViewportSnapshot(60, 6);
+      assert.ok(previous.lineOffset < tail.lineOffset);
+      plain = stripAnsi(getOutput());
+      assert.match(plain, /页 \d+\/\d+/);
+
+      ui.dispatchKey("i");
       assert.equal(ui.isOverlayOpen(), false);
       assert.equal(ui.getFocus(), "prompt");
     } finally {

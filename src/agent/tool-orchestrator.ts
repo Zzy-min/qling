@@ -27,6 +27,7 @@ import type {
   ToolDefinition,
   ToolResult,
 } from "../types.js";
+import type { UsageLedger, UsageLedgerSnapshot } from "../usage-ledger.js";
 
 export type ParseToolArgsResult =
   | { ok: true; value: Record<string, unknown> }
@@ -35,6 +36,11 @@ export type ParseToolArgsResult =
 export interface PreparedToolCall {
   call: ToolCall;
   immediateResult?: ToolResult;
+  loopDetected?: {
+    signature: string;
+    count: number;
+    limit: number;
+  };
 }
 
 export function repairToolArguments(source: string, attempt: number): string {
@@ -169,6 +175,7 @@ export function prepareToolCalls(
     if (repeatCount > toolRepeatLimit) {
       prepared.push({
         call,
+        loopDetected: { signature, count: repeatCount, limit: toolRepeatLimit },
         immediateResult: {
           tool_call_id: tc.id,
           output:
@@ -205,6 +212,7 @@ export interface ToolOrchestratorDeps {
   executionEventBus: ExecutionEventBus;
   emit: (event: string, ...args: unknown[]) => void;
   reflectiveThink: (tc: ToolCall) => Promise<{ decision: ReflectionDecision; reason: string }>;
+  usageLedger?: UsageLedger;
 }
 
 export interface ExecuteToolsContext {
@@ -352,6 +360,21 @@ export async function executePreparedTools(
     }
 
     deps.knowledgeAdapter.onToolResult(result, tc.name);
+    const usageSnapshot = result.meta?.usageSnapshot as UsageLedgerSnapshot | undefined;
+    if (usageSnapshot) deps.usageLedger?.merge(usageSnapshot);
+    const backgroundTaskId = result.meta?.backgroundTaskId;
+    if (typeof backgroundTaskId === "string") {
+      deps.executionEventBus.emit({
+        runId,
+        attemptId,
+        toolCallId: tc.id,
+        tool: tc.name,
+        type: "subtask_backgrounded",
+        status: "running",
+        stage: "subtask",
+        recoveryAction: backgroundTaskId,
+      });
+    }
     deps.executionEventBus.completeTool({
       runId,
       attemptId,

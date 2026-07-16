@@ -31,6 +31,8 @@ export interface DiscoveryManifest {
   };
   /** 签名摘要 (安全校验) */
   signature?: string;
+  /** Trusted key id used to verify an Ed25519 signature. */
+  publicKeyId?: string;
 }
 
 /**

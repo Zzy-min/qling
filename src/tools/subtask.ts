@@ -29,6 +29,8 @@ import {
   isSubtaskParallelEnabled,
   parseParallelTasks,
 } from "../agent/subtask-parallel.js";
+import { loadRoleCatalog } from "../agents/role-loader.js";
+import { UsageLedger } from "../usage-ledger.js";
 
 const SUBTASK_TOOL_POOL = [
   bashTool,
@@ -152,6 +154,13 @@ export async function runSubtask(args: {
 }): Promise<ToolResult> {
   const parallelTasks = parseParallelTasks(args.tasks);
   const singleTask = String(args.task ?? "").trim();
+  const rootsForRoles = getRuntimeRootsFromEnv();
+  const roleCatalog = await loadRoleCatalog({
+    workspaceDir: rootsForRoles.workspaceDir ?? undefined,
+    stateDir: rootsForRoles.fileStateDir,
+  });
+  const requestedRole = String(args.role ?? (parallelTasks.length > 0 ? "explore" : "implement")).trim().toLowerCase();
+  const loadedRole = roleCatalog.get(requestedRole);
 
   if (parallelTasks.length === 0 && !singleTask) {
     return toolError(
@@ -160,7 +169,7 @@ export async function runSubtask(args: {
     );
   }
 
-  if (args.role !== undefined && args.role !== "" && !isKnownSubAgentRole(args.role)) {
+  if (args.role !== undefined && args.role !== "" && !loadedRole && !isKnownSubAgentRole(args.role)) {
     return toolError(
       "SUBTASK_INVALID_ROLE",
       `unknown role "${args.role}"; use explore | implement | review`
@@ -186,7 +195,7 @@ export async function runSubtask(args: {
           ? parallelTasks
           : [singleTask];
 
-    const roleHint = args.role !== undefined && args.role !== "" ? args.role : "explore";
+    const roleHint = loadedRole?.baseRole ?? (args.role !== undefined && args.role !== "" ? args.role : "explore");
     const gate = gateParallelExplore({
       tasks,
       role: roleHint,
@@ -219,13 +228,26 @@ export async function runSubtask(args: {
       );
       const report = formatParallelExploreReport(settled);
       const anyFail = settled.some((s) => !s.result.success);
+      const usageLedger = new UsageLedger();
+      for (const item of settled) {
+        if (item.result.usage) usageLedger.merge(item.result.usage);
+        else usageLedger.markIncomplete("subagent_usage_missing");
+        if (item.result.usageIsIncomplete) usageLedger.markIncomplete("subagent_usage_incomplete");
+      }
+      const usageSnapshot = usageLedger.snapshot();
       if (anyFail) {
-        return toolError("SUBTASK_PARALLEL_PARTIAL", report, {
+        return {
+          ...toolError("SUBTASK_PARALLEL_PARTIAL", report, {
           retriable: false,
           category: "runtime",
-        });
+          }),
+          meta: { usageSnapshot, usageIsIncomplete: usageSnapshot.usageIsIncomplete },
+        };
       }
-      return toolSuccess(report);
+      return {
+        ...toolSuccess(report),
+        meta: { usageSnapshot, usageIsIncomplete: usageSnapshot.usageIsIncomplete },
+      };
     } catch (err) {
       return toolError(
         "SUBTASK_PARALLEL_FAILED",
@@ -236,7 +258,7 @@ export async function runSubtask(args: {
   }
 
   // --- 单任务路径 ---
-  const role = normalizeSubAgentRole(args.role);
+  const role = loadedRole?.baseRole ?? normalizeSubAgentRole(args.role);
   const { apiKey, tools, parent } = buildRunnerConfig(role, maxIterations, timeoutMs);
   if (!apiKey) {
     return toolError("SUBTASK_MISSING_API_KEY", "missing API key for subtask agent");
@@ -247,7 +269,7 @@ export async function runSubtask(args: {
   try {
     const result = await runner.run({
       task: singleTask,
-      parentContext: args.context,
+      parentContext: [loadedRole?.prompt, args.context].filter(Boolean).join("\n\n") || undefined,
       maxIterations,
       depth: 1,
       timeoutMs,
@@ -260,7 +282,14 @@ export async function runSubtask(args: {
         category: "runtime",
       });
     }
-    return toolSuccess(result.contractText || result.output);
+    return {
+      ...toolSuccess(result.contractText || result.output),
+      meta: {
+        usageSnapshot: result.usage,
+        usageIsIncomplete: result.usageIsIncomplete,
+        ...(result.backgroundTaskId ? { backgroundTaskId: result.backgroundTaskId } : {}),
+      },
+    };
   } catch (err) {
     return toolError("SUBTASK_RUN_FAILED", err instanceof Error ? err.message : String(err), {
       retriable: false,

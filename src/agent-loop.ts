@@ -15,6 +15,8 @@ import { WriteAheadLog } from "./memory/wal.js";
 import { runAutoDream } from "./memory/lifecycle.js";
 import { MCPRegistry } from "./mcp/registry.js";
 import { mcpToolsToNativeDefinitions } from "./mcp/bridge.js";
+import { MCP_CATALOG_TOOLS } from "./tools/mcp-catalog.js";
+import { ANCHORED_EDIT_TOOLS } from "./tools/anchored-edit.js";
 import { ApprovalGate } from "./guard/approval.js";
 import { MetricsCollector } from "./metrics/collector.js";
 import { AgentTelemetry } from "./metrics/agent-telemetry.js";
@@ -61,6 +63,10 @@ import { ExecutionEventBus } from "./execution/event-bus.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
 import type { ExecutionEvent, RecoveryState } from "./execution/types.js";
+import { UsageLedger } from "./usage-ledger.js";
+import type { UsageLedgerSnapshot } from "./usage-ledger.js";
+import { installJsonHooks, type JsonHookRunner } from "./hooks/json-hooks.js";
+import { loadRoleCatalog } from "./agents/role-loader.js";
 import {
   formatRecoveryInstruction,
   formatRecoveryPause,
@@ -73,6 +79,7 @@ import {
 } from "./execution/verification-loop.js";
 import {
   assembleSystemPrompt,
+  buildPromptInspectSnapshot,
   reflectiveThink,
 } from "./agent/system-prompt.js";
 import {
@@ -174,6 +181,7 @@ export class AgentLoop extends AgentEventEmitter {
   private readonly recoveryController = new RecoveryController();
   private runTraceStore: RunTraceStore;
   private activeRun: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null = null;
+  private runAbortController: AbortController | null = null;
 
   // --- v0.3 Getters (Management) ---
   getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
@@ -221,7 +229,11 @@ export class AgentLoop extends AgentEventEmitter {
     completionTokens: number;
     tokenSource: TokenUsageSource;
     compactions: number;
+    costUsd?: string;
+    costIsPartial: boolean;
+    usageIsIncomplete: boolean;
   } {
+    const usage = this.usageLedger.snapshot();
     return {
       sessionId: this.sessionId,
       turnCount: this.turnCount,
@@ -230,7 +242,13 @@ export class AgentLoop extends AgentEventEmitter {
       completionTokens: this.sessionCompletionTokens,
       tokenSource: this.tokenUsageSource,
       compactions: this.compactionCount,
+      ...(usage.costUsd ? { costUsd: usage.costUsd } : {}),
+      costIsPartial: usage.costIsPartial,
+      usageIsIncomplete: usage.usageIsIncomplete,
     };
+  }
+  getUsageSnapshot(): UsageLedgerSnapshot {
+    return this.usageLedger.snapshot();
   }
   getSessionSummary(): SavedSessionSummary {
     return {
@@ -262,6 +280,10 @@ export class AgentLoop extends AgentEventEmitter {
   private sessionPromptTokens = 0;
   private sessionCompletionTokens = 0;
   private tokenUsageSource: TokenUsageSource = "unknown";
+  private usageLedger = new UsageLedger({
+    inputUsdPerMillion: process.env.QLING_COST_INPUT_USD_PER_MILLION,
+    outputUsdPerMillion: process.env.QLING_COST_OUTPUT_USD_PER_MILLION,
+  });
   private initPromise: Promise<void>;
 
   // 轻量观测指标
@@ -269,6 +291,7 @@ export class AgentLoop extends AgentEventEmitter {
   private retryCountTotal = 0;
   private toolCallTotal = 0;
   private toolFailureTotal = 0;
+  private jsonHookRunner: JsonHookRunner | null = null;
 
   constructor(config: Partial<AgentConfig> = {}) {
     super();
@@ -322,7 +345,7 @@ export class AgentLoop extends AgentEventEmitter {
       model: config.model ?? "deepseek-chat",
       systemPrompt: config.systemPrompt ?? "",
       maxIterations: config.maxIterations ?? 50,
-      tools: config.tools ?? ALL_TOOLS,
+      tools: (config.tools ?? ALL_TOOLS).map((tool) => ({ ...tool })),
       runtime: {
         workspaceDir: config.runtime?.workspaceDir ?? process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
         fileCacheDir:
@@ -337,6 +360,9 @@ export class AgentLoop extends AgentEventEmitter {
       },
       logging: this.loggingConfig,
     };
+    if (EXPLICIT_ENABLE_VALUES.has(String(process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT ?? "").toLowerCase())) {
+      this.config.tools = [...this.config.tools, ...ANCHORED_EDIT_TOOLS];
+    }
     this.sectionRegistry = buildDefaultRegistry(this.config.tools);
     this.sessionId = "session-" + Date.now();
     this.sessionCreatedAt = new Date().toISOString();
@@ -393,6 +419,7 @@ export class AgentLoop extends AgentEventEmitter {
         this.retryCountTotal++;
       },
     });
+    this.configureCompactorSummarizer();
 
     // 初始化系统（存储 promise，在 run() 中 await）
     this.initPromise = this.init();
@@ -407,6 +434,12 @@ export class AgentLoop extends AgentEventEmitter {
     await fs.mkdir(this.memoryDir, { recursive: true });
     await this.missionManager.init();
     await this.loadVerificationCommand();
+    this.jsonHookRunner = await installJsonHooks({
+      hookManager: this.hookManager,
+      stateDir: this.runtimeRootDir,
+      workspaceDir: this.getWorkspaceDir(),
+      sessionId: this.sessionId,
+    });
 
     // v0.3 Sync dynamic discovery
     if (process.env.QLING_FEATURES_DYNAMIC_DISCOVERY === "true") {
@@ -557,6 +590,7 @@ export class AgentLoop extends AgentEventEmitter {
           this.mcpRegistry = new MCPRegistry({
             connection: mcpConnTimeout,
             call: mcpCallTimeout,
+            maxOutputBytes: Number(process.env.QLING_MCP_MAX_OUTPUT_BYTES) || 20 * 1024,
           });
           for (const s of enabled) {
             this.mcpRegistry.registerServer(s);
@@ -565,7 +599,11 @@ export class AgentLoop extends AgentEventEmitter {
           const results = await this.mcpRegistry.connectAll();
           const mcpTools = mcpToolsToNativeDefinitions(this.mcpRegistry.getAllTools());
           if (mcpTools.length > 0) {
-            this.config.tools = [...this.config.tools, ...mcpTools];
+            const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
+            this.config.tools = [
+              ...this.config.tools,
+              ...(exposure === "search" ? MCP_CATALOG_TOOLS : mcpTools),
+            ];
             console.error("[MCP] Connected " + results.filter((r) => r.status === "connected").length + " servers, " + mcpTools.length + " tools");
           }
         }
@@ -581,6 +619,20 @@ export class AgentLoop extends AgentEventEmitter {
       this.sectionRegistry.register(buildSkillsSection(skills));
     } catch {
       // ignore
+    }
+    try {
+      const roles = await loadRoleCatalog({
+        workspaceDir: this.getWorkspaceDir(),
+        stateDir: this.runtimeRootDir,
+      });
+      const subtask = this.config.tools.find((tool) => tool.name === "subtask");
+      if (subtask) {
+        subtask.description =
+          `Spawn an isolated sub-agent. Visible callable roles: ${[...roles.keys()].sort().join(", ")}. ` +
+          "Unknown roles fail closed; nested subagents remain disabled.";
+      }
+    } catch {
+      // role discovery failure keeps the built-in static description
     }
 
     // Guard M2: content filter custom patterns
@@ -598,21 +650,37 @@ export class AgentLoop extends AgentEventEmitter {
 
   async run(): Promise<string> {
     await this.initPromise;
-    return runOuterAgentLoop({
-      sessionId: this.sessionId,
-      activeRun: this.activeRun,
-      messages: this.messages,
-      executionEventBus: this.executionEventBus,
-      recoveryController: this.recoveryController,
-      emit: (event, ...args) => this.emit(event, ...args),
-      getRecoveryState: () => this.getRecoveryState(),
-      formatRecoveryPause: (reason, next) => this.formatRecoveryPause(reason, next),
-      applyRecoveryStrategy: (failure, strategy) => this.applyRecoveryStrategy(failure, strategy),
-      setActiveRun: (run) => {
-        this.activeRun = run;
-      },
-      executeInner: () => this.executeRunInternal(),
-    });
+    if (this.runAbortController) throw new Error("agent run already in progress");
+    const controller = new AbortController();
+    this.runAbortController = controller;
+    try {
+      return await runOuterAgentLoop({
+        sessionId: this.sessionId,
+        activeRun: this.activeRun,
+        messages: this.messages,
+        executionEventBus: this.executionEventBus,
+        recoveryController: this.recoveryController,
+        emit: (event, ...args) => this.emit(event, ...args),
+        getRecoveryState: () => this.getRecoveryState(),
+        formatRecoveryPause: (reason, next) => this.formatRecoveryPause(reason, next),
+        applyRecoveryStrategy: (failure, strategy) => this.applyRecoveryStrategy(failure, strategy),
+        setActiveRun: (run) => {
+          this.activeRun = run;
+        },
+        executeInner: () => this.executeRunInternal(),
+        isCanceled: () => controller.signal.aborted,
+      });
+    } finally {
+      if (this.runAbortController === controller) this.runAbortController = null;
+    }
+  }
+
+  cancelActiveRun(): boolean {
+    const controller = this.runAbortController;
+    if (!controller || controller.signal.aborted) return false;
+    controller.abort();
+    this.approvalGate.cancelAll();
+    return true;
   }
 
   private async executeRunInternal(): Promise<string> {
@@ -651,6 +719,7 @@ export class AgentLoop extends AgentEventEmitter {
       executionEventBus: this.executionEventBus,
       recoveryController: this.recoveryController,
       verifier: this.verifier,
+      usageLedger: this.usageLedger,
       buildSystemPrompt: () => this.buildSystemPrompt(),
       chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
         this.chat(systemPrompt, overrides ?? {}),
@@ -736,7 +805,10 @@ export class AgentLoop extends AgentEventEmitter {
       process.env.QLING_LLM_MODEL = this.config.model;
       {
         const autoCfg = resolveAutoCompactConfig();
-        this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model);
+        this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model, {
+          minSummaryChars: Number(process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS) || 500,
+          maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
+        });
       }
       this.verifier = new VerificationAgent(this.config.apiKey, this.config.model);
     }
@@ -769,6 +841,7 @@ export class AgentLoop extends AgentEventEmitter {
         this.retryCountTotal++;
       },
     });
+    this.configureCompactorSummarizer();
 
     return {
       provider: this.config.provider ?? "unknown",
@@ -788,6 +861,7 @@ export class AgentLoop extends AgentEventEmitter {
     this.sessionPromptTokens = 0;
     this.sessionCompletionTokens = 0;
     this.tokenUsageSource = "unknown";
+    this.usageLedger.reset();
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
   }
@@ -832,13 +906,14 @@ export class AgentLoop extends AgentEventEmitter {
     changed: boolean;
     recentKeep: number;
     theme?: string;
+    failureReason?: string;
   }> {
     const recentKeep = Math.max(1, Math.min(40, Math.floor(options.recentKeep ?? 6)));
     const theme = options.theme?.trim() || undefined;
     const beforeCount = this.messages.length;
-    const compacted = await this.compactor.compact(this.messages, recentKeep, { theme });
-    const changed = compacted.length !== beforeCount;
-    this.messages = compacted;
+    const outcome = await this.compactor.compactDetailed(this.messages, recentKeep, { theme });
+    const changed = outcome.status === "compacted";
+    if (changed) this.messages = outcome.messages;
     if (changed) {
       this.compactionCount++;
     }
@@ -849,7 +924,22 @@ export class AgentLoop extends AgentEventEmitter {
       changed,
       recentKeep,
       theme,
+      failureReason: outcome.status === "failed" ? outcome.reason : undefined,
     };
+  }
+
+  private configureCompactorSummarizer(): void {
+    this.compactor.setSummarizer(async ({ systemPrompt, text, maxTokens }) => {
+      const response = await this.llmClient.chatCompletions({
+        model: this.config.model,
+        systemPrompt,
+        messages: [{ role: "user", content: text }],
+        tools: [],
+        overrides: { max_tokens: maxTokens, temperature: 0 },
+        signal: this.runAbortController?.signal,
+      });
+      return response.content;
+    });
   }
 
   /**
@@ -907,12 +997,16 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   async shutdown(): Promise<void> {
+    this.cancelActiveRun();
     try {
       await this.initPromise;
     } catch {
       // ignore init failure in shutdown path
     }
     this.approvalGate.cancelAll();
+    if (this.jsonHookRunner) {
+      await this.jsonHookRunner.sessionEnd({ sessionId: this.sessionId, status: "shutdown" });
+    }
     if (this.metricsCollector && this.metricsFlushTimer) {
       this.metricsCollector.stopAutoFlush(this.metricsFlushTimer);
       this.metricsFlushTimer = null;
@@ -1119,10 +1213,11 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<LlmChatResponse> {
+    const promptLayers = buildPromptInspectSnapshot(systemPrompt, this.messages);
     await this.maybeDumpInspect("prompt", {
       turn: this.turnCount,
       model: this.config.model,
-      runtime: this.config.runtime ?? null,
+      layers: promptLayers,
       prompt: systemPrompt,
     });
     await this.maybeDumpInspect("request", {
@@ -1139,6 +1234,7 @@ export class AgentLoop extends AgentEventEmitter {
       messages: this.messages,
       tools: this.config.tools,
       overrides,
+      signal: this.runAbortController?.signal,
     });
   }
 

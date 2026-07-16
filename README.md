@@ -25,7 +25,7 @@
 | 任务工作台 | `qling dashboard start` 打开仅监听本机的任务中心，统一查看 Mission、循环任务、Workflow、执行来源与最近活动。 |
 | 通道与扩展 | `src/channels/` 内置 console / Telegram / Slack 通道；`qling discovery sync` 动态同步插件与技能。 |
 | 权限可解释 | `/permissions`、`/permissions explain <tool>`、guard、内容过滤、速率限制和密钥脱敏都以本地规则呈现。 |
-| 上下文透明 | `/context`、`/usage` 显示 provider 官方 token usage 与压缩状态（无预算）。 |
+| 上下文透明 | `/context`、`/usage` 显示 provider 官方 token usage、成本完整性与压缩状态。 |
 | 诊断内建 | `/doctor`、`/config`、`/mcp`、`/hooks`、`/diff` 用于快速判断当前项目和运行时状态。 |
 | 诚实边界 | 平台专属命令会被识别并给出本地边界说明，不会伪装成功。 |
 
@@ -121,6 +121,7 @@ qling setup
 ```bash
 qling                   # 默认进入流式 TUI（chat）
 qling chat              # 显式进入流式 TUI
+qling acp               # ACP v1 NDJSON stdio 编辑器适配（stdout 仅协议）
 qling run "分析这个仓库" # 单次执行，推荐形式
 qling run "分析这个仓库" --json # NDJSON 事件流，适合 CI / 外部编排
 qling bootstrap         # 本机初始化检查
@@ -134,6 +135,7 @@ qling setup             # 交互式配置 LLM 提供商
 | `qling` | 默认进入流式 TUI，等价于 `qling chat`。 |
 | `qling chat` | 显式进入流式 TUI。 |
 | `qling repl` | 简易 REPL，无 TUI 装饰。 |
+| `qling acp` | 显式启动 ACP v1 stdio 适配；支持会话、模式、工具时间线、审批与取消。 |
 | `qling run "任务"` | 单次执行后退出，适合脚本调用。 |
 | `qling run "任务" --json` | 将执行证据、工具状态与最终结果逐行输出为 JSON。无交互审批会安全拒绝，不会阻塞管道。 |
 | `qling bootstrap` | 本机初始化检查、配置提示和 doctor 验证。 |
@@ -224,7 +226,7 @@ qling 日志 <id>   # logs <id>
 | Command | Purpose |
 |---|---|
 | `/model [model]` | 显示或切换当前 session 模型；不写入配置文件。 |
-| `/usage`, `/cost`, `/stats` | provider 官方 token usage（input/output/total）与压缩次数。 |
+| `/usage`, `/cost`, `/stats` | provider 官方 usage、成本完整性与压缩次数；信息不完整时省略精确成本。 |
 | `/context` | 本地上下文和 token 使用情况。 |
 | `/statusline [on\|off]` | 显示或切换输入区状态线。 |
 
@@ -266,6 +268,7 @@ qling 日志 <id>   # logs <id>
 | `/config` | 查看已脱敏的有效配置。 |
 | `/mcp` | 查看本地 MCP server 配置摘要。 |
 | `/hooks` | 查看 hooks 与 guard 配置摘要。 |
+| `/plugin` | 列出或安装受签名清单约束的本地插件源。 |
 | `/shortcuts` | 查看 TUI 快捷键。 |
 
 ## TUI 快捷键

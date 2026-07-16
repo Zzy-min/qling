@@ -10,6 +10,9 @@ export interface HeadlessSessionStats {
   promptTokens: number;
   completionTokens: number;
   tokenSource: TokenUsageSource;
+  costUsd?: string;
+  costIsPartial?: boolean;
+  usageIsIncomplete?: boolean;
 }
 
 function timestamp(value = Date.now()): string {
@@ -41,6 +44,11 @@ export function formatHeadlessResult(result: string, stats: HeadlessSessionStats
       promptTokens: stats.promptTokens,
       completionTokens: stats.completionTokens,
       source: stats.tokenSource,
+      ...(stats.costUsd ? { costUsd: stats.costUsd } : {}),
+      ...(stats.costIsPartial !== undefined ? { costIsPartial: stats.costIsPartial } : {}),
+      ...(stats.usageIsIncomplete !== undefined
+        ? { usageIsIncomplete: stats.usageIsIncomplete }
+        : {}),
     },
   });
 }

@@ -27,6 +27,14 @@ export interface TurnBrowseItem {
   preview: string;
 }
 
+export interface ScrollbackViewportPanelSnapshot {
+  turnIndex: number;
+  turnCount: number;
+  page: number;
+  pageCount: number;
+  lines: string[];
+}
+
 /** 通用选项切换器条目（model / theme / sandbox / mode …） */
 export interface OptionPickerItem {
   id: string;
@@ -178,6 +186,36 @@ export function paintTurnBrowsePanel(lines: string[], selected: number): string 
       const bodyIndex = idx - 1;
       const isSelected = bodyIndex === selected;
       return isSelected ? paint.secondary(line) : paint.dim(line);
+    })
+    .join("\n");
+}
+
+export function formatScrollbackViewportPanel(
+  snapshot: ScrollbackViewportPanelSnapshot,
+  width = 80
+): string[] {
+  const turnLabel = snapshot.turnIndex >= 0
+    ? `轮次 ${snapshot.turnIndex + 1}/${Math.max(1, snapshot.turnCount)}`
+    : "暂无轮次";
+  const pageLabel = `页 ${snapshot.page}/${snapshot.pageCount}`;
+  const body = snapshot.lines.length > 0 ? snapshot.lines : ["(该页暂无内容)"];
+  return frameLines(
+    `Scrollback · ${turnLabel} · ${pageLabel}`,
+    body,
+    width,
+    "↑/↓ 或 Shift+↑/↓ 切轮 · PgUp/PgDn 翻页 · Enter/Space 回输入"
+  );
+}
+
+export function paintScrollbackViewportPanel(lines: string[]): string {
+  return lines
+    .map((line, idx) => {
+      if (idx === 0 || idx === lines.length - 1 || idx === lines.length - 2) {
+        return paint.primary(line);
+      }
+      if (line.includes("【你】")) return paint.secondary(line);
+      if (line.includes("【轻灵】")) return paint.bright(line);
+      return paint.dim(line);
     })
     .join("\n");
 }

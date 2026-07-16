@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildRuntimeMetaSection,
+  buildPromptInspectSnapshot,
   findLastUserMessageContent,
   heuristicReflect,
 } from "../../dist/agent/system-prompt.js";
@@ -19,7 +20,7 @@ test("findLastUserMessageContent returns last user text", () => {
   assert.equal(findLastUserMessageContent([]), "");
 });
 
-test("buildRuntimeMetaSection includes provider and paths", () => {
+test("buildRuntimeMetaSection exposes only sanitized local runtime labels", () => {
   const text = buildRuntimeMetaSection({
     provider: "deepseek",
     endpoint: "https://api.example.com",
@@ -28,9 +29,33 @@ test("buildRuntimeMetaSection includes provider and paths", () => {
     fileStateDir: "C:\\state",
     runtimeRootDir: "C:\\qling",
   });
-  assert.match(text, /Runtime Meta/);
-  assert.match(text, /deepseek/);
-  assert.match(text, /C:\\repo/);
+  assert.match(text, /<user_info>/);
+  assert.match(text, /workspace=repo/);
+  assert.doesNotMatch(text, /deepseek|api\.example|C:\\repo|C:\\cache|C:\\state/);
+});
+
+test("findLastUserMessageContent ignores synthetic user messages", () => {
+  assert.equal(
+    findLastUserMessageContent([
+      { role: "user", content: "real" },
+      { role: "user", content: "runtime", synthetic_reason: "runtime_environment" },
+    ]),
+    "real"
+  );
+});
+
+test("prompt inspect snapshot hashes only the stable prompt and reports layer sizes", () => {
+  const first = buildPromptInspectSnapshot("stable", [
+    { role: "user", content: "runtime", synthetic_reason: "runtime_environment" },
+    { role: "user", content: "dynamic", synthetic_reason: "dynamic_context" },
+  ]);
+  const second = buildPromptInspectSnapshot("stable", [
+    { role: "user", content: "runtime changed", synthetic_reason: "runtime_environment" },
+  ]);
+  assert.equal(first.staticHash, second.staticHash);
+  assert.equal(first.staticChars, 6);
+  assert.equal(first.runtimeChars, 7);
+  assert.equal(first.dynamicChars, 7);
 });
 
 test("heuristicReflect warns on destructive shell", () => {

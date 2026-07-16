@@ -4,10 +4,10 @@ import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect" | "acp";
 
-const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect", "acp"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect", "acp"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "版本": "version",
@@ -42,6 +42,7 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "连接": "connect",
   "connect": "connect",
   "连接器": "connect",
+  "ACP": "acp",
 };
 
 interface TopLevelCommandSuggestion {
@@ -633,6 +634,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName} repl                     # 简易 REPL
   ${binName} run "你的任务"            # 单次执行（推荐）
   ${binName} run "你的任务" --json     # 输出可供脚本解析的 NDJSON 事件流
+  ${binName} acp                      # 启动 ACP v1 stdio 适配（stdout 仅协议）
   ${binName} bootstrap                # 本机一键启动检查
   ${binName} setup                    # 快速配置 LLM 提供商（不保存 API key 到 .env）
   ${binName} --version                # 打印版本（亦支持 -V / version）

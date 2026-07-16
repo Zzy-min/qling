@@ -5,7 +5,10 @@ import {
   applyProviderUsage,
   distillSuccessfulBashPractices,
   logTurnTelemetry,
+  runOuterAgentLoop,
 } from "../../dist/agent/main-loop.js";
+import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
+import { RecoveryController } from "../../dist/execution/recovery-controller.js";
 
 test("applyProviderUsage only accumulates official usage", () => {
   const base = {
@@ -58,4 +61,32 @@ test("distillSuccessfulBashPractices records practices for successful bash", () 
   );
   assert.equal(practices.length, 1);
   assert.deepEqual(practices[0].cmds, ["npm test"]);
+});
+
+test("outer loop treats a cooperative cancel as terminal instead of recovery", async () => {
+  const bus = new ExecutionEventBus();
+  const events = [];
+  bus.subscribe((event) => events.push(event));
+  let activeRun = null;
+  await assert.rejects(
+    runOuterAgentLoop({
+      sessionId: "cancel-session",
+      activeRun,
+      messages: [{ role: "user", content: "cancel me" }],
+      executionEventBus: bus,
+      recoveryController: new RecoveryController(),
+      emit: () => {},
+      getRecoveryState: () => null,
+      formatRecoveryPause: () => "paused",
+      applyRecoveryStrategy: async () => {},
+      setActiveRun: (run) => { activeRun = run; },
+      executeInner: async () => "should not be returned",
+      isCanceled: () => true,
+    }),
+    (error) => error?.name === "AgentRunCanceledError",
+  );
+  assert.equal(activeRun, null);
+  assert.equal(events.at(-1).type, "run_completed");
+  assert.equal(events.at(-1).status, "canceled");
+  assert.equal(events.some((event) => event.type === "failure"), false);
 });

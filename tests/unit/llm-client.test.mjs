@@ -75,3 +75,38 @@ test("LlmHttpClient parses tool calls and provider usage", async () => {
     await fake.close();
   }
 });
+
+test("LlmHttpClient aborts an in-flight request without transport retries", async () => {
+  let requests = 0;
+  let markStarted;
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  const fake = await startFakeServer((_req, _res) => {
+    requests++;
+    markStarted();
+  });
+  try {
+    const client = new LlmHttpClient({
+      endpoint: fake.base + "/v1",
+      apiKey: "k",
+      timeoutMs: 5000,
+      provider: "fake",
+    });
+    const controller = new AbortController();
+    const pending = client.chatCompletions({
+      model: "test-model",
+      systemPrompt: "sys",
+      messages: [{ role: "user", content: "wait" }],
+      tools: [],
+      signal: controller.signal,
+    });
+    await Promise.race([
+      started,
+      new Promise((_resolve, reject) => setTimeout(() => reject(new Error("request did not start")), 500)),
+    ]);
+    controller.abort();
+    await assert.rejects(pending, (error) => error?.name === "AgentRunCanceledError");
+    assert.equal(requests, 1);
+  } finally {
+    await fake.close();
+  }
+});

@@ -30,6 +30,18 @@ import {
 import { toolError } from "./error-utils.js";
 import { isMCPTool, parseMCPToolName } from "../mcp/bridge.js";
 import type { MCPRegistry } from "../mcp/registry.js";
+import {
+  runSearchToolCatalog,
+  runUseCatalogTool,
+  searchToolCatalogTool,
+  useCatalogTool,
+} from "./mcp-catalog.js";
+import {
+  patchAnchoredTool,
+  readAnchoredTool,
+  runPatchAnchored,
+  runReadAnchored,
+} from "./anchored-edit.js";
 
 export {
   bashTool,
@@ -50,6 +62,10 @@ export {
   bgListTool,
   bgWaitTool,
   bgKillTool,
+  searchToolCatalogTool,
+  useCatalogTool,
+  readAnchoredTool,
+  patchAnchoredTool,
 };
 
 export const ALL_TOOLS: ToolDefinition[] = [
@@ -123,6 +139,10 @@ const handlers: Record<string, ToolHandler> = {
   bg_list: runBgList as ToolHandler,
   bg_wait: runBgWait as ToolHandler,
   bg_kill: runBgKill as ToolHandler,
+  search_tool: runSearchToolCatalog as ToolHandler,
+  use_tool: runUseCatalogTool as ToolHandler,
+  read_anchored: runReadAnchored as ToolHandler,
+  patch_anchored: runPatchAnchored as ToolHandler,
 };
 
 export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {

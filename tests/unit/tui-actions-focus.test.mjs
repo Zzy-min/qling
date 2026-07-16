@@ -22,6 +22,10 @@ test("action registry maps Ctrl+\\ and turn keys", () => {
     "turn_prev"
   );
   assert.equal(
+    lookupAction("\x1b[5~", { focus: "scrollback", overlayOpen: true, inputEmpty: true }),
+    "viewport_page_up"
+  );
+  assert.equal(
     lookupAction("\t", { focus: "prompt", overlayOpen: false, inputEmpty: true }),
     "focus_scrollback"
   );

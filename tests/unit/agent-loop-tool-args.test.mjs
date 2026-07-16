@@ -207,14 +207,19 @@ test("agent-loop: tool repeat limit blocks repeated identical calls", async () =
       return { tool_call_id: toolCall.id, output: "ok" };
     };
 
+    const events = [];
+    const unsubscribe = agent.subscribeExecutionEvents((event) => events.push(event));
+
     agent.addUserMessage("run repeat limit test");
     const finalAnswer = await agent.run();
 
-    assert.equal(finalAnswer, "done-repeat-limit");
-    assert.equal(pipelineCalls, 1);
+    assert.match(finalAnswer, /执行已暂停/);
+    assert.match(finalAnswer, /repeated_action/);
+    assert.equal(pipelineCalls, 0);
     const toolMessages = agent.messages.filter((m) => m.role === "tool");
-    assert.equal(toolMessages.length, 2);
-    assert.match(toolMessages[1].content, /TOOL_REPEAT_LIMIT_EXCEEDED/);
+    assert.equal(toolMessages.length, 0);
+    assert.equal(events.filter((event) => event.type === "loop_detected").length, 1);
+    unsubscribe();
   } finally {
     await agent.shutdown();
     restoreEnv(prev);

@@ -34,11 +34,11 @@ import {
 } from "./shell.js";
 import {
   formatOptionPickerPanel,
+  formatScrollbackViewportPanel,
   formatSessionPickerPanel,
-  formatTurnBrowsePanel,
   paintOptionPickerPanel,
+  paintScrollbackViewportPanel,
   paintSessionPickerPanel,
-  paintTurnBrowsePanel,
   type OptionPickerItem,
   type OptionPickerSpec,
   type SessionPickerItem,
@@ -70,6 +70,7 @@ import {
 } from "./actions.js";
 import type { TuiFocus } from "./focus-model.js";
 import { tabStructuralFocus } from "./focus-model.js";
+import { ScrollbackViewport } from "./scrollback-viewport.js";
 
 // ── ANSI 颜色工具（短别名兼容既有调用） ─────────────────
 
@@ -223,6 +224,8 @@ export class StreamUI {
   /** slash 多行输出已擦掉输入框、正在追加中 */
   private slashOutputActive = false;
   private turnLog: Array<{ preview: string; fullText: string }> = [];
+  /** 独立于终端原生历史的 managed scrollback 缓冲。 */
+  private scrollbackViewport = new ScrollbackViewport({ maxTurns: 40 });
   private lastToolOutputBlob: string | null = null;
   private onRequestSessionList: (() => void | Promise<void>) | null = null;
   private onSessionPick: ((sessionId: string) => void | Promise<void>) | null = null;
@@ -468,6 +471,10 @@ export class StreamUI {
     return this.overlay?.selected ?? -1;
   }
 
+  getViewportSnapshot(width = 80, height = 10) {
+    return this.scrollbackViewport.snapshot(width, height);
+  }
+
   /**
    * 单键序列调度（测试与可编程入口）。
    * 避免多测并行抢 process.stdin。
@@ -489,6 +496,10 @@ export class StreamUI {
     }
     if (seq === " ") {
       this.handleSpaceKey();
+      return;
+    }
+    if (seq === "i" && (this.overlay?.kind === "turns" || this.focus === "scrollback")) {
+      this.focusPromptFromScrollback("输入焦点");
       return;
     }
     if (seq === "\t") {
@@ -517,11 +528,21 @@ export class StreamUI {
       else this.handleHistoryDown();
       return;
     }
-    if (seq === "\x1b[5~" || seq === "\x1b[1;2A") {
+    if (seq === "\x1b[5~") {
+      if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
+      else this.navigateTurns(-1);
+      return;
+    }
+    if (seq === "\x1b[6~") {
+      if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
+      else this.navigateTurns(1);
+      return;
+    }
+    if (seq === "\x1b[1;2A") {
       this.navigateTurns(-1);
       return;
     }
-    if (seq === "\x1b[6~" || seq === "\x1b[1;2B") {
+    if (seq === "\x1b[1;2B") {
       this.navigateTurns(1);
       return;
     }
@@ -1572,10 +1593,18 @@ export class StreamUI {
           if (this.overlay) this.moveOverlaySelection(1);
           else if (this.focus === "scrollback") this.navigateTurns(1);
           else this.handleHistoryDown();
-        } else if (seq === "\x1b[5~" || seq === "\x1b[1;2A") {
+        } else if (seq === "\x1b[5~") {
+          partial = "";
+          if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
+          else this.navigateTurns(-1);
+        } else if (seq === "\x1b[6~") {
+          partial = "";
+          if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
+          else this.navigateTurns(1);
+        } else if (seq === "\x1b[1;2A") {
           partial = "";
           this.navigateTurns(-1);
-        } else if (seq === "\x1b[6~" || seq === "\x1b[1;2B") {
+        } else if (seq === "\x1b[1;2B") {
           partial = "";
           this.navigateTurns(1);
         } else if (seq === "\x1b[1;3A" || seq === "\x1b[1;5A" || seq === "\x1b[5A") {
@@ -1635,6 +1664,9 @@ export class StreamUI {
         } else if (seq === "\x1c") {
           partial = "";
           this.handleSessionPickerToggle();
+        } else if (seq === "i" && (this.overlay?.kind === "turns" || this.focus === "scrollback")) {
+          partial = "";
+          this.focusPromptFromScrollback("输入焦点");
         } else if (ch >= " " || ch === "\t") {
           partial = "";
           // 斜杠切换器可键入过滤；其它浮层吞掉可打印键
@@ -2159,6 +2191,7 @@ export class StreamUI {
     this.overlay.selected = (this.overlay.selected + delta + n) % n;
     if (this.overlay.kind === "turns") {
       this.turnSelected = this.overlay.selected;
+      this.scrollbackViewport.selectTurn(this.turnSelected, "start");
     }
     this.paintOverlay(true);
   }
@@ -2225,6 +2258,21 @@ export class StreamUI {
     this.openTurnBrowse(delta);
   }
 
+  private navigateViewportPage(delta: number): void {
+    if (this.overlay?.kind !== "turns") {
+      this.navigateTurns(delta);
+      return;
+    }
+    const height = this.viewportBodyHeight();
+    this.scrollbackViewport.scrollPage(delta, process.stdout.columns || 80, height);
+    this.paintOverlay(true);
+  }
+
+  private viewportBodyHeight(): number {
+    const rows = Number(process.stdout.rows || 24);
+    return Math.max(6, Math.min(16, rows - 8));
+  }
+
   /** 进入 scrollback 焦点 + 轮次浮层（Grok FocusScrollback 的轻量等价） */
   private openTurnBrowse(delta = 0): void {
     const items: TurnBrowseItem[] = this.turnLog.map((t, index) => ({
@@ -2238,6 +2286,7 @@ export class StreamUI {
       selected = Math.max(0, items.length - 2);
     }
     this.turnSelected = selected;
+    this.scrollbackViewport.selectTurn(selected, selected === items.length - 1 ? "tail" : "start");
     this.overlay = {
       kind: "turns",
       items,
@@ -2301,8 +2350,9 @@ export class StreamUI {
       );
       painted = paintOptionPickerPanel(plain);
     } else {
-      plain = formatTurnBrowsePanel(this.overlay.items, this.overlay.selected, width);
-      painted = paintTurnBrowsePanel(plain, this.overlay.selected);
+      const viewport = this.scrollbackViewport.snapshot(width, this.viewportBodyHeight());
+      plain = formatScrollbackViewportPanel(viewport, width);
+      painted = paintScrollbackViewportPanel(plain);
     }
     const lineCount = plain.length;
 
@@ -2418,6 +2468,10 @@ export class StreamUI {
     if (output.trim()) {
       this.printToolOutput(output, "success");
     }
+    this.scrollbackViewport.appendTool(
+      tool,
+      [`${command} · success · ${fmtDur(durationMs)}`, output].filter(Boolean).join("\n")
+    );
   }
 
   appendToolError(tool: string, command: string, error: string, durationMs: number): void {
@@ -2432,6 +2486,10 @@ export class StreamUI {
     if (rest.length > 1) {
       this.printToolOutput(rest.slice(1).join("\n"), "error");
     }
+    this.scrollbackViewport.appendTool(
+      tool,
+      `${command} · error · ${fmtDur(durationMs)}\n${error}`
+    );
   }
 
   appendThinking(text: string): void {
@@ -2444,6 +2502,7 @@ export class StreamUI {
     for (let i = 1; i < lines.length; i++) {
       process.stdout.write("\n" + lines[i]);
     }
+    this.scrollbackViewport.appendAssistant(lines.join("\n"));
   }
 
   appendCogitated(durationMs: number): void {
@@ -2467,6 +2526,7 @@ export class StreamUI {
     for (const line of lines) {
       process.stdout.write(line.trim() ? "\n" + S.b("› ") + line : "\n");
     }
+    this.scrollbackViewport.appendAssistant(text);
   }
 
   /**
@@ -2537,6 +2597,7 @@ export class StreamUI {
     const preview = text.replace(/\s+/g, " ").trim().slice(0, 64);
     this.turnLog.push({ preview: preview || "(空)", fullText: text });
     if (this.turnLog.length > 40) this.turnLog.shift();
+    this.scrollbackViewport.startUserTurn(text);
   }
 
   /**
@@ -2567,6 +2628,7 @@ export class StreamUI {
     // 换会话必须丢掉上一会话的轮次索引
     this.turnLog = [];
     this.turnSelected = 0;
+    this.scrollbackViewport.clear();
 
     const dialog = (Array.isArray(messages) ? messages : [])
       .map((m) => {
@@ -2605,7 +2667,9 @@ export class StreamUI {
           const preview = msg.text.replace(/\s+/g, " ").trim().slice(0, 64);
           this.turnLog.push({ preview: preview || "(空)", fullText: msg.text });
           if (this.turnLog.length > 40) this.turnLog.shift();
+          this.scrollbackViewport.startUserTurn(msg.text);
         } else {
+          this.scrollbackViewport.appendAssistant(msg.text);
           this.writeReplayAssistant(msg.text);
         }
       }

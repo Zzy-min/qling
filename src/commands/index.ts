@@ -35,6 +35,7 @@ import { storageCommand } from "./storage.js";
 import { mcpCommand } from "./mcp.js";
 import { hooksCommand } from "./hooks.js";
 import { agentsCommand } from "./agents.js";
+import { pluginCommand } from "./plugin.js";
 import { missionCommand } from "./mission.js";
 import { verifyCommand } from "./verify.js";
 import { recoverCommand } from "./recover.js";
@@ -113,6 +114,7 @@ export const COMMANDS: SlashCommand[] = [
   distillCommand,
   storageCommand,
   agentsCommand,
+  pluginCommand,
   missionCommand,
   mcpCommand,
   hooksCommand,

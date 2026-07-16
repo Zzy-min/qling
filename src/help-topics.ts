@@ -372,6 +372,17 @@ const TOPICS: HelpTopic[] = [
     cliExamples: [],
     boundary: "在本地子进程运行配置的验证命令；自愈最多运行 3 轮，不联网。",
   },
+  {
+    id: "acp",
+    title: "ACP 编辑器适配",
+    summary: "通过 NDJSON stdio 将轻灵接入支持 ACP v1 的编辑器。",
+    aliases: ["acp", "ACP"],
+    slashUsage: "仅 CLI：qling acp",
+    cliUsage: "{bin} acp",
+    slashExamples: [],
+    cliExamples: ["{bin} acp"],
+    boundary: "显式启动；stdout 只输出协议消息，状态仍写本地；首版不接收客户端注入的 MCP server。",
+  },
 ];
 
 function normalizeTopicName(value: string): string {

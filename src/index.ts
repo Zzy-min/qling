@@ -69,6 +69,7 @@ import { buildLocalConfigReport, formatLocalConfigReport } from "./config-report
 import { buildLocalMcpReport, formatLocalMcpReport } from "./mcp-report.js";
 import { buildLocalHooksReport, formatLocalHooksReport } from "./hooks-report.js";
 import { buildLocalStatusReport, formatLocalStatusReport } from "./local-status-report.js";
+import { runAcpStdioServer } from "./cli/acp-server.js";
 
 const CURRENT_FILE = fileURLToPath(import.meta.url);
 const DIST_DIR = path.dirname(CURRENT_FILE);
@@ -1079,6 +1080,23 @@ async function main() {
       inspectDumpDir: loaded.config.logging.inspect_dump_dir,
     },
   };
+
+  if (decision.mode === "acp") {
+    if (decision.subArgs.length > 0) {
+      reportError("CLI_INVALID_MODE_COMBINATION", "qling acp does not accept positional arguments");
+      process.exitCode = 2;
+      return;
+    }
+    await runAcpStdioServer((cwd) => new AgentLoop({
+      ...agentConfig,
+      tools: buildToolRegistry({ staticEnabled }),
+      runtime: {
+        ...agentConfig.runtime!,
+        workspaceDir: cwd,
+      },
+    }));
+    return;
+  }
 
   // --- 延迟实例化 AgentLoop，防止 setup 等管理命令因缺失 Key 而崩溃 ---
   // dashboard 顶层命令：临时强制开启本机会话任务工作台（无需手写 env）

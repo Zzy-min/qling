@@ -29,6 +29,8 @@ import {
 import { runWriteToolVerification } from "../execution/verification-loop.js";
 import type { LlmChatResponse } from "../providers/llm-client.js";
 import { findLastUserMessageContent } from "./system-prompt.js";
+import { formatRecoveryPause } from "../execution/recovery-messages.js";
+import type { UsageLedger } from "../usage-ledger.js";
 
 export interface TurnTelemetry {
   turn: number;
@@ -45,10 +47,18 @@ export interface TokenCounters {
 
 export function applyProviderUsage(
   counters: TokenCounters,
-  usage: ChatUsage | undefined
+  usage: ChatUsage | undefined,
+  ledger?: UsageLedger
 ): TokenCounters {
   const tokenUsage = resolveRoundTokenUsage(usage);
-  if (tokenUsage.source !== "provider") return counters;
+  if (tokenUsage.source !== "provider") {
+    ledger?.markIncomplete("provider_usage_missing");
+    return counters;
+  }
+  ledger?.record({
+    promptTokens: tokenUsage.promptTokens,
+    completionTokens: tokenUsage.completionTokens,
+  });
   return {
     sessionTokens: counters.sessionTokens + tokenUsage.tokens,
     sessionPromptTokens: counters.sessionPromptTokens + tokenUsage.promptTokens,
@@ -180,6 +190,7 @@ export interface InnerLoopHost {
   executionEventBus: ExecutionEventBus;
   recoveryController: RecoveryController;
   verifier: VerificationAgent;
+  usageLedger?: UsageLedger;
 
   buildSystemPrompt: () => Promise<string>;
   chat: (systemPrompt: string, overrides?: Record<string, unknown>) => Promise<LlmChatResponse>;
@@ -196,6 +207,7 @@ export interface InnerLoopHost {
  */
 export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string> {
   const toolSignatureCounts = new Map<string, number>();
+  let autoCompactSuppressed = false;
 
   for (let i = 0; i < host.maxIterations; i++) {
     host.turnCount++;
@@ -209,22 +221,37 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
     {
       const { resolveAutoCompactConfig } = await import("../session/compact-auto.js");
       const autoCfg = resolveAutoCompactConfig();
-      if (autoCfg.enabled && host.compactor.needsCompaction(host.messages)) {
+      if (!autoCompactSuppressed && autoCfg.enabled && host.compactor.needsCompaction(host.messages)) {
         const beforeCount = host.messages.length;
         console.error("\n📦 上下文压缩中...（" + beforeCount + " 条消息）");
-        const compacted = await host.compactor.compact(
+        const compacted = await host.compactor.compactDetailed(
           host.messages,
           autoCfg.recentKeep
         );
-        host.messages.splice(0, host.messages.length, ...compacted);
-        host.compactionCount++;
-        const afterCount = host.messages.length;
-        console.error("📦 压缩完成 → " + afterCount + " 条消息\n");
-        host.emit("context_compacted", {
-          beforeCount,
-          afterCount,
-          auto: true,
-        });
+        if (compacted.status === "failed") {
+          autoCompactSuppressed = true;
+          console.error("📦 压缩失败，保留原上下文并抑制本轮重试: " + compacted.reason);
+          host.executionEventBus.emit({
+            runId,
+            sessionId: host.sessionId,
+            attemptId,
+            type: "compaction_failed",
+            status: "failed",
+            stage: "compaction",
+            recoveryAction: "preserve_context",
+          });
+          host.emit("compaction_failed", { reason: compacted.reason, auto: true });
+        } else if (compacted.status === "compacted") {
+          host.messages.splice(0, host.messages.length, ...compacted.messages);
+          host.compactionCount++;
+          const afterCount = host.messages.length;
+          console.error("📦 压缩完成 → " + afterCount + " 条消息\n");
+          host.emit("context_compacted", {
+            beforeCount,
+            afterCount,
+            auto: true,
+          });
+        }
       }
     }
 
@@ -244,7 +271,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
     }
 
     const { content, tool_calls, usage } = await host.chat(systemPrompt);
-    host.counters = applyProviderUsage(host.counters, usage);
+    host.counters = applyProviderUsage(host.counters, usage, host.usageLedger);
     host.messages.push({ role: "assistant", content, tool_calls });
     host.emit("thinking", content || "正在思考...");
 
@@ -274,6 +301,45 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
       toolRepeatLimit: host.toolRepeatLimit,
       signatureCounts: toolSignatureCounts,
     });
+    const loop = preparedCalls.find((prepared) => prepared.loopDetected);
+    if (loop?.loopDetected) {
+      const failure = classifyFailure(
+        new Error(
+          `repeated action: tool '${loop.call.name}' exceeded repeat limit (${loop.loopDetected.limit})`
+        ),
+        { tool: loop.call.name }
+      );
+      const decision = host.recoveryController.recordFailure(failure, {
+        changed: false,
+        currentStrategy: "stop_repeated_action",
+      });
+      host.executionEventBus.emit({
+        runId,
+        sessionId: host.sessionId,
+        attemptId,
+        toolCallId: loop.call.id,
+        tool: loop.call.name,
+        type: "loop_detected",
+        status: "paused",
+        stage: "tool",
+        category: "repeated_action",
+        fingerprint: failure.fingerprint,
+        recoveryAction: "pause",
+      });
+      host.executionEventBus.completeAttempt(runId, "recovering");
+      host.emit("loop_detected", {
+        tool: loop.call.name,
+        count: loop.loopDetected.count,
+        limit: loop.loopDetected.limit,
+        signature: loop.loopDetected.signature,
+      });
+      return formatRecoveryPause({
+        reason: decision.reason,
+        next: "检查失败上下文后使用 /recover retry|edit|cancel",
+        state: host.getRecoveryState(),
+        verificationStagesSummary: "未执行（重复调用守卫先行暂停）",
+      });
+    }
     const { turnToolCalls, turnToolFailures } = await executePreparedTools(
       {
         pipeline: host.pipeline,
@@ -288,6 +354,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
         executionEventBus: host.executionEventBus,
         emit: host.emit,
         reflectiveThink: host.reflectiveThink,
+        usageLedger: host.usageLedger,
       },
       {
         preparedCalls,
@@ -365,6 +432,7 @@ export interface OuterLoopHost {
     strategy?: string
   ) => Promise<void>;
   executeInner: () => Promise<string>;
+  isCanceled?: () => boolean;
   setActiveRun: (
     run: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null
   ) => void;
@@ -398,11 +466,27 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<string> {
   while (true) {
     try {
       const response = await host.executeInner();
+      if (host.isCanceled?.()) {
+        host.executionEventBus.completeAttempt(runId, "canceled");
+        host.executionEventBus.completeRun(runId, "canceled");
+        host.setActiveRun(null);
+        const canceled = new Error("Agent run canceled");
+        canceled.name = "AgentRunCanceledError";
+        throw canceled;
+      }
       if (host.getRecoveryState()?.status === "paused") return response;
       host.executionEventBus.completeRun(runId, "succeeded");
       host.setActiveRun(null);
       return response;
     } catch (error) {
+      if (host.isCanceled?.()) {
+        host.executionEventBus.completeAttempt(runId, "canceled");
+        host.executionEventBus.completeRun(runId, "canceled");
+        host.setActiveRun(null);
+        const canceled = new Error("Agent run canceled");
+        canceled.name = "AgentRunCanceledError";
+        throw canceled;
+      }
       host.executionEventBus.completeAttempt(runId, "failed");
       const failure = classifyFailure(error, { provider: true });
       if (failure.category === "provider_transient" && transportAttempts < 3) {

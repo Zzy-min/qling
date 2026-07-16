@@ -6,6 +6,7 @@ import type { Mission } from "../mission/types.js";
 import { SlashCommand } from "./types.js";
 import type { SlashCommandContext } from "./runtime.js";
 import { formatRolesHelp } from "../agents/roles.js";
+import { formatLoadedRoles, loadRoleCatalog } from "../agents/role-loader.js";
 
 function resolveStateDir(context: SlashCommandContext): string {
   const loop = context.agentLoop as Record<string, any>;
@@ -45,8 +46,14 @@ export const agentsCommand: SlashCommand = {
   usage: "/agents [roles|missions]",
   execute: async (args, context) => {
     const sub = String(args ?? "").trim().toLowerCase();
+    const roles = await loadRoleCatalog({
+      workspaceDir: context.workspaceDir,
+      stateDir: resolveStateDir(context),
+      homeDir: context.homeDir,
+    });
+    const rolesText = roles.size > 3 ? formatLoadedRoles(roles) : formatRolesHelp();
     if (sub === "roles" || sub === "角色" || sub === "role") {
-      context.writeLine(formatRolesHelp());
+      context.writeLine(rolesText);
       return;
     }
     if (sub === "missions" || sub === "使命" || sub === "mission") {
@@ -55,7 +62,7 @@ export const agentsCommand: SlashCommand = {
       return;
     }
     // 默认：角色 + mission 摘要
-    context.writeLine(formatRolesHelp());
+    context.writeLine(rolesText);
     context.writeLine("");
     const missions = await listLocalMissionsReadOnly(resolveStateDir(context));
     context.writeLine(renderAgentsView(missions));

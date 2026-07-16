@@ -7,6 +7,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { existsSync } from "fs";
 import axios from "axios";
+import { createPublicKey, verify } from "node:crypto";
 import type { DiscoveryManifest, DiscoverySource, DiscoveredItem } from "./discovery-types.js";
 import type { ToolDefinition } from "./types.js";
 import { guardConfigFromEnv, type GuardConfig } from "./config.js";
@@ -16,6 +17,8 @@ export interface DiscoveryRegistryOptions {
   allowUnsigned?: boolean;
   guardConfig?: GuardConfig;
   env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  trustedKeys?: Record<string, string>;
+  requireSignature?: boolean;
 }
 
 const ENABLED_VALUES = new Set(["1", "true", "on", "yes"]);
@@ -55,6 +58,8 @@ export class DiscoveryRegistry {
   private allowUnsigned: boolean;
   private guardConfig: GuardConfig;
   private env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  private trustedKeys: Record<string, string>;
+  private requireSignature: boolean;
 
   constructor(sources: DiscoverySource[] = [], options: DiscoveryRegistryOptions = {}) {
     this.sources = sources;
@@ -63,6 +68,9 @@ export class DiscoveryRegistry {
       options.allowUnsigned ?? isExplicitlyEnabled(this.env.QLING_DISCOVERY_ALLOW_UNSIGNED);
     this.guardConfig =
       options.guardConfig ?? guardConfigFromEnv(this.env as NodeJS.ProcessEnv);
+    this.trustedKeys = options.trustedKeys ?? parseTrustedKeys(this.env.QLING_DISCOVERY_TRUSTED_KEYS);
+    this.requireSignature =
+      options.requireSignature ?? isExplicitlyEnabled(this.env.QLING_DISCOVERY_REQUIRE_SIGNATURE);
   }
 
   /**
@@ -102,6 +110,9 @@ export class DiscoveryRegistry {
           try {
             const raw = await fs.readFile(manifestPath, "utf-8");
             const manifest = JSON.parse(raw) as DiscoveryManifest;
+            if (this.requireSignature && !verifyManifestSignature(manifest, this.trustedKeys)) {
+              throw new Error("manifest signature is missing, unknown, or invalid");
+            }
             this.registerItem(source.id, manifest);
           } catch (err) {
             console.error(`[Discovery] Invalid manifest in ${manifestPath}: ${(err as Error).message}`);
@@ -113,11 +124,6 @@ export class DiscoveryRegistry {
 
   private async syncRemote(source: DiscoverySource): Promise<void> {
     try {
-      if (!this.allowUnsigned) {
-        throw new Error(
-          "unsigned remote discovery is disabled; set QLING_DISCOVERY_ALLOW_UNSIGNED=true only for a trusted source"
-        );
-      }
       let target: URL;
       try {
         target = new URL(source.uri);
@@ -143,6 +149,12 @@ export class DiscoveryRegistry {
       });
       const manifest = resp.data;
       assertValidManifest(manifest);
+      const signatureValid = verifyManifestSignature(manifest, this.trustedKeys);
+      if (!signatureValid && !this.allowUnsigned) {
+        throw new Error(
+          "remote manifest signature is missing, unknown, or invalid; unsigned remote discovery remains disabled"
+        );
+      }
       this.registerItem(source.id, manifest);
     } catch (err) {
       throw new Error(`Remote fetch failed: ${(err as Error).message}`);
@@ -197,5 +209,56 @@ export class DiscoveryRegistry {
 
   getAllItems(): DiscoveredItem[] {
     return Array.from(this.items.values());
+  }
+}
+
+function parseTrustedKeys(raw: unknown): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter(([, value]) => typeof value === "string")
+        .map(([key, value]) => [key, String(value)])
+    );
+  } catch {
+    return {};
+  }
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    const output: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      if (key === "signature") continue;
+      output[key] = canonical((value as Record<string, unknown>)[key]);
+    }
+    return output;
+  }
+  return value;
+}
+
+export function canonicalManifestPayload(manifest: DiscoveryManifest): string {
+  return JSON.stringify(canonical(manifest));
+}
+
+export function verifyManifestSignature(
+  manifest: DiscoveryManifest,
+  trustedKeys: Record<string, string>
+): boolean {
+  if (!manifest.signature || !manifest.publicKeyId) return false;
+  const pem = trustedKeys[manifest.publicKeyId];
+  if (!pem) return false;
+  try {
+    return verify(
+      null,
+      Buffer.from(canonicalManifestPayload(manifest), "utf8"),
+      createPublicKey(pem),
+      Buffer.from(manifest.signature, "base64")
+    );
+  } catch {
+    return false;
   }
 }

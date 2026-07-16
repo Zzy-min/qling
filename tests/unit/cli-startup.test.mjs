@@ -46,6 +46,15 @@ test("cli: no args defaults to chat (TUI)", () => {
   assert.equal(result.mode, "chat");
 });
 
+test("cli: acp is an explicit stdio adapter mode", () => {
+  const result = parseCliArgs(["acp"]);
+  assert.equal(result.kind, "ok");
+  assert.equal(result.mode, "acp");
+  assert.deepEqual(result.subArgs, []);
+  assert.match(buildHelpText("qling"), /qling acp/);
+  assert.match(buildHelpText("qling", "acp"), /stdout 只输出协议消息/);
+});
+
 test("cli: --help has highest priority", () => {
   const result = parseCliArgs(["--help", "--repl", "--once", "x"]);
   assert.equal(result.kind, "ok");

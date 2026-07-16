@@ -19,6 +19,7 @@ function messageText(message: Message): string {
 /** 可作为「用户轮」起点的消息（过滤预算 nudge / 压缩摘要） */
 export function isUserTurnStart(message: Message): boolean {
   if (message.role !== "user") return false;
+  if (message.synthetic_reason) return false;
   return !isInternalUserNoise(messageText(message));
 }
 

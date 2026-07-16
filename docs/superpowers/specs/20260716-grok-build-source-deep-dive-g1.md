@@ -113,7 +113,7 @@ JumpRestore {
 
 | 项 | 源码位置 | 为何延后 |
 |----|----------|----------|
-| 真 viewport scroll + bookmark | scrollback state | 需 alternate screen 或 re-render buffer |
+| 真 viewport scroll + bookmark | `ScrollbackViewport` 独立缓冲 + `turns` managed panel | 已于 2026-07-17 完成；不依赖 alternate screen |
 | Enter on user prompt → inline edit | panes.rs | 要可编辑历史块 |
 | Action hint 条动态渲染 | defaults hint_priority | UX 锦上添花 |
 | 多 Agent ActiveView | app_view | G4 双表面 |

@@ -70,6 +70,8 @@ export interface DiscoveryConfig {
   local_dirs: string[];
   remote_manifests: string[];
   allow_unsigned: boolean;
+  require_signature?: boolean;
+  trusted_keys?: Record<string, string>;
 }
 
 export interface QlingConfig {
@@ -88,6 +90,26 @@ export interface QlingConfig {
     parse_retries: number;
     tool_repeat_limit: number;
     timeout_ms: number;
+  };
+  context: {
+    /** 0 means unknown and preserves the legacy 6000-token trigger. */
+    window_tokens: number;
+    compaction_trigger_ratio: number;
+    compaction_min_summary_chars: number;
+    compaction_max_attempts: number;
+  };
+  cost: {
+    input_usd_per_million: string;
+    output_usd_per_million: string;
+  };
+  experimental: {
+    anchored_edit: boolean;
+  };
+  hooks?: {
+    enabled: boolean;
+    manifest_path: string;
+    timeout_ms: number;
+    max_output_bytes: number;
   };
   features: {
     semantic_memory: boolean;
@@ -136,6 +158,8 @@ export interface QlingConfig {
     }>;
     connection_timeout_ms: number;
     call_timeout_ms: number;
+    tool_exposure?: "eager" | "search";
+    max_output_bytes?: number;
   };
   metrics: {
     enabled: boolean;
@@ -226,6 +250,25 @@ export function buildDefaultConfig(): QlingConfig {
       tool_repeat_limit: 6,
       timeout_ms: 300000,
     },
+    context: {
+      window_tokens: 0,
+      compaction_trigger_ratio: 0.85,
+      compaction_min_summary_chars: 500,
+      compaction_max_attempts: 3,
+    },
+    cost: {
+      input_usd_per_million: "",
+      output_usd_per_million: "",
+    },
+    experimental: {
+      anchored_edit: false,
+    },
+    hooks: {
+      enabled: false,
+      manifest_path: path.join(DEFAULT_STATE_DIR, "hooks.json"),
+      timeout_ms: 5000,
+      max_output_bytes: 16 * 1024,
+    },
     features: {
       semantic_memory: false,
       workflow_runtime: false,
@@ -289,6 +332,8 @@ export function buildDefaultConfig(): QlingConfig {
       local_dirs: [path.join(DEFAULT_STATE_DIR, "plugins")],
       remote_manifests: [],
       allow_unsigned: false,
+      require_signature: false,
+      trusted_keys: {},
     },
     guard: {
       enabled: true,
@@ -326,6 +371,8 @@ export function buildDefaultConfig(): QlingConfig {
       servers: {},
       connection_timeout_ms: 10000,
       call_timeout_ms: 30000,
+      tool_exposure: "eager",
+      max_output_bytes: 20 * 1024,
     },
     metrics: {
       enabled: false,
@@ -441,6 +488,17 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   }
   process.env.QLING_FILE_CACHE_DIR = config.runtime.file_cache_dir;
   process.env.QLING_FILE_STATE_DIR = config.runtime.file_state_dir;
+  process.env.QLING_CONTEXT_WINDOW_TOKENS = String(config.context.window_tokens);
+  process.env.QLING_COMPACTION_TRIGGER_RATIO = String(config.context.compaction_trigger_ratio);
+  process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS = String(config.context.compaction_min_summary_chars);
+  process.env.QLING_COMPACTION_MAX_ATTEMPTS = String(config.context.compaction_max_attempts);
+  process.env.QLING_COST_INPUT_USD_PER_MILLION = config.cost.input_usd_per_million;
+  process.env.QLING_COST_OUTPUT_USD_PER_MILLION = config.cost.output_usd_per_million;
+  process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT = String(config.experimental.anchored_edit);
+  process.env.QLING_JSON_HOOKS_ENABLED = String(config.hooks?.enabled ?? false);
+  process.env.QLING_JSON_HOOKS_MANIFEST = config.hooks?.manifest_path ?? path.join(config.runtime.file_state_dir, "hooks.json");
+  process.env.QLING_JSON_HOOKS_TIMEOUT_MS = String(config.hooks?.timeout_ms ?? 5000);
+  process.env.QLING_JSON_HOOKS_MAX_OUTPUT_BYTES = String(config.hooks?.max_output_bytes ?? 16 * 1024);
   process.env.QLING_GUARD_ENABLED = String(config.guard.enabled);
   process.env.QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES =
     JSON.stringify(config.guard.network.url_fetch.allowed_url_prefixes);
@@ -505,11 +563,15 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_DISCOVERY_LOCAL_DIRS = JSON.stringify(config.discovery.local_dirs);
   process.env.QLING_DISCOVERY_REMOTE_MANIFESTS = JSON.stringify(config.discovery.remote_manifests);
   process.env.QLING_DISCOVERY_ALLOW_UNSIGNED = String(config.discovery.allow_unsigned);
+  process.env.QLING_DISCOVERY_REQUIRE_SIGNATURE = String(config.discovery.require_signature ?? false);
+  process.env.QLING_DISCOVERY_TRUSTED_KEYS = JSON.stringify(config.discovery.trusted_keys ?? {});
 
   // MCP (Phase 4)
   process.env.QLING_MCP_SERVERS = JSON.stringify(config.mcp.servers);
   process.env.QLING_MCP_CONNECTION_TIMEOUT_MS = String(config.mcp.connection_timeout_ms);
   process.env.QLING_MCP_CALL_TIMEOUT_MS = String(config.mcp.call_timeout_ms);
+  process.env.QLING_MCP_TOOL_EXPOSURE = config.mcp.tool_exposure ?? "eager";
+  process.env.QLING_MCP_MAX_OUTPUT_BYTES = String(config.mcp.max_output_bytes ?? 20 * 1024);
 
   // Metrics (Phase 5)
   process.env.QLING_METRICS_ENABLED = String(config.metrics.enabled);

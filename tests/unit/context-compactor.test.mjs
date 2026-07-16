@@ -145,3 +145,24 @@ test("context-compactor: compact folds unmodified files but keeps modified files
   assert.doesNotMatch(modifiedResult.output, /\/\/ \.\.\. \(remaining body folded\)/);
   assert.match(modifiedResult.output, /console\.log\(2\)/);
 });
+
+test("context-compactor: invalid provider summaries fall back locally without failure placeholders", async () => {
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => "x",
+    minSummaryChars: 500,
+    maxSummaryAttempts: 2,
+  });
+  const messages = [
+    { role: "user", content: "first real request" },
+    { role: "assistant", content: "old answer" },
+    { role: "user", content: "latest real request" },
+    { role: "assistant", content: "latest answer" },
+  ];
+  const outcome = await compactor.compactDetailed(messages, 1);
+  assert.equal(outcome.status, "compacted");
+  const text = outcome.messages.map((message) => message.content).join("\n");
+  assert.match(text, /确定性本地摘要/);
+  assert.match(text, /latest real request/);
+  assert.doesNotMatch(text, /摘要失败|无 API Key|摘要生成失败/);
+  assert.equal(outcome.messages[0].synthetic_reason, "compaction_summary");
+});

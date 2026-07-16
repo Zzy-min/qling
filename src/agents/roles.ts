@@ -118,6 +118,14 @@ export interface SubAgentReturnContract {
   evidence: string[];
   /** 原始模型输出（已截断） */
   rawOutput: string;
+  usage?: {
+    totalTokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    costUsd?: string;
+    costIsPartial: boolean;
+    usageIsIncomplete: boolean;
+  };
 }
 
 const RAW_OUTPUT_MAX = 4000;
@@ -148,6 +156,13 @@ export function formatSubAgentReturnContract(c: SubAgentReturnContract): string 
     `success: ${c.success}`,
     `duration_ms: ${c.durationMs}`,
     `iterations_budget: ${c.iterations}`,
+    ...(c.usage
+      ? [
+          `usage_tokens: ${c.usage.totalTokens} (in=${c.usage.promptTokens}, out=${c.usage.completionTokens})`,
+          `usage_complete: ${!c.usage.usageIsIncomplete}`,
+          `cost: ${c.usage.costUsd ? `$${c.usage.costUsd}` : c.usage.costIsPartial ? "partial/omitted" : "$0"}`,
+        ]
+      : []),
     `summary: ${c.summary || "(空)"}`,
     "files_touched:",
     files,

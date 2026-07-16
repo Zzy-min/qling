@@ -27,6 +27,8 @@ export function layerOf(rel) {
     p === "config.ts" ||
     p === "runtime-paths.ts" ||
     p === "token-usage.ts" ||
+    p === "context-budget.ts" ||
+    p === "usage-ledger.ts" ||
     p === "package-version.ts" ||
     p === "output-style.ts" ||
     p.startsWith("utils/") ||

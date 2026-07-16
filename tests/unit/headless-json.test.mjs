@@ -66,3 +66,21 @@ test("headless json: errors remain machine readable", () => {
     message: "provider unavailable",
   });
 });
+
+test("headless json v1 adds optional cost completeness fields", () => {
+  const event = JSON.parse(formatHeadlessResult("done", {
+    sessionId: "s",
+    turnCount: 1,
+    tokens: 3,
+    promptTokens: 2,
+    completionTokens: 1,
+    tokenSource: "provider",
+    costUsd: "0.0001",
+    costIsPartial: false,
+    usageIsIncomplete: false,
+  }));
+  assert.equal(event.schemaVersion, 1);
+  assert.equal(event.usage.costUsd, "0.0001");
+  assert.equal(event.usage.costIsPartial, false);
+  assert.equal(event.usage.usageIsIncomplete, false);
+});

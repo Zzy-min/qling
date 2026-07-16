@@ -163,7 +163,7 @@ test("slash plan queues a normal planning prompt through immediate prompt path",
   assert.match(lines.join("\n"), /Mode:\s*plan/);
 });
 
-test("slash usage reports provider token usage without budget", async () => {
+test("slash usage reports provider usage and omits incomplete cost", async () => {
   const { ctx, lines } = createContext({
     agentLoop: {
       getSessionStats: () => ({
@@ -186,7 +186,8 @@ test("slash usage reports provider token usage without budget", async () => {
   assert.match(text, /provider/);
   assert.match(text, /官方 usage/);
   assert.doesNotMatch(text, /% of|max_token_budget|Context\s*:/i);
-  assert.match(text, /无 token 预算/);
+  assert.match(text, /Cost\s+: omitted \(partial\/incomplete\)/);
+  assert.match(text, /价格或子代理 usage 缺失/);
 });
 
 test("slash copy copies nth latest assistant reply through local clipboard hook", async () => {

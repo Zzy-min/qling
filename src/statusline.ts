@@ -17,6 +17,9 @@ export interface StatusLineSnapshot {
   completionTokens?: number;
   tokenSource?: "provider" | "unknown";
   costPer1kTokens?: number | null;
+  costUsd?: string | null;
+  costIsPartial?: boolean;
+  usageIsIncomplete?: boolean;
   inputQueue?: StatusLineInputQueueSnapshot;
 }
 
@@ -119,6 +122,16 @@ function formatCostEstimate(tokens: number, costPer1kTokens?: number | null): st
   return `≈$${estimate.toFixed(4)}`;
 }
 
+function formatCost(snapshot: StatusLineSnapshot): string {
+  if (snapshot.costUsd && !snapshot.costIsPartial && !snapshot.usageIsIncomplete) {
+    return `$${snapshot.costUsd}`;
+  }
+  const estimate = formatCostEstimate(snapshot.tokens, snapshot.costPer1kTokens);
+  if (estimate !== "-") return estimate;
+  if (snapshot.costIsPartial || snapshot.usageIsIncomplete) return "不完整";
+  return "-";
+}
+
 function normalizeTokenSource(value: unknown): "provider" | "unknown" {
   return value === "provider" ? "provider" : "unknown";
 }
@@ -140,7 +153,7 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   const goal = snapshot.goalStatus || "无";
   const branch = snapshot.branch || "-";
   const sessionMode = formatSessionMode(snapshot.sessionMode, snapshot.permissionMode);
-  const cost = formatCostEstimate(snapshot.tokens, snapshot.costPer1kTokens);
+  const cost = formatCost(snapshot);
   const prompt = Math.max(0, Math.floor(Number(snapshot.promptTokens ?? 0)));
   const completion = Math.max(0, Math.floor(Number(snapshot.completionTokens ?? 0)));
   const parts = [
@@ -154,7 +167,7 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
     `in=${prompt.toLocaleString()}`,
     `out=${completion.toLocaleString()}`,
     `来源=${normalizeTokenSource(snapshot.tokenSource)}`,
-    cost === "-" ? "成本=-" : `成本${cost}`,
+    cost === "-" ? "成本=-" : cost === "不完整" ? "成本=不完整" : `成本${cost}`,
   ];
   const queue = formatInputQueueStatus(snapshot.inputQueue);
   if (queue) {
@@ -229,6 +242,9 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
     completionTokens: Number(stats.completionTokens ?? 0),
     tokenSource: normalizeTokenSource(stats.tokenSource),
     costPer1kTokens: parseStatusLineCostPer1k(process.env.QLING_STATUSLINE_COST_PER_1K_TOKENS),
+    costUsd: stats.costUsd ?? null,
+    costIsPartial: Boolean(stats.costIsPartial),
+    usageIsIncomplete: Boolean(stats.usageIsIncomplete),
     inputQueue,
   };
 }

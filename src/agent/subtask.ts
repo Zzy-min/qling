@@ -13,7 +13,10 @@ import {
   filterToolsForRole,
   formatSubAgentReturnContract,
   normalizeSubAgentRole,
+  isKnownSubAgentRole,
 } from "../agents/roles.js";
+import type { UsageLedgerSnapshot } from "../usage-ledger.js";
+import { getBackgroundTaskRegistry } from "../runtime/background-tasks.js";
 
 export interface SubtaskConfig {
   task: string;
@@ -35,6 +38,9 @@ export interface SubtaskResult {
   filesTouched: string[];
   /** 已格式化的回传契约（父代理应优先使用） */
   contractText: string;
+  usage: UsageLedgerSnapshot;
+  usageIsIncomplete: boolean;
+  backgroundTaskId?: string;
 }
 
 interface TimeoutController {
@@ -78,6 +84,9 @@ export class SubtaskRunner {
     const start = Date.now();
     const maxIter = config.maxIterations ?? 10;
     const timeout = config.timeoutMs ?? 120_000;
+    if (!isKnownSubAgentRole(config.role)) {
+      throw new Error(`SUBTASK_INVALID_ROLE: unknown role '${String(config.role)}'`);
+    }
     const role = normalizeSubAgentRole(config.role);
 
     const baseTools =
@@ -105,17 +114,48 @@ export class SubtaskRunner {
 
     let rawOutput = "";
     let success = false;
+    let backgroundTaskId: string | undefined;
+    let backgrounded = false;
+    let usage: UsageLedgerSnapshot = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      costIsPartial: true,
+      usageIsIncomplete: true,
+      incompleteReasons: ["subagent_not_started"],
+    };
+    const operation = subAgent.run();
     try {
-      rawOutput = await runWithTimeout(subAgent.run(), timeout);
+      rawOutput = await runWithTimeout(operation, timeout);
       success = true;
     } catch (err) {
-      rawOutput = (err as Error).message;
-      success = false;
+      const message = (err as Error).message;
+      if (message.startsWith("Subtask timeout after")) {
+        const task = getBackgroundTaskRegistry().startPromise({
+          label: `subagent:${role}:${config.task.slice(0, 80)}`,
+          cwd: this.parentConfig.runtime?.workspaceDir ?? process.cwd(),
+          promise: operation.finally(async () => {
+            await subAgent.shutdown().catch(() => undefined);
+          }),
+          onCancel: () => subAgent.shutdown(),
+          timeoutMs: Math.max(timeout, 10 * 60 * 1000),
+        });
+        backgroundTaskId = task.taskId;
+        backgrounded = true;
+        rawOutput = `子代理前台等待 ${timeout}ms 后转入后台；task_id=${task.taskId}`;
+        success = true;
+      } else {
+        rawOutput = message;
+        success = false;
+      }
     } finally {
-      try {
-        await subAgent.shutdown();
-      } catch {
-        // ignore shutdown errors
+      usage = subAgent.getUsageSnapshot();
+      if (!backgrounded) {
+        try {
+          await subAgent.shutdown();
+        } catch {
+          // ignore shutdown errors
+        }
       }
     }
 
@@ -128,25 +168,40 @@ export class SubtaskRunner {
     }
 
     const durationMs = Date.now() - start;
+    const actualIterations = subAgent.getSessionStats().turnCount;
+    if (backgrounded) {
+      usage = {
+        ...usage,
+        costTicks: undefined,
+        costUsd: undefined,
+        costIsPartial: true,
+        usageIsIncomplete: true,
+        incompleteReasons: [...new Set([...usage.incompleteReasons, "subagent_backgrounded"])],
+      };
+    }
     const contractText = formatSubAgentReturnContract({
       role,
       success,
       durationMs,
-      iterations: maxIter,
+      iterations: actualIterations,
       summary,
       filesTouched,
       evidence,
       rawOutput,
+      usage,
     });
 
     return {
       success,
       output: contractText,
-      iterations: maxIter,
+      iterations: actualIterations,
       durationMs,
       role,
       filesTouched,
       contractText,
+      usage,
+      usageIsIncomplete: usage.usageIsIncomplete,
+      backgroundTaskId,
     };
   }
 }

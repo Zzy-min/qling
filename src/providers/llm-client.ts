@@ -60,11 +60,18 @@ export class LlmHttpClient {
     messages: Message[];
     tools: ToolDefinition[];
     overrides?: LlmChatOverrides;
+    signal?: AbortSignal;
   }): Promise<LlmChatResponse> {
     const systemMsg: Message = { role: "system", content: input.systemPrompt };
+    const wireMessages = [systemMsg, ...input.messages].map((message) => ({
+      role: message.role,
+      content: message.content,
+      ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+      ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+    }));
     const payload = {
       model: input.model,
-      messages: [systemMsg, ...input.messages],
+      messages: wireMessages,
       tools: input.tools.map((t) => ({
         type: "function",
         function: {
@@ -79,8 +86,13 @@ export class LlmHttpClient {
 
     let resp;
     try {
-      resp = await this.client.post("/chat/completions", payload);
+      resp = await this.client.post("/chat/completions", payload, { signal: input.signal });
     } catch (err) {
+      if (input.signal?.aborted) {
+        const canceled = new Error("LLM request canceled");
+        canceled.name = "AgentRunCanceledError";
+        throw canceled;
+      }
       const e = err as { response?: { data?: unknown } };
       const detail = JSON.stringify(e.response?.data ?? {}).slice(0, 500);
       throw new Error(`${this.provider} API error: ` + detail);
@@ -139,6 +151,7 @@ export class LlmHttpClient {
         cfg.__retryCount = cfg.__retryCount ?? 0;
         const status = err.response?.status;
         const shouldRetry =
+          !cfg.signal?.aborted &&
           (!err.response || status === 429 || (status >= 500 && status <= 503)) &&
           cfg.__retryCount < maxRetries;
         if (shouldRetry) {

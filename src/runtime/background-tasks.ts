@@ -6,7 +6,7 @@
 import { spawn, execFileSync, type ChildProcess } from "child_process";
 import { EventEmitter } from "node:events";
 
-export type BgTaskKind = "shell";
+export type BgTaskKind = "shell" | "subagent";
 export type BgTaskStatus = "running" | "completed" | "failed" | "killed" | "timeout";
 
 export interface BackgroundTask {
@@ -54,6 +54,7 @@ export class BackgroundTaskRegistry extends EventEmitter {
   private readonly tasks = new Map<string, BackgroundTask>();
   private readonly procs = new Map<string, ChildProcess>();
   private readonly waiters = new Map<string, Array<(task: BackgroundTask) => void>>();
+  private readonly cancelers = new Map<string, () => void | Promise<void>>();
 
   list(options: { includeFinished?: boolean; limit?: number } = {}): BackgroundTask[] {
     const includeFinished = options.includeFinished !== false;
@@ -210,6 +211,69 @@ export class BackgroundTaskRegistry extends EventEmitter {
     return { ...task };
   }
 
+  startPromise(options: {
+    label: string;
+    cwd: string;
+    promise: Promise<string>;
+    onCancel?: () => void | Promise<void>;
+    timeoutMs?: number;
+  }): BackgroundTask {
+    if (this.runningCount() >= MAX_CONCURRENT_RUNNING) {
+      throw new Error(`too many background tasks (max ${MAX_CONCURRENT_RUNNING} running)`);
+    }
+    const taskId = makeTaskId();
+    const now = Date.now();
+    const maxLifetimeMs = Math.max(1000, options.timeoutMs ?? 10 * 60 * 1000);
+    const task: BackgroundTask = {
+      taskId,
+      kind: "subagent",
+      status: "running",
+      command: options.label,
+      cwd: options.cwd,
+      createdAt: now,
+      updatedAt: now,
+      output: "",
+      maxLifetimeMs,
+    };
+    this.tasks.set(taskId, task);
+    if (options.onCancel) this.cancelers.set(taskId, options.onCancel);
+    this.trimHistory();
+    this.emitEvent({ type: "started", task: { ...task } });
+    const timer = setTimeout(() => {
+      void this.kill(taskId, "timeout");
+    }, maxLifetimeMs);
+    void options.promise.then(
+      (output) => this.finishPromiseTask(taskId, "completed", output),
+      (error) => this.finishPromiseTask(
+        taskId,
+        "failed",
+        "",
+        error instanceof Error ? error.message : String(error)
+      )
+    ).finally(() => clearTimeout(timer));
+    return { ...task };
+  }
+
+  private finishPromiseTask(
+    taskId: string,
+    status: "completed" | "failed",
+    output: string,
+    error?: string
+  ): void {
+    const current = this.tasks.get(taskId);
+    if (!current || current.status !== "running") return;
+    current.status = status;
+    current.output = truncateBytes(output || (error ? `error: ${error}` : "(no output)"), MAX_OUTPUT_BYTES);
+    current.error = error;
+    current.exitCode = status === "completed" ? 0 : 1;
+    current.endedAt = Date.now();
+    current.updatedAt = current.endedAt;
+    this.cancelers.delete(taskId);
+    this.tasks.set(taskId, current);
+    this.resolveWaiters(taskId, current);
+    this.emitEvent({ type: "finished", task: { ...current } });
+  }
+
   private mergeOutput(stdout: string, stderr: string): string {
     if (stderr.trim()) {
       return truncateBytes(`stdout:\n${stdout}\nstderr:\n${stderr}`, MAX_OUTPUT_BYTES);
@@ -296,6 +360,15 @@ export class BackgroundTaskRegistry extends EventEmitter {
       return { ...current };
     }
     const proc = this.procs.get(taskId);
+    const cancel = this.cancelers.get(taskId);
+    if (cancel) {
+      try {
+        await cancel();
+      } catch {
+        // cancellation is best-effort; status still becomes killed/timeout
+      }
+      this.cancelers.delete(taskId);
+    }
     if (proc?.pid) {
       try {
         if (process.platform === "win32") {
@@ -348,6 +421,7 @@ export class BackgroundTaskRegistry extends EventEmitter {
     this.tasks.clear();
     this.procs.clear();
     this.waiters.clear();
+    this.cancelers.clear();
     this.removeAllListeners();
   }
 }

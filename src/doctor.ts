@@ -319,7 +319,7 @@ function buildMcpCheck(env: DoctorOptions["env"]): DoctorCheck {
     id: "mcp",
     label: "MCP",
     status: "pass",
-    detail: `enabled=${report.enabled}/${report.total} connect=${report.connectionTimeoutMs}ms call=${report.callTimeoutMs}ms`,
+    detail: `enabled=${report.enabled}/${report.total} expose=${envText(env, "QLING_MCP_TOOL_EXPOSURE") || "eager"} output<=${envNumber(env, "QLING_MCP_MAX_OUTPUT_BYTES") || 20480}B connect=${report.connectionTimeoutMs}ms call=${report.callTimeoutMs}ms`,
   };
 }
 
@@ -330,7 +330,7 @@ function buildHooksCheck(env: DoctorOptions["env"]): DoctorCheck {
     id: "hooks",
     label: "hooks",
     status: report.guardEnabled ? "pass" : "warn",
-    detail: `guard=${boolText(report.guardEnabled)} permission=${report.permissionDefault} rules=${report.permissionRuleCount} rate_limit=${boolText(report.rateLimitEnabled)}(${report.rateLimitMaxPerMinute}/min) content_filter=${boolText(report.contentFilterEnabled)} custom=${report.customContentPatternCount}`,
+    detail: `guard=${boolText(report.guardEnabled)} json_lifecycle=${boolText(envText(env, "QLING_JSON_HOOKS_ENABLED").toLowerCase() === "true")} permission=${report.permissionDefault} rules=${report.permissionRuleCount} rate_limit=${boolText(report.rateLimitEnabled)}(${report.rateLimitMaxPerMinute}/min) content_filter=${boolText(report.contentFilterEnabled)} custom=${report.customContentPatternCount}`,
   };
 }
 

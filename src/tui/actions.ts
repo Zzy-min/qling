@@ -20,6 +20,8 @@ export type ActionId =
   | "overlay_dismiss"
   | "turn_prev"
   | "turn_next"
+  | "viewport_page_up"
+  | "viewport_page_down"
   | "expand_tools"
   | "submit"
   | "redraw";
@@ -82,6 +84,20 @@ export const DEFAULT_ACTIONS: ActionDef[] = [
     description: "关闭浮层",
     keys: ["\x1b", "\x03"],
     when: ["overlay_open"],
+  },
+  {
+    id: "viewport_page_up",
+    description: "Scrollback 当前轮向上翻页",
+    keys: ["\x1b[5~"],
+    when: ["scrollback_focused"],
+    hint: "PgUp",
+  },
+  {
+    id: "viewport_page_down",
+    description: "Scrollback 当前轮向下翻页",
+    keys: ["\x1b[6~"],
+    when: ["scrollback_focused"],
+    hint: "PgDn",
   },
   {
     id: "turn_prev",
