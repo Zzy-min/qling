@@ -17,19 +17,25 @@ export function resolvePlanRoots(workspaceDir: string): string[] {
   return PLAN_DIR_RELS.map((rel) => path.resolve(root, rel));
 }
 
+/** 把任意风格路径规范到当前平台分隔符，避免 Windows 路径串在 Linux 上失真 */
+function coercePathInput(input: string): string {
+  return String(input || "").replace(/\\/g, path.sep);
+}
+
 /**
  * 是否为 Plan Mode 允许写入的产物路径。
- * 支持绝对路径与相对 workspace 路径。
+ * 支持绝对路径与相对 workspace 路径；路径分隔符跨平台可混用。
  */
 export function isPlanArtifactPath(
   filePath: string,
   workspaceDir: string
 ): boolean {
   if (!filePath || typeof filePath !== "string") return false;
-  const root = path.resolve(workspaceDir || process.cwd());
-  const abs = path.isAbsolute(filePath)
-    ? path.resolve(filePath)
-    : path.resolve(root, filePath);
+  const root = path.resolve(coercePathInput(workspaceDir || process.cwd()));
+  const candidate = coercePathInput(filePath);
+  const abs = path.isAbsolute(candidate)
+    ? path.resolve(candidate)
+    : path.resolve(root, candidate);
   const roots = resolvePlanRoots(root);
   return roots.some((planRoot) => {
     const rel = path.relative(planRoot, abs);

@@ -6,6 +6,7 @@ import {
   buildPromptInspectSnapshot,
   findLastUserMessageContent,
   heuristicReflect,
+  sanitizeWorkspaceLabel,
 } from "../../dist/agent/system-prompt.js";
 
 test("findLastUserMessageContent returns last user text", () => {
@@ -20,6 +21,15 @@ test("findLastUserMessageContent returns last user text", () => {
   assert.equal(findLastUserMessageContent([]), "");
 });
 
+test("sanitizeWorkspaceLabel is cross-platform", () => {
+  assert.equal(sanitizeWorkspaceLabel("C:\\repo"), "repo");
+  assert.equal(sanitizeWorkspaceLabel("C:/repo"), "repo");
+  assert.equal(sanitizeWorkspaceLabel("/home/u/project"), "project");
+  assert.equal(sanitizeWorkspaceLabel("repo"), "repo");
+  assert.equal(sanitizeWorkspaceLabel(""), "(disabled)");
+  assert.equal(sanitizeWorkspaceLabel(null), "(disabled)");
+});
+
 test("buildRuntimeMetaSection exposes only sanitized local runtime labels", () => {
   const text = buildRuntimeMetaSection({
     provider: "deepseek",
@@ -31,7 +41,18 @@ test("buildRuntimeMetaSection exposes only sanitized local runtime labels", () =
   });
   assert.match(text, /<user_info>/);
   assert.match(text, /workspace=repo/);
-  assert.doesNotMatch(text, /deepseek|api\.example|C:\\repo|C:\\cache|C:\\state/);
+  assert.doesNotMatch(text, /deepseek|api\.example/);
+  // 不得泄漏完整盘符路径（跨平台）
+  assert.doesNotMatch(text, /C:\\repo|C:\\cache|C:\\state|C:\/repo/);
+});
+
+test("buildRuntimeMetaSection sanitizes posix workspace paths", () => {
+  const text = buildRuntimeMetaSection({
+    workspaceDir: "/var/workspaces/my-app",
+    runtimeRootDir: "/home/user/.qling",
+  });
+  assert.match(text, /workspace=my-app/);
+  assert.doesNotMatch(text, /\/var\/workspaces/);
 });
 
 test("findLastUserMessageContent ignores synthetic user messages", () => {

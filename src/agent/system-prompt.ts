@@ -35,6 +35,25 @@ export function findLastUserMessageContent(messages: Message[]): string {
   return "";
 }
 
+/**
+ * 跨平台工作区标签：只暴露最后一段目录名。
+ * 不能依赖 path.basename(path.resolve(winPath))——在 Linux 上
+ * `C:\repo` 不是绝对路径，basename 会整串保留成 `C:\repo`。
+ */
+export function sanitizeWorkspaceLabel(workspaceDir: string | null | undefined): string {
+  if (!workspaceDir || typeof workspaceDir !== "string") return "(disabled)";
+  const trimmed = workspaceDir.trim();
+  if (!trimmed) return "(disabled)";
+  // 统一分隔符后取末段；兼容 Windows 盘符路径在 POSIX 上的假相对路径
+  const normalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length === 0) return "(disabled)";
+  // 去掉 "C:" 这类盘符段
+  const last = parts[parts.length - 1]!;
+  if (/^[A-Za-z]:$/.test(last)) return "(disabled)";
+  return last;
+}
+
 export function buildRuntimeMetaSection(options: {
   provider?: string;
   endpoint?: string;
@@ -43,9 +62,7 @@ export function buildRuntimeMetaSection(options: {
   fileStateDir?: string;
   runtimeRootDir: string;
 }): string {
-  const workspace = options.workspaceDir
-    ? path.basename(path.resolve(options.workspaceDir))
-    : "(disabled)";
+  const workspace = sanitizeWorkspaceLabel(options.workspaceDir);
   return [
     "<user_info>",
     `platform=${process.platform}`,
