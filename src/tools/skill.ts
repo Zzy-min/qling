@@ -45,10 +45,16 @@ export function getSkillDirs(): string[] {
   // 3) 当前工作区
   add(resolve(process.cwd(), "skills"));
   add(resolve(process.cwd(), ".qling", "skills"));
-  // 4) 可选 Hermes 兼容路径
-  const hermesHome = process.env.HERMES_HOME;
-  if (hermesHome && hermesHome.trim()) {
-    add(join(hermesHome.trim(), "skills"));
+  // 4) 可选 Hermes 兼容路径（默认关闭：多数为他端 skill，轻灵无法完整执行）
+  //    需要时设 QLING_INCLUDE_HERMES_SKILLS=1
+  const includeHermes = String(process.env.QLING_INCLUDE_HERMES_SKILLS ?? "")
+    .trim()
+    .toLowerCase();
+  if (includeHermes === "1" || includeHermes === "true" || includeHermes === "yes") {
+    const hermesHome = process.env.HERMES_HOME;
+    if (hermesHome && hermesHome.trim()) {
+      add(join(hermesHome.trim(), "skills"));
+    }
   }
   return dirs;
 }

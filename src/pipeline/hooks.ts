@@ -18,6 +18,11 @@ import { PermissionMatrix, type PermissionResult } from "../guard/permissions.js
 import { RateLimiter, type RateLimitResult } from "../guard/rate-limit.js";
 import { appendGuardAudit } from "../guard.js";
 import type { GuardConfig } from "../config.js";
+import {
+  extractWriteTargetPath,
+  isPlanArtifactPath,
+} from "../plan/plan-artifacts.js";
+import { getPermissionGrantStore } from "../guard/permission-grants.js";
 
 // --- 0. 动态工具选择器（<30 工具限制 + 场景路由）---
 
@@ -200,11 +205,21 @@ export class SpeculativeClassifier {
 
 // --- 3. Hook Manager ---
 
-/** Plan 模式下禁止的写/执行类工具（OpenCode plan agent 语义） */
+/** Plan 模式下默认禁止的写/执行类工具（OpenCode plan agent 语义） */
 export const PLAN_MODE_DENY_TOOLS = [
   "write",
   "patch",
   "bash",
+  "bg_kill",
+  "subtask",
+  "browser_fetch",
+  "browser_act",
+] as const;
+
+/** 硬禁止：即使在 Plan Mode 也绝不放行 */
+export const PLAN_MODE_HARD_DENY_TOOLS = [
+  "bash",
+  "bg_kill",
   "subtask",
   "browser_fetch",
   "browser_act",
@@ -219,6 +234,7 @@ export class HookManager {
   private rateLimiter: RateLimiter | null = null;
   private guardConfig: GuardConfig | null = null;
   private planMode = false;
+  private workspaceDir: string = process.cwd();
 
   constructor(toolDefs: ToolDefinition[], guardConfig?: GuardConfig) {
     this.classifier = new SpeculativeClassifier(toolDefs);
@@ -236,12 +252,32 @@ export class HookManager {
     }
   }
 
+  setWorkspaceDir(dir: string): void {
+    if (typeof dir === "string" && dir.trim()) {
+      this.workspaceDir = dir.trim();
+    }
+  }
+
+  getWorkspaceDir(): string {
+    return this.workspaceDir;
+  }
+
+  /**
+   * Plan Mode 硬拒绝规则（不含 write/patch：二者仅允许计划目录产物）。
+   */
   private planModeRules(): Array<{ tool_pattern: string; decision: "deny"; reason: string }> {
-    return PLAN_MODE_DENY_TOOLS.map((tool) => ({
+    return PLAN_MODE_HARD_DENY_TOOLS.map((tool) => ({
       tool_pattern: tool,
       decision: "deny" as const,
-      reason: `Plan Mode: 工具 ${tool} 已禁用（只读规划）。使用 /plan off 退出。`,
+      reason: `Plan Mode: 工具 ${tool} 已禁用（只读规划）。使用 /plan off 或 /plan approve 退出。`,
     }));
+  }
+
+  /** Plan Mode 下 write/patch 是否指向允许的计划产物路径 */
+  isPlanArtifactWrite(ctx: ToolHookContext): boolean {
+    if (ctx.toolName !== "write" && ctx.toolName !== "patch") return false;
+    const target = extractWriteTargetPath(ctx.arguments);
+    return isPlanArtifactPath(target, this.workspaceDir);
   }
 
   private mergePermissionRules(
@@ -292,10 +328,58 @@ export class HookManager {
   }
 
   async runPreHook(ctx: ToolHookContext, sessionId?: string): Promise<HookResult> {
+    // 0. Plan Mode：硬拒绝执行类工具；write/patch 仅允许计划目录
+    if (this.planMode) {
+      if ((PLAN_MODE_HARD_DENY_TOOLS as readonly string[]).includes(ctx.toolName)) {
+        const reason = `Plan Mode: 工具 ${ctx.toolName} 已禁用（只读规划）。使用 /plan off 或 /plan approve 退出。`;
+        if (this.guardConfig) {
+          await appendGuardAudit(this.guardConfig, {
+            tool: ctx.toolName,
+            action: "deny",
+            category: "permission",
+            reason,
+          });
+        }
+        return {
+          decision: "deny",
+          blockingError: reason,
+          preventContinuation: true,
+        };
+      }
+      if (ctx.toolName === "write" || ctx.toolName === "patch") {
+        if (!this.isPlanArtifactWrite(ctx)) {
+          const reason =
+            "Plan Mode: 仅允许写入计划产物目录（.qling/plans/ 或 docs/superpowers/plans/）。" +
+            "业务代码修改请先 /plan approve。";
+          if (this.guardConfig) {
+            await appendGuardAudit(this.guardConfig, {
+              tool: ctx.toolName,
+              action: "deny",
+              category: "permission",
+              reason,
+            });
+          }
+          return {
+            decision: "deny",
+            blockingError: reason,
+            preventContinuation: true,
+          };
+        }
+        // 计划文件写入：跳过后续「默认 deny write」类 plan 规则，继续走矩阵/其它检查
+      }
+    }
+
     // 1. Permission matrix check (highest priority)
     if (this.permissionMatrix && this.guardConfig) {
       const permResult = this.permissionMatrix.evaluate(ctx.toolName);
-      if (permResult.decision === "deny") {
+      // Plan 产物写入：即使规则列表里还有 write deny，也放行
+      if (
+        this.planMode &&
+        (ctx.toolName === "write" || ctx.toolName === "patch") &&
+        this.isPlanArtifactWrite(ctx)
+      ) {
+        // fall through to remaining hooks
+      } else if (permResult.decision === "deny") {
         await appendGuardAudit(this.guardConfig, {
           tool: ctx.toolName,
           action: "deny",
@@ -309,16 +393,27 @@ export class HookManager {
         };
       }
       if (permResult.decision === "ask") {
-        await appendGuardAudit(this.guardConfig, {
-          tool: ctx.toolName,
-          action: "allow",
-          category: "permission",
-          reason: "ask triggered by rule: " + (permResult.matched_rule ?? "default"),
-        });
-        return {
-          decision: "ask",
-          additionalContexts: [permResult.reason ?? "工具需要确认: " + ctx.toolName],
-        };
+        // G3.3：会话 grant → 跳过 ask
+        if (getPermissionGrantStore().hasAllow(ctx.toolName)) {
+          await appendGuardAudit(this.guardConfig, {
+            tool: ctx.toolName,
+            action: "allow",
+            category: "permission",
+            reason: "remembered grant (session)",
+          });
+          // fall through to rate limit / classifier
+        } else {
+          await appendGuardAudit(this.guardConfig, {
+            tool: ctx.toolName,
+            action: "allow",
+            category: "permission",
+            reason: "ask triggered by rule: " + (permResult.matched_rule ?? "default"),
+          });
+          return {
+            decision: "ask",
+            additionalContexts: [permResult.reason ?? "工具需要确认: " + ctx.toolName],
+          };
+        }
       }
     }
 
@@ -359,19 +454,26 @@ export class HookManager {
     }
 
     if (classification.label === "ask") {
-      return {
-        decision: "ask",
-        additionalContexts: classification.patterns
-          ? [`⚠️ 匹配危险模式: ${classification.patterns.join(", ")}`]
-          : ["⚠️ 这个操作可能具有破坏性"],
-      };
+      if (getPermissionGrantStore().hasAllow(ctx.toolName)) {
+        // grant 覆盖 classifier ask（危险 deny 仍拦截）
+      } else {
+        return {
+          decision: "ask",
+          additionalContexts: classification.patterns
+            ? [`⚠️ 匹配危险模式: ${classification.patterns.join(", ")}`]
+            : ["⚠️ 这个操作可能具有破坏性"],
+        };
+      }
     }
 
     // 4. Custom pre-hooks
     for (const handler of this.preHooks) {
       const result = await handler(ctx);
       if (result.decision === "deny") return result;
-      if (result.decision === "ask") return result;
+      if (result.decision === "ask") {
+        if (getPermissionGrantStore().hasAllow(ctx.toolName)) continue;
+        return result;
+      }
     }
 
     return { decision: "allow" };

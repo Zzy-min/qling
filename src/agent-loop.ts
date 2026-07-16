@@ -44,6 +44,14 @@ import {
   buildSessionSnapshot,
   defaultSessionSaveName,
 } from "./session/session-persistence.js";
+import { deriveSessionTitle } from "./session/session-title.js";
+import {
+  resolveForkName,
+  resolveRewindTurns,
+  rewindByUserTurns,
+} from "./session/session-lifecycle.js";
+import { resolveAutoCompactConfig } from "./session/compact-auto.js";
+import { buildPlanModeSystemAddon } from "./plan/plan-artifacts.js";
 import {
   apiKeyRequiredForEndpoint,
   isLoopbackEndpoint,
@@ -227,6 +235,7 @@ export class AgentLoop extends AgentEventEmitter {
   getSessionSummary(): SavedSessionSummary {
     return {
       name: this.sessionId,
+      title: deriveSessionTitle(this.messages) || this.sessionId,
       sessionId: this.sessionId,
       workspaceDir: this.getWorkspaceDir(),
       createdAt: this.sessionCreatedAt,
@@ -337,13 +346,17 @@ export class AgentLoop extends AgentEventEmitter {
 
     // 初始化 v2 组件
     this.hookManager = new HookManager(this.config.tools, this.guardConfig);
+    this.hookManager.setWorkspaceDir(this.getWorkspaceDir());
     this.pipeline = new ToolPipeline(this.config.tools, this.hookManager);
     this.pipeline.setSessionId(this.sessionId);
     this.memoryStore = new MemoryStore(this.memoryDir, {
       workspaceDir: this.config.runtime?.workspaceDir || undefined,
     });
     this.verifier = new VerificationAgent(apiKey, this.config.model);
-    this.compactor = new ContextCompactor(6000, this.config.model);
+    {
+      const autoCfg = resolveAutoCompactConfig();
+      this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model);
+    }
     this.knowledgeAdapter = new KnowledgeAgentAdapter(this.memoryStore);
 
     // v0.3 Workflow Runtime
@@ -721,7 +734,10 @@ export class AgentLoop extends AgentEventEmitter {
     if (typeof patch.model === "string" && patch.model.trim()) {
       this.config.model = patch.model.trim();
       process.env.QLING_LLM_MODEL = this.config.model;
-      this.compactor = new ContextCompactor(6000, this.config.model);
+      {
+        const autoCfg = resolveAutoCompactConfig();
+        this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model);
+      }
       this.verifier = new VerificationAgent(this.config.apiKey, this.config.model);
     }
     if (typeof patch.apiKey === "string") {
@@ -807,9 +823,20 @@ export class AgentLoop extends AgentEventEmitter {
     return this.isPlanMode() ? "plan" : "agent";
   }
 
-  async compactSessionNow(): Promise<{ beforeCount: number; afterCount: number; changed: boolean }> {
+  async compactSessionNow(options: {
+    recentKeep?: number;
+    theme?: string;
+  } = {}): Promise<{
+    beforeCount: number;
+    afterCount: number;
+    changed: boolean;
+    recentKeep: number;
+    theme?: string;
+  }> {
+    const recentKeep = Math.max(1, Math.min(40, Math.floor(options.recentKeep ?? 6)));
+    const theme = options.theme?.trim() || undefined;
     const beforeCount = this.messages.length;
-    const compacted = await this.compactor.compact(this.messages);
+    const compacted = await this.compactor.compact(this.messages, recentKeep, { theme });
     const changed = compacted.length !== beforeCount;
     this.messages = compacted;
     if (changed) {
@@ -820,6 +847,62 @@ export class AgentLoop extends AgentEventEmitter {
       beforeCount,
       afterCount: this.messages.length,
       changed,
+      recentKeep,
+      theme,
+    };
+  }
+
+  /**
+   * 回退最近 n 个真实用户轮（含其后 assistant/tool），并 checkpoint。
+   * G2.3：对标 Grok `/rewind`
+   */
+  async rewindTurns(turns = 1): Promise<{
+    removedTurns: number;
+    removedMessages: number;
+    remainingTurns: number;
+    messageCount: number;
+    turnCount: number;
+  }> {
+    const n = resolveRewindTurns([String(turns)], 1);
+    const result = rewindByUserTurns(this.messages, n);
+    this.messages = result.messages;
+    // turnCount 与剩余真实用户轮对齐，便于 status/recap
+    this.turnCount = result.remainingTurns;
+    if (result.removedMessages > 0) {
+      await this.checkpointSession();
+    }
+    return {
+      removedTurns: result.removedTurns,
+      removedMessages: result.removedMessages,
+      remainingTurns: result.remainingTurns,
+      messageCount: this.messages.length,
+      turnCount: this.turnCount,
+    };
+  }
+
+  /**
+   * 分叉当前对话到新 sessionId（复制消息），并保存快照。
+   * G2.2：对标 Grok `/fork`（会话分叉，非子 agent）
+   */
+  async forkSession(nameHint?: string): Promise<SavedSessionSummary & { forkedFrom: string }> {
+    const fromId = this.sessionId;
+    // 先落盘源会话，避免分叉丢未保存变更
+    await this.checkpointSession();
+
+    this.sessionId = "session-" + Date.now();
+    this.sessionCreatedAt = new Date().toISOString();
+    this.pipeline.setSessionId(this.sessionId);
+    this.memoryStore.resetSession();
+    this.sectionRegistry.clearCache();
+
+    const saveName = resolveForkName(nameHint ? [nameHint] : undefined, this.sessionId);
+    await this.sessionRegistry.save(this.captureSessionSnapshot(saveName));
+
+    const summary = this.getSessionSummary();
+    return {
+      ...summary,
+      name: saveName,
+      forkedFrom: fromId,
     };
   }
 
@@ -1017,7 +1100,7 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private async buildSystemPrompt(): Promise<string> {
-    return assembleSystemPrompt({
+    const base = await assembleSystemPrompt({
       baseSystemPrompt: this.config.systemPrompt,
       sectionRegistry: this.sectionRegistry,
       memoryStore: this.memoryStore,
@@ -1029,6 +1112,10 @@ export class AgentLoop extends AgentEventEmitter {
       fileStateDir: this.config.runtime?.fileStateDir,
       runtimeRootDir: this.runtimeRootDir,
     });
+    if (this.isPlanMode()) {
+      return `${base}\n\n${buildPlanModeSystemAddon()}`;
+    }
+    return base;
   }
 
   private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<LlmChatResponse> {

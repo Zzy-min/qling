@@ -5,6 +5,7 @@
 
 import type { Message } from "../types.js";
 import type { SavedSessionSnapshot, SavedSessionSummary } from "./session-registry.js";
+import { deriveSessionTitle } from "./session-title.js";
 
 export interface SessionLiveFields {
   sessionId: string;
@@ -62,6 +63,7 @@ export function applySessionSnapshot(snapshot: SavedSessionSnapshot): SessionRes
     workspaceDir: snapshot.workspaceDir,
     summary: {
       name: snapshot.name,
+      title: deriveSessionTitle(snapshot.messages) || snapshot.name,
       sessionId: snapshot.sessionId,
       workspaceDir: snapshot.workspaceDir,
       createdAt: snapshot.createdAt,

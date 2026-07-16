@@ -293,6 +293,38 @@ export class DashboardServer {
     });
     const tasks = allTasks.slice(0, TASK_LIMIT);
 
+    let sessions: DashboardSnapshot["sessions"] = [];
+    try {
+      const listed = await this.options.agentLoop.listSessionsDetailed();
+      const currentId = this.getSessionId();
+      sessions = listed.slice(0, 12).map((s) => ({
+        sessionId: s.sessionId,
+        name: s.title || s.name || s.sessionId,
+        updatedAt: s.updatedAt,
+        turnCount: s.turnCount,
+        messageCount: s.messageCount,
+        sessionTokens: s.sessionTokens,
+        active: s.sessionId === currentId,
+      }));
+    } catch {
+      sessions = [
+        {
+          sessionId: this.getSessionId(),
+          name: this.getSessionId(),
+          updatedAt: new Date(now).toISOString(),
+          turnCount: Number((this.options.agentLoop as unknown as { turnCount?: number }).turnCount ?? 0),
+          messageCount: 0,
+          sessionTokens: 0,
+          active: true,
+        },
+      ];
+    }
+
+    const currentTokens =
+      sessions.find((s) => s.active)?.sessionTokens ??
+      sessions[0]?.sessionTokens ??
+      0;
+
     const stable = {
       runtime: {
         ready: true,
@@ -303,6 +335,16 @@ export class DashboardServer {
       },
       summary: summaryFor(allTasks),
       tasks,
+      sessions,
+      agentLive: {
+        sessionId: this.getSessionId(),
+        turnCount: Number((this.options.agentLoop as unknown as { turnCount?: number }).turnCount ?? 0),
+        ready: true,
+      },
+      budget: {
+        sessionTokens: currentTokens,
+        contextLimit: null as number | null,
+      },
       activity: recent.events,
       boundary: {
         localOnly: true as const,

@@ -5,9 +5,13 @@ import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import {
   checkSensitiveWriteTarget,
   getRuntimeRootsFromEnv,
-  isPathAllowedForWrite,
   resolveToolPath,
 } from "../runtime-paths.js";
+import {
+  isPathAllowedUnderProfile,
+  isWriteBlockedByProfile,
+  resolveSandboxProfile,
+} from "../runtime/sandbox-profile.js";
 
 const MAX_WRITE_BYTES = 256 * 1024; // 256KB
 
@@ -122,10 +126,18 @@ export async function runWrite(args: {
 
   const roots = getRuntimeRootsFromEnv();
   const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
-  if (!isPathAllowedForWrite(resolvedPath, roots)) {
+  const profile = resolveSandboxProfile();
+  if (isWriteBlockedByProfile(profile)) {
+    return toolError(
+      "WRITE_SANDBOX_READ_ONLY",
+      `sandbox profile "${profile}" blocks all writes (use /sandbox workspace)`,
+      { category: "permission" }
+    );
+  }
+  if (!isPathAllowedUnderProfile(resolvedPath, profile, roots)) {
     return toolError(
       "WRITE_OUTSIDE_ALLOWED_ROOT",
-      `${resolvedPath} is outside write sandbox (default: workspace only; set QLING_WRITE_SANDBOX=roots|off to relax)`
+      `${resolvedPath} is outside sandbox profile "${profile}" (use /sandbox roots|off to relax)`
     );
   }
 

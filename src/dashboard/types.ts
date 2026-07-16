@@ -37,6 +37,29 @@ export interface DashboardTask {
   actions: DashboardTaskAction[];
 }
 
+/** 最近会话摘要（只读，便于 /resume） */
+export interface DashboardSessionSummary {
+  sessionId: string;
+  name: string;
+  updatedAt: string;
+  turnCount: number;
+  messageCount: number;
+  sessionTokens: number;
+  active: boolean;
+}
+
+export interface DashboardAgentLive {
+  sessionId: string;
+  turnCount: number;
+  ready: boolean;
+}
+
+export interface DashboardBudget {
+  sessionTokens: number;
+  /** 可选上限；未知时为 null */
+  contextLimit: number | null;
+}
+
 export interface DashboardSnapshot {
   generatedAt: number;
   revision: string;
@@ -49,6 +72,10 @@ export interface DashboardSnapshot {
   };
   summary: Record<DashboardTaskStatus | "total", number>;
   tasks: DashboardTask[];
+  /** 最近会话（只读） */
+  sessions: DashboardSessionSummary[];
+  agentLive?: DashboardAgentLive;
+  budget?: DashboardBudget;
   activity: MetricEvent[];
   boundary: {
     localOnly: true;

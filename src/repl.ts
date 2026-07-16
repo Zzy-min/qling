@@ -285,6 +285,7 @@ export class Repl {
     const placeholderTime = new Date(0).toISOString();
     return names.map((name) => ({
       name,
+      title: name,
       sessionId: name,
       workspaceDir: null,
       createdAt: placeholderTime,
@@ -318,9 +319,10 @@ export class Repl {
 
     const lines = ["📂 已保存的会话:"];
     sessions.forEach((session, index) => {
-      lines.push(`  ${index + 1}. ${session.name} | ${session.sessionId}`);
+      const title = session.title || session.name;
+      lines.push(`  ${index + 1}. ${title}`);
       lines.push(
-        `     更新: ${this.formatSessionTime(session.updatedAt)} | turns=${session.turnCount} | messages=${session.messageCount}`
+        `     id: ${session.sessionId} | 更新: ${this.formatSessionTime(session.updatedAt)} | turns=${session.turnCount} | messages=${session.messageCount}`
       );
     });
     return `${lines.join("\n")}\n`;

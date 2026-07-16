@@ -25,6 +25,11 @@ import { DaemonSessionApi } from "../session/daemon-session-api.js";
 import { buildStatusLine, collectStatusLineSnapshot } from "../statusline.js";
 import { appendInputHistory, loadInputHistory } from "./input-history.js";
 import { SerialInputQueue } from "./input-queue.js";
+import {
+  formatBgTaskNotify,
+  getBackgroundTaskRegistry,
+  type BackgroundTaskEvent,
+} from "../runtime/background-tasks.js";
 
 export class StreamingREPL {
   private ui: StreamUI;
@@ -41,6 +46,7 @@ export class StreamingREPL {
   private onClose: (() => void) | null = null;
   private lastExecutionStatus = "";
   private readonly handleSlashCommandOverride?: SlashCommandHandler;
+  private bgEventHandler: ((event: BackgroundTaskEvent) => void) | null = null;
 
   constructor(
     agent?: AgentLoop,
@@ -84,10 +90,57 @@ export class StreamingREPL {
     await this.loadLocalInputHistory();
     await this.refreshStatusLine();
     this.ui.onInput((cmd) => this.handleUserInput(cmd));
+    // Shift+Tab：Grok 三态原位切换 + plan 时确保计划目录
+    this.ui.setModeCycleHandler(async () => {
+      const { cycleAgentMode } = await import("../commands/mode.js");
+      const next = cycleAgentMode(this.agent as any);
+      if (next.uiMode === "plan") {
+        const { ensureDefaultPlanDir } = await import("../plan/plan-artifacts.js");
+        await ensureDefaultPlanDir(this.agent.getWorkspaceDir());
+      }
+      await this.refreshStatusLine();
+      this.ui.applySessionChrome({
+        sessionMode: next.sessionMode,
+        permissionMode: next.permissionMode,
+      });
+    });
+    this.ui.setSessionPickerHandlers({
+      onRequestSessionList: async () => {
+        try {
+          const sessions = await this.agent.listSessionsDetailed();
+          const currentId = this.agent.getSessionId();
+          this.ui.showSessionPicker(
+            sessions.map((s) => ({
+              sessionId: s.sessionId,
+              // 展示首条真实用户问题；回退内部 name
+              name: (s as { title?: string }).title || s.name || s.sessionId,
+              updatedAt: s.updatedAt,
+              turnCount: s.turnCount,
+              messageCount: s.messageCount,
+              active: s.sessionId === currentId,
+            }))
+          );
+        } catch (err) {
+          this.ui.appendError(
+            err instanceof Error ? err.message : "无法列出会话"
+          );
+        }
+      },
+      onSessionPick: async (sessionId) => {
+        const picked = await this.switchSession(sessionId);
+        if (!picked) {
+          this.ui.appendError(`找不到会话: ${sessionId}`);
+          return;
+        }
+        this.ui.setModel(this.agent.getModel());
+        await this.refreshStatusLine();
+        // switchSession 内已：回放历史 + 状态行 + 单次输入框
+      },
+    });
     this.wireAgentEvents();
     this.ui.start();
     if (restored) {
-      this.ui.appendValidation("pass", `已恢复会话: ${restored.name} (${restored.sessionId})`);
+      this.paintRestoredSession(restored, "已恢复会话", "pass");
     }
     await new Promise<void>((resolve) => {
       this.onClose = resolve;
@@ -101,6 +154,10 @@ export class StreamingREPL {
   private async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.bgEventHandler) {
+      getBackgroundTaskRegistry().off("event", this.bgEventHandler);
+      this.bgEventHandler = null;
+    }
     try {
       await this.agent.shutdown();
     } catch {
@@ -117,6 +174,23 @@ export class StreamingREPL {
   // ── 事件连接 ────────────────────────────────────────
 
   private wireAgentEvents(): void {
+    // G3.2：后台 task_id 一行通知
+    this.bgEventHandler = (event: BackgroundTaskEvent) => {
+      const line = formatBgTaskNotify(event);
+      const status =
+        event.type === "started"
+          ? "pass"
+          : event.task.status === "completed"
+            ? "pass"
+            : "warn";
+      try {
+        this.ui.appendValidation(status, line);
+      } catch {
+        // ignore paint failures during shutdown
+      }
+    };
+    getBackgroundTaskRegistry().on("event", this.bgEventHandler);
+
     const subscribe = (this.agent as any).subscribeExecutionEvents;
     if (typeof subscribe === "function") {
       subscribe.call(this.agent, (event: any) => {
@@ -171,6 +245,20 @@ export class StreamingREPL {
       this.ui.appendRepair(reason, action, retryCount);
     });
 
+    this.agent.on("context_compacted", (info: {
+      beforeCount?: number;
+      afterCount?: number;
+      auto?: boolean;
+    }) => {
+      const before = Number(info?.beforeCount ?? 0);
+      const after = Number(info?.afterCount ?? 0);
+      const tag = info?.auto === false ? "手动" : "自动";
+      this.ui.appendValidation(
+        "warn",
+        `${tag}上下文压缩: ${before} → ${after} 条消息（可用 /compact 手动触发）`
+      );
+    });
+
     this.agent.on("recovery_paused", (state: any) => {
       this.ui.stopProgress();
       this.ui.setRecoveryState(state);
@@ -183,8 +271,15 @@ export class StreamingREPL {
       case "bash": {
         const cmd = args.cmd ?? args.command ?? args._ ?? "";
         const shell = args.shell ?? "";
-        return shell ? shell + ' -c "' + cmd + '"' : String(cmd);
+        const bg = args.background ? " [bg]" : "";
+        return (shell ? shell + ' -c "' + cmd + '"' : String(cmd)) + bg;
       }
+      case "bg_list":
+        return "bg_list";
+      case "bg_wait":
+        return "bg_wait " + String(args.task_id ?? "");
+      case "bg_kill":
+        return "bg_kill " + String(args.task_id ?? "");
       case "read": {
         const p = args.path ?? args.file ?? "";
         return "cat " + p;
@@ -248,7 +343,15 @@ export class StreamingREPL {
           typeof this.ui.toggleExpandLongToolOutput === "function"
             ? this.ui.toggleExpandLongToolOutput()
             : false,
+        expandLast: () =>
+          typeof this.ui.expandLastToolOutput === "function"
+            ? this.ui.expandLastToolOutput()
+            : false,
       },
+      openSessionPicker: () => this.ui.openSessionPicker(),
+      openOptionPicker: (spec) => this.ui.openOptionPicker(spec),
+      repaintChrome: () => this.ui.repaintChrome({ clearScreen: true }),
+      applySessionChrome: (patch) => this.ui.applySessionChrome(patch),
       setImmediatePrompt: (prompt: string) => {
         this.immediatePrompt = prompt;
       },
@@ -258,7 +361,14 @@ export class StreamingREPL {
         (this.ui as any).setModel?.(model);
         await this.refreshStatusLine();
       },
-      writeLine: (line = "") => this.ui.appendOutput(line),
+      // slash / 切换器反馈走 notice，禁止 › 流式叠框
+      writeLine: (line = "") => {
+        if (typeof (this.ui as any).appendNotice === "function") {
+          this.ui.appendNotice(line);
+        } else {
+          this.ui.appendOutput(line);
+        }
+      },
       writeError: (line = "") => this.ui.appendError(line),
     };
   }
@@ -380,6 +490,8 @@ export class StreamingREPL {
     if (!accepted || this.closed) return;
     if (this.inputQueue.isProcessing || this.inputQueue.pendingCount > 0) return;
     await this.refreshStatusLine();
+    // slash 已打开会话/选项切换器时，showPrompt 会叠空框；浮层自带输入区
+    if (this.ui.isOverlayOpen()) return;
     this.ui.showPrompt();
   }
 
@@ -462,14 +574,20 @@ export class StreamingREPL {
     const handled = await handleSlashCommand(input, this.createSlashContext());
     if (handled) {
       // plan/model/permissions 等变更后刷新 chrome + statusline
+      // 注意：若 slash 打开了切换器，refresh 不得触发叠框（setChromeStatus 不重绘输入）
       await this.refreshStatusLine();
       if (this.immediatePrompt) {
+        // 有立即 prompt 时先关掉切换器（避免与 agent 流抢输入槽）
+        if (this.ui.isOverlayOpen()) {
+          this.ui.dismissOverlay();
+        }
         const nextPrompt = this.immediatePrompt;
         this.immediatePrompt = null;
         await this.processPrompt(nextPrompt);
-      } else {
+      } else if (!this.ui.isOverlayOpen()) {
         await this.scheduler.runDueTasksOnce();
       }
+      // 切换器打开时不 showPrompt；由 handleUserInput 尾部统一判断
       return;
     }
 
@@ -540,6 +658,9 @@ export class StreamingREPL {
     await this.rebuildSessionControllers();
     await this.agent.checkpointSession();
 
+    // 模型上下文已 hydrate；同步回放 + 状态 + 单次输入框
+    this.paintRestoredSession(restored, "已载入会话内容", "pass");
+
     const tasks = await this.scheduler.listTasks();
     const goal = await this.goalController.getGoalStatus();
     return {
@@ -547,5 +668,29 @@ export class StreamingREPL {
       activeTaskCount: tasks.filter((task) => task.status !== "canceled" && task.status !== "completed").length,
       activeGoalStatus: goal?.status ?? null,
     };
+  }
+
+  /** 将会话快照中的 user/assistant 消息回放到终端（含状态行，避免二次画输入框） */
+  private paintRestoredSession(
+    restored: Pick<SavedSessionSummary, "name" | "sessionId"> & { title?: string },
+    labelPrefix: string,
+    status: "pass" | "fail" | "warn" = "pass"
+  ): void {
+    const replay = (this.ui as { replaySessionMessages?: Function }).replaySessionMessages;
+    if (typeof replay !== "function") return;
+    const messages =
+      typeof this.agent.getMessagesSnapshot === "function"
+        ? this.agent.getMessagesSnapshot()
+        : [];
+    const displayTitle = restored.title || restored.name;
+    const statusIcon =
+      status === "pass" ? "● pass" : status === "fail" ? "● fail" : "● warn";
+    replay.call(this.ui, messages, {
+      label: `${labelPrefix}: ${displayTitle}`,
+      // 提高回放条数：折叠噪声后仍尽量展示完整对话（模型上下文本身是全量的）
+      maxMessages: 48,
+      statusLine: `${statusIcon}  ${labelPrefix}: ${displayTitle} (${restored.sessionId})`,
+      drawInput: true,
+    });
   }
 }

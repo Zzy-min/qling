@@ -21,6 +21,18 @@ export interface ContextLayerEstimate {
   otherPct: number;
   messageCount: number;
   toolMessageCount: number;
+  /** G2.5 分类占用（对标 Grok /context breakdown） */
+  systemChars: number;
+  messagesChars: number;
+  toolsChars: number;
+  freeChars: number;
+  budgetChars: number;
+  systemPct: number;
+  messagesPct: number;
+  toolsPct: number;
+  freePct: number;
+  userMessageCount: number;
+  assistantMessageCount: number;
 }
 
 const DEFAULT_MAX = 6000;
@@ -120,15 +132,37 @@ function messageChars(msg: { role?: string; content?: string; tool_calls?: unkno
 }
 
 /**
+ * 上下文字符预算（本地估计，非 provider token）。
+ * QLING_CONTEXT_CHAR_BUDGET 可覆盖；默认约 4 万字符量级。
+ */
+export function resolveContextCharBudget(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): number {
+  const raw = env.QLING_CONTEXT_CHAR_BUDGET;
+  if (raw !== undefined && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 40_000;
+}
+
+/**
  * 本地字符层估计（非 provider token）。用于 /context harness 可见性。
  */
 export function estimateContextLayers(
-  messages: Array<{ role?: string; content?: string; tool_calls?: unknown }>
+  messages: Array<{ role?: string; content?: string; tool_calls?: unknown }>,
+  options: {
+    systemPrompt?: string;
+    budgetChars?: number;
+  } = {}
 ): ContextLayerEstimate {
   let historyChars = 0;
   let toolOutputChars = 0;
   let otherChars = 0;
   let toolMessageCount = 0;
+  let userMessageCount = 0;
+  let assistantMessageCount = 0;
+  let systemFromMessages = 0;
 
   for (const msg of messages) {
     const c = messageChars(msg);
@@ -138,13 +172,32 @@ export function estimateContextLayers(
       toolMessageCount++;
     } else if (role === "user" || role === "assistant") {
       historyChars += c;
+      if (role === "user") userMessageCount++;
+      else assistantMessageCount++;
+    } else if (role === "system") {
+      systemFromMessages += c;
+      otherChars += c;
     } else {
       otherChars += c;
     }
   }
 
+  const systemChars =
+    (typeof options.systemPrompt === "string" ? options.systemPrompt.length : 0) +
+    systemFromMessages;
+  const messagesChars = historyChars;
+  const toolsChars = toolOutputChars;
+  const usedWithoutFree = systemChars + messagesChars + toolsChars + Math.max(0, otherChars - systemFromMessages);
+  const budgetChars = Math.max(
+    usedWithoutFree,
+    options.budgetChars ?? resolveContextCharBudget()
+  );
+  const freeChars = Math.max(0, budgetChars - usedWithoutFree);
+
   const totalChars = historyChars + toolOutputChars + otherChars || 1;
-  const pct = (n: number) => Math.round((n / totalChars) * 1000) / 10;
+  const pct = (n: number, base = totalChars) =>
+    Math.round((n / Math.max(1, base)) * 1000) / 10;
+  const budgetPct = (n: number) => pct(n, budgetChars);
 
   return {
     historyChars,
@@ -156,5 +209,16 @@ export function estimateContextLayers(
     otherPct: pct(otherChars),
     messageCount: messages.length,
     toolMessageCount,
+    systemChars,
+    messagesChars,
+    toolsChars,
+    freeChars,
+    budgetChars,
+    systemPct: budgetPct(systemChars),
+    messagesPct: budgetPct(messagesChars),
+    toolsPct: budgetPct(toolsChars),
+    freePct: budgetPct(freeChars),
+    userMessageCount,
+    assistantMessageCount,
   };
 }

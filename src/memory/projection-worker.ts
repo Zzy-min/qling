@@ -108,11 +108,12 @@ export class ProjectionWorker {
       if (pending === 0 && !this.firstRun) return;
       if (pending > this.options.maxPendingEntries || this.firstRun) {
         const count = await this.projectOnce();
-        if (count > 0) {
+        if (count > 0 && process.env.QLING_MEMORY_DEBUG === "1") {
           console.error(`[ProjectionWorker] replayed ${count} entries, checkpoint saved`);
         }
       }
     } catch (err) {
+      // 仅致命错误：TUI quiet 下仍可能被 guard 过滤；debug 时可见
       console.error(`[ProjectionWorker] error: ${(err as Error).message}`);
     }
   }

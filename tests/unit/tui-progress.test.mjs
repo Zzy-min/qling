@@ -13,6 +13,7 @@ test("tui progress duration formats minutes", () => {
 });
 
 test("tui progress pulse includes local stage and elapsed time", () => {
-  assert.equal(formatProgressPulse("agent", 12_000), "... agent 仍在运行 12.0s");
-  assert.equal(formatProgressPulse("", 1_000), "... agent 仍在运行 1.0s");
+  const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+  assert.equal(strip(formatProgressPulse("agent", 12_000)), "⠋  agent 仍在运行 (12.0s)");
+  assert.equal(strip(formatProgressPulse("", 1_000)), "⠹  agent 仍在运行 (1.0s)");
 });

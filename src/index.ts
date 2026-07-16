@@ -380,6 +380,12 @@ async function main() {
     process.exit(0);
   }
 
+  // chat/repl：尽早安静启动（只留顶栏+输入框）；Dashboard 仍可后台默认起
+  if (decision.mode === "chat" || decision.mode === "repl") {
+    const { enterBootQuietMode } = await import("./runtime/console-guard.js");
+    enterBootQuietMode();
+  }
+
   // v0.4 / Phase 1.4 Onboarding（仅交互模式；非 TTY 跳过）
   if (decision.mode === "chat" || decision.mode === "repl") {
     const needSetup = !(
@@ -1053,6 +1059,21 @@ async function main() {
   };
 
   // --- 延迟实例化 AgentLoop，防止 setup 等管理命令因缺失 Key 而崩溃 ---
+  // dashboard 顶层命令：临时强制开启本机会话任务工作台（无需手写 env）
+  if (decision.mode === "dashboard") {
+    process.env.QLING_FEATURES_DASHBOARD = "true";
+    process.env.QLING_METRICS_ENABLED =
+      process.env.QLING_METRICS_ENABLED || "true";
+    const portFlag = decision.subArgs.find((a) => a.startsWith("--port="));
+    if (portFlag) {
+      process.env.QLING_DASHBOARD_PORT = portFlag.slice("--port=".length);
+    }
+    const portIdx = decision.subArgs.indexOf("--port");
+    if (portIdx >= 0 && decision.subArgs[portIdx + 1]) {
+      process.env.QLING_DASHBOARD_PORT = decision.subArgs[portIdx + 1];
+    }
+  }
+
   const agent = new AgentLoop(agentConfig);
   await agent.waitForInit();
 
@@ -1085,19 +1106,28 @@ async function main() {
 
     if (decision.mode === "dashboard") {
       const [sub] = decision.subArgs;
-      if (sub === "start") {
+      const action = !sub || sub === "start" || sub.startsWith("--") ? "start" : sub;
+      if (action === "start") {
         const port = process.env.QLING_DASHBOARD_PORT || "9999";
+        const url = `http://127.0.0.1:${port}`;
         const ds = (agent as any).dashboardServer;
-        // 检查是否真正成功开启监听
         if (!ds || !ds.listening) {
-           console.error(`❌ Dashboard 启动失败，请检查端口 ${port} 是否被占用。`);
-           process.exit(1);
+          console.error(`❌ 任务工作台启动失败，请检查端口 ${port} 是否被占用。`);
+          process.exit(1);
         }
-        console.error("📊 Dashboard 运行中。按 Ctrl+C 退出。");
+        console.error("");
+        console.error("📊 轻灵任务工作台 / Mission Control");
+        console.error("-----------------------------------------");
+        console.error(`本地链接 : ${url}`);
+        console.error("边界     : 仅 127.0.0.1 · 任务正文不外传");
+        console.error("用途     : mission / loop / workflow · 暂停恢复 · 最近会话");
+        console.error("提示     : 浏览器打开链接；按 Ctrl+C 停止本服务");
+        console.error("-----------------------------------------");
+        console.error("");
         await new Promise(() => {}); // Keep alive
         return;
       }
-      console.error("用法: qling dashboard start");
+      console.error("用法: qling dashboard [start] [--port 9999]");
       process.exit(1);
     }
 

@@ -7,9 +7,21 @@ function formatTime(value: string): string {
 
 export const sessionsCommand: SlashCommand = {
   name: "/sessions",
-  description: "列出最近保存的会话快照",
-  usage: "/sessions",
-  execute: async (_args, context) => {
+  aliases: ["/会话", "/session-picker"],
+  description: "打开会话切换器，或列出最近保存的会话",
+  usage: "/sessions [list|pick]",
+  execute: async (args, context) => {
+    const sub = (args[0] ?? "pick").toLowerCase();
+
+    // 默认 / 显式 pick：TUI 内切换器（与 /resume 一致；勿 writeLine 以免叠画）
+    if (
+      (sub === "pick" || sub === "ui" || sub === "切换" || args.length === 0) &&
+      typeof context.openSessionPicker === "function"
+    ) {
+      context.openSessionPicker();
+      return;
+    }
+
     const sessions =
       context.listSavedSessions
         ? await context.listSavedSessions()
@@ -29,13 +41,15 @@ export const sessionsCommand: SlashCommand = {
       context.writeLine("(无)");
     } else {
       for (const session of sessions) {
-        context.writeLine(`- ${session.name} | ${session.sessionId}`);
+        const title = (session as { title?: string }).title || session.name;
+        context.writeLine(`- ${title}`);
         context.writeLine(
-          `  更新: ${formatTime(session.updatedAt)} | turns=${session.turnCount} | messages=${session.messageCount}`
+          `  id: ${session.sessionId} | 更新: ${formatTime(session.updatedAt)} | turns=${session.turnCount} | messages=${session.messageCount}`
         );
       }
     }
     context.writeLine("-----------------------------------------");
+    context.writeLine("提示: /sessions pick 或 Ctrl+\\ 打开切换器；/resume <id> 直接恢复");
     context.writeLine("");
   },
 };

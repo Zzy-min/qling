@@ -6,9 +6,13 @@ import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import {
   checkSensitiveWriteTarget,
   getRuntimeRootsFromEnv,
-  isPathAllowedForWrite,
   resolveToolPath,
 } from "../runtime-paths.js";
+import {
+  isPathAllowedUnderProfile,
+  isWriteBlockedByProfile,
+  resolveSandboxProfile,
+} from "../runtime/sandbox-profile.js";
 
 /** 超过该字节数拒绝做 LCS diff / 写入，防止超大文件 OOM */
 export const PATCH_MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -161,10 +165,18 @@ export async function runPatch(args: {
 
   const roots = getRuntimeRootsFromEnv();
   const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
-  if (!isPathAllowedForWrite(resolvedPath, roots)) {
+  const profile = resolveSandboxProfile();
+  if (isWriteBlockedByProfile(profile)) {
+    return toolError(
+      "PATCH_SANDBOX_READ_ONLY",
+      `sandbox profile "${profile}" blocks all writes (use /sandbox workspace)`,
+      { category: "permission" }
+    );
+  }
+  if (!isPathAllowedUnderProfile(resolvedPath, profile, roots)) {
     return toolError(
       "PATCH_OUTSIDE_ALLOWED_ROOT",
-      `${resolvedPath} is outside write sandbox (default: workspace only; set QLING_WRITE_SANDBOX=roots|off to relax)`
+      `${resolvedPath} is outside sandbox profile "${profile}" (use /sandbox roots|off to relax)`
     );
   }
   const sensitive = checkSensitiveWriteTarget(resolvedPath);

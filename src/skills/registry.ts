@@ -52,10 +52,14 @@ async function walkSkillDir(dir: string, results: SkillMeta[]): Promise<void> {
     return;
   }
 
+  const { shouldSkipSkillDirName } = await import("./skill-catalog.js");
+
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
 
     if (entry.isDirectory()) {
+      // 跳过 templates / archive / examples 等归档目录
+      if (shouldSkipSkillDirName(entry.name)) continue;
       // Check for index.md inside directory
       const indexPath = join(fullPath, "index.md");
       const meta = await parseSkillFile(indexPath);

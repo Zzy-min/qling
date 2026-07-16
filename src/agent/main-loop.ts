@@ -205,12 +205,27 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
 
     const lastUserMsg = findLastUserMessageContent(host.messages);
 
-    if (host.compactor.needsCompaction(host.messages)) {
-      console.error("\n📦 上下文压缩中...（" + host.messages.length + " 条消息）");
-      const compacted = await host.compactor.compact(host.messages);
-      host.messages.splice(0, host.messages.length, ...compacted);
-      host.compactionCount++;
-      console.error("📦 压缩完成 → " + host.messages.length + " 条消息\n");
+    // 默认自动压缩：上下文估计超阈值时摘要旧消息并保留最近轮
+    {
+      const { resolveAutoCompactConfig } = await import("../session/compact-auto.js");
+      const autoCfg = resolveAutoCompactConfig();
+      if (autoCfg.enabled && host.compactor.needsCompaction(host.messages)) {
+        const beforeCount = host.messages.length;
+        console.error("\n📦 上下文压缩中...（" + beforeCount + " 条消息）");
+        const compacted = await host.compactor.compact(
+          host.messages,
+          autoCfg.recentKeep
+        );
+        host.messages.splice(0, host.messages.length, ...compacted);
+        host.compactionCount++;
+        const afterCount = host.messages.length;
+        console.error("📦 压缩完成 → " + afterCount + " 条消息\n");
+        host.emit("context_compacted", {
+          beforeCount,
+          afterCount,
+          auto: true,
+        });
+      }
     }
 
     const conflicts = host.compactor.scanConflicts(host.messages);

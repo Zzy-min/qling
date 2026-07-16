@@ -295,14 +295,16 @@ test("stream ui ctrl+l clears screen and redraws without losing input", async ()
     assert.match(getOutput(), /Model: test-model/);
     assert.match(getOutput(), /Tokens:/);
     assert.match(getOutput(), /Git:/);
-    const outputStr = getOutput();
-    assert.match(outputStr, /› draft prompt/);
-    assert.match(outputStr, /│/);
+    const plain = stripAnsi(getOutput());
+    assert.match(plain, /› draft prompt/);
+    assert.match(plain, /[│]/);
+    assert.match(plain, /[╭┌]/);
+    assert.match(plain, /[╰└]/);
     // 输入框上方不再堆叠快捷键提示与 statusline（去噪）
     assert.doesNotMatch(getOutput(), /Enter 发送/);
     assert.doesNotMatch(getOutput(), /model=test session=session-1/);
     assert.doesNotMatch(getOutput(), /\/model 切换模型/);
-    assert.match(getOutput(), /draft prompt/);
+    assert.match(plain, /draft prompt/);
   });
 });
 
@@ -313,14 +315,14 @@ test("stream ui prompt renders inside input frame without duplicate bare prompt"
 
     ui.printInputBar();
 
-    const output = getOutput();
-    assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
-    assert.match(output, /└─+┘/);
-    assert.doesNotMatch(output, /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
+    const plain = stripAnsi(getOutput());
+    assert.match(plain, /[│] › 输入任务，或按 \/ 打开命令面板/);
+    assert.match(plain, /[╰└]/);
+    assert.doesNotMatch(getOutput(), /\n(?:\x1b\[[0-9;]*m)*› (?:\x1b\[[0-9;]*m)*$/);
     // 输入框上方不再打印 statusline / 快捷键提示
-    assert.doesNotMatch(output, /model=test session=session-1/);
-    assert.doesNotMatch(output, /Enter 发送/);
-    assert.doesNotMatch(output, /\/exit 退出/);
+    assert.doesNotMatch(getOutput(), /model=test session=session-1/);
+    assert.doesNotMatch(getOutput(), /Enter 发送/);
+    assert.doesNotMatch(getOutput(), /\/exit 退出/);
   });
 });
 
@@ -331,10 +333,10 @@ test("stream ui redraw keeps complete input frame while typing", async () => {
     ui.printInputBar();
     ui.handleChar("你");
 
-    const output = getOutput();
-    assert.match(output, /│ › 你/);
-    assert.match(output, /└─+┘/);
-    assert.doesNotMatch(output.split("│ › 你").at(-1), /^\s*$/);
+    const plain = stripAnsi(getOutput());
+    assert.match(plain, /[│] › 你/);
+    assert.match(plain, /[╰└]/);
+    assert.doesNotMatch(plain.split("│ › 你").at(-1), /^\s*$/);
   });
 });
 
@@ -345,7 +347,7 @@ test("stream ui input frame borders keep the same visual width as content rows",
     ui.printInputBar();
     const frameLines = stripAnsi(getOutput())
       .split("\n")
-      .filter((line) => line.startsWith("┌") || line.startsWith("│") || line.startsWith("└"));
+      .filter((line) => /^[┌╭│└╰]/.test(line));
     const widths = frameLines.map((line) => stringWidth(line));
 
     assert.ok(widths.length >= 3);
@@ -391,7 +393,7 @@ test("stream ui showPrompt renders one input frame top border", async () => {
     const plain = stripAnsi(getOutput());
     const topBorderLines = plain
       .split("\n")
-      .filter((line) => line.startsWith("┌"));
+      .filter((line) => /^[┌╭]/.test(line));
 
     assert.equal(topBorderLines.length, 1, `expected one input top border, got ${topBorderLines.length}`);
     // 输入框上方不再输出 statusline / 快捷键黑灰提示
@@ -422,12 +424,12 @@ test("stream ui renders user, assistant, executing timeline, and completion bloc
     assert.match(output, /89ms/);
     assert.match(plain, /结果/);
     assert.match(plain, /模块化结构/);
-    assert.match(plain, /┌─\s*结果/);
+    assert.match(plain, /[┌╭]─\s*结果/);
     assert.match(plain, /任务完成/);
   });
 });
 
-test("stream ui startup renders concise first-run guidance card", async () => {
+test("stream ui startup keeps chrome minimal without home guide above input", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui } = createUi();
 
@@ -435,11 +437,68 @@ test("stream ui startup renders concise first-run guidance card", async () => {
     ui.stop();
 
     const output = getOutput();
+    const plain = stripAnsi(output);
     assert.doesNotMatch(output, /3 步开始/);
     assert.doesNotMatch(output, /常用入口/);
-    assert.match(output, /轻灵 · 本地工作台/);
-    assert.match(output, /│ › 输入任务，或按 \/ 打开命令面板/);
-    assert.match(output, /└─+┘/);
+    assert.doesNotMatch(output, /轻灵 · 本地工作台/);
+    assert.doesNotMatch(output, /记忆状态:/);
+    assert.doesNotMatch(output, /权限模式:/);
+    // 默认圆角框 + 顶栏 accent 段
+    assert.match(plain, /[╭┌].*› 输入任务，或按 \/ 打开命令面板|[│].*› 输入任务/);
+    assert.match(plain, /› 输入任务，或按 \/ 打开命令面板/);
+    assert.match(plain, /[╰└]/);
+    assert.match(plain, /━/);
+  });
+});
+
+test("stream ui session picker opens via handler", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+    ui.setSessionPickerHandlers({
+      onRequestSessionList: () => {
+        ui.showSessionPicker([
+          {
+            sessionId: "s1",
+            name: "alpha",
+            updatedAt: "2026-07-16T00:00:00.000Z",
+            turnCount: 1,
+            messageCount: 2,
+          },
+          {
+            sessionId: "s2",
+            name: "beta",
+            updatedAt: "2026-07-16T01:00:00.000Z",
+            turnCount: 4,
+            messageCount: 8,
+            active: true,
+          },
+        ]);
+      },
+      onSessionPick: () => {},
+    });
+
+    ui.start();
+    ui.openSessionPicker();
+    assert.equal(ui.isOverlayOpen(), true);
+    const plain = stripAnsi(getOutput());
+    assert.match(plain, /会话切换/);
+    assert.match(plain, /beta/);
+    assert.match(plain, /alpha/);
+    ui.stop();
+  });
+});
+
+test("stream ui records turns and expandLast replays tool output", async () => {
+  await withCapturedStdout(async (getOutput) => {
+    const { ui } = createUi();
+    ui.start();
+    ui.appendUserInput("第一轮任务");
+    ui.appendUserInput("第二轮任务");
+    ui.appendToolSuccess("bash", "echo hi", "line1\n".repeat(20), 12);
+    const ok = ui.expandLastToolOutput();
+    assert.equal(ok, true);
+    assert.match(stripAnsi(getOutput()), /重放最近工具输出|line1/);
+    ui.stop();
   });
 });
 
@@ -479,10 +538,11 @@ test("stream ui shows slash completion hints while typing slash prefix", async (
     assert.equal(ui.input.value, "/sk");
     assert.deepEqual(submitted, []);
     const output = getOutput();
+    const plain = stripAnsi(output);
     assert.match(output, /\/skill/);
     assert.match(output, /Tab 补全|Tab/);
     assert.match(output, /skill|command|session|local/);
-    assert.match(output, /└─+┘/);
+    assert.match(plain, /[╰└]/);
   });
 });
 

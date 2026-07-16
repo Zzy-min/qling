@@ -9,7 +9,7 @@ import { spawn, execFileSync } from "child_process";
 import { stat } from "fs/promises";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { toolError, toolSuccess } from "./error-utils.js";
-import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
+import { getRuntimeRootsFromEnv, resolveToolPath } from "../runtime-paths.js";
 
 const MAX_COMMAND_LENGTH = 5000;
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1MB per stream
@@ -49,7 +49,13 @@ export const bashTool: ToolDefinition = {
       },
       timeout: {
         type: "number",
-        description: "Timeout in seconds (default: 60, max: 300)",
+        description:
+          "Timeout in seconds. Foreground default 60 max 300. Background: max lifetime seconds (default 1800; 0 = no auto-kill).",
+      },
+      background: {
+        type: "boolean",
+        description:
+          "If true, run in background and return task_id immediately (use bg_wait/bg_kill or /tasks wait|kill).",
       },
       env_allowlist: {
         type: "array",
@@ -75,10 +81,16 @@ export const bashTool: ToolDefinition = {
     },
     timeout: {
       type: "number",
-      description: "命令超时秒数。默认 60 秒，最大 300 秒。超时后进程会被 SIGTERM 强制终止。",
-      minimum: 1,
-      maximum: 300,
+      description:
+        "超时秒数。前台默认 60、最大 300。后台=最长存活秒（默认 1800，0=不自动 kill）。",
+      minimum: 0,
+      maximum: 86400,
       default: 60,
+    },
+    background: {
+      type: "boolean",
+      description: "true 时后台执行并立即返回 task_id",
+      default: false,
     },
     env_allowlist: {
       type: "array",
@@ -117,6 +129,7 @@ export async function runBash(args: {
   command: string;
   cwd?: string;
   timeout?: number;
+  background?: boolean;
   env_allowlist?: string[];
   env_inject?: Record<string, string>;
 }): Promise<ToolResult> {
@@ -131,12 +144,19 @@ export async function runBash(args: {
     );
   }
 
-  const timeoutSec = Math.max(1, Math.min(300, args.timeout ?? 60));
+  const background = Boolean(args.background);
   const roots = getRuntimeRootsFromEnv();
   const cwdInput = String(args.cwd ?? ".").trim();
   const cwd = resolveToolPath(cwdInput, roots, "workspace");
-  if (!isWithinAllowedRoots(cwd, roots)) {
-    return toolError("BASH_OUTSIDE_ALLOWED_ROOT", `${cwd} is outside allowed roots`);
+  const { isBashCwdAllowed, resolveSandboxProfile } = await import(
+    "../runtime/sandbox-profile.js"
+  );
+  const profile = resolveSandboxProfile();
+  if (!isBashCwdAllowed(cwd, profile, roots)) {
+    return toolError(
+      "BASH_OUTSIDE_ALLOWED_ROOT",
+      `${cwd} is outside sandbox profile "${profile}" for bash cwd`
+    );
   }
   try {
     const cwdStat = await stat(cwd);
@@ -146,6 +166,43 @@ export async function runBash(args: {
   } catch {
     return toolError("BASH_CWD_NOT_FOUND", `cwd not found: ${cwd}`);
   }
+
+  if (background) {
+    try {
+      const { getBackgroundTaskRegistry } = await import("../runtime/background-tasks.js");
+      const reg = getBackgroundTaskRegistry();
+      const rawTimeout = args.timeout;
+      const timeoutSec =
+        typeof rawTimeout === "number" && Number.isFinite(rawTimeout)
+          ? Math.max(0, Math.min(86400, Math.floor(rawTimeout)))
+          : 1800;
+      const task = reg.startShell({
+        command,
+        cwd,
+        env: buildSafeEnv(args.env_allowlist ?? [], args.env_inject ?? {}),
+        timeoutSec,
+      });
+      return toolSuccess(
+        [
+          "background: started",
+          `task_id: ${task.taskId}`,
+          `status: ${task.status}`,
+          `pid: ${task.pid ?? "-"}`,
+          `cwd: ${task.cwd}`,
+          `command: ${task.command}`,
+          `max_lifetime_sec: ${timeoutSec === 0 ? "none" : timeoutSec}`,
+          "use bg_wait / bg_kill or /tasks wait|kill with this task_id",
+        ].join("\n")
+      );
+    } catch (err) {
+      return toolError(
+        "BASH_BACKGROUND_START_FAILED",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+
+  const timeoutSec = Math.max(1, Math.min(300, args.timeout ?? 60));
 
   return new Promise((resolve) => {
     const timeout = timeoutSec * 1000;

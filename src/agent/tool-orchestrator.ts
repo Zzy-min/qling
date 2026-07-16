@@ -311,6 +311,14 @@ export async function executePreparedTools(
             deps.channel
           );
           if (approvalResponse.decision === "allow") {
+            try {
+              const { getPermissionGrantStore } = await import("../guard/permission-grants.js");
+              getPermissionGrantStore().remember(tc.name, {
+                reason: "user approval",
+              });
+            } catch {
+              // grant 失败不阻断执行
+            }
             result = await dispatch(tc);
           } else {
             result = {

@@ -24,7 +24,6 @@ import {
 import { InputBuffer } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
-  formatWelcomeGuide,
   formatRoleHeader,
   formatResultHighlight,
   formatToolOutputCard,
@@ -33,42 +32,58 @@ import {
   padVisible,
   truncateVisible,
 } from "./shell.js";
+import {
+  formatOptionPickerPanel,
+  formatSessionPickerPanel,
+  formatTurnBrowsePanel,
+  paintOptionPickerPanel,
+  paintSessionPickerPanel,
+  paintTurnBrowsePanel,
+  type OptionPickerItem,
+  type OptionPickerSpec,
+  type SessionPickerItem,
+  type TurnBrowseItem,
+} from "./overlay-panel.js";
 import { formatMarkdownForTerminal } from "./markdown.js";
 import { getPackageVersion } from "../package-version.js";
 import type { RecoveryState } from "../execution/types.js";
+import {
+  modeBorderHex,
+  modeCapabilityFooter,
+  modeInputTopLabel,
+  modePlaceholder,
+  modePromptPrefix,
+  paintModeSegment,
+  resolveGrokUiMode,
+} from "./mode-chrome.js";
+import { boldAnsi, dimAnsi, fg, getBorderChars, paint } from "./theme.js";
+import { enterTuiQuietMode, leaveTuiQuietMode } from "../runtime/console-guard.js";
+import {
+  isInternalUserNoise,
+  isToolOnlyAssistantText,
+} from "../session/session-title.js";
+import {
+  captureJumpRestore,
+  lookupAction,
+  type JumpRestore,
+} from "./actions.js";
+import type { TuiFocus } from "./focus-model.js";
+import { tabStructuralFocus } from "./focus-model.js";
 
-// ── ANSI 颜色工具 ───────────────────────────────────────
+// ── ANSI 颜色工具（短别名兼容既有调用） ─────────────────
 
-function rgb(hex: string): string {
-  const n = parseInt(hex.slice(1), 16);
-  return `${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}`;
-}
-
-const C = {
-  p: "#36F5B5",   // primary  竹青绿
-  s: "#75D7FF",   // secondary 青蓝
-  d: "#8B949E",   // dim 灰
-  b: "#E6EDF3",   // bright 白
-  g: "#4ADE80",   // green
-  r: "#FB7185",   // red
-  y: "#FACC15",   // yellow
-  m: "#E879F9",   // magenta
-};
-
-const F = (color: string, s: string): string => `\x1b[38;2;${rgb(color)}m${s}\x1b[0m`;
+const DIM = dimAnsi;
+const BOLD = boldAnsi;
 const S = {
-  p: (s: string) => F(C.p, s),
-  s: (s: string) => F(C.s, s),
-  d: (s: string) => F(C.d, s),
-  b: (s: string) => F(C.b, s),
-  g: (s: string) => F(C.g, s),
-  r: (s: string) => F(C.r, s),
-  y: (s: string) => F(C.y, s),
-  m: (s: string) => F(C.m, s),
+  p: paint.primary,
+  s: paint.secondary,
+  d: paint.dim,
+  b: paint.bright,
+  g: paint.success,
+  r: paint.error,
+  y: paint.warn,
+  m: paint.magenta,
 };
-
-const DIM = (s: string): string => `\x1b[2m${s}\x1b[0m`;
-const BOLD = (s: string): string => `\x1b[1m${s}\x1b[0m`;
 
 // ── 显示宽度工具 ────────────────────────────────────────
 
@@ -148,11 +163,62 @@ export class StreamUI {
   private slashCompletionSelectedIndex = 0;
   private inputCursorAnchor: "current" | "bottom" = "current";
   private inputStartRow = 0;
+  /**
+   * true = 输入框是活动编辑区（光标在框内）。
+   * false = 光标不在输入框内。
+   */
+  private promptLive = false;
+  /**
+   * true = 任务/回放流式输出中。此时禁止 redraw 输入框，
+   * 否则 resize/按键/validation 会把 spinner 画进框内。
+   */
+  private streamActive = false;
   private recoveryState: RecoveryState | null = null;
   private readonly now: () => number;
   private readonly doubleCtrlCExitWindowMs = 2_000;
   private slashUi: SlashUiPorts | null = null;
   private readonly slashUiPromise: Promise<SlashUiPorts>;
+
+  /** G1/G3: 浮层 — 会话 / 轮次 / 通用选项切换器 */
+  private overlay:
+    | null
+    | {
+        kind: "sessions";
+        items: SessionPickerItem[];
+        selected: number;
+        /** 面板本身行数 */
+        lineCount: number;
+        /** 面板 + 其下输入框(+hints) 总行数，用于原地擦除 */
+        blockLines: number;
+      }
+    | {
+        kind: "turns";
+        items: TurnBrowseItem[];
+        selected: number;
+        lineCount: number;
+        blockLines: number;
+      }
+    | {
+        kind: "options";
+        title: string;
+        items: OptionPickerItem[];
+        selected: number;
+        footerHint?: string;
+        onPick: (item: OptionPickerItem) => void | Promise<void>;
+        lineCount: number;
+        blockLines: number;
+      } = null;
+  private turnLog: Array<{ preview: string; fullText: string }> = [];
+  private lastToolOutputBlob: string | null = null;
+  private onRequestSessionList: (() => void | Promise<void>) | null = null;
+  private onSessionPick: ((sessionId: string) => void | Promise<void>) | null = null;
+  /** Shift+Tab：在原输入框内切模式，不提交、不另起输入框 */
+  private onModeCycle: (() => void | Promise<void>) | null = null;
+  /** 对标 Grok ActivePane：prompt | scrollback */
+  private focus: TuiFocus = "prompt";
+  /** 对标 JumpRestore：打开浮层前快照，Esc 恢复 */
+  private jumpRestore: JumpRestore | null = null;
+  private turnSelected = 0;
 
   constructor(
     model: string = "deepseek-chat",
@@ -173,8 +239,272 @@ export class StreamUI {
     }
   }
 
+  /** REPL 注入：打开会话列表时拉数据 */
+  setSessionPickerHandlers(handlers: {
+    onRequestSessionList: () => void | Promise<void>;
+    onSessionPick: (sessionId: string) => void | Promise<void>;
+  }): void {
+    this.onRequestSessionList = handlers.onRequestSessionList;
+    this.onSessionPick = handlers.onSessionPick;
+  }
+
+  /** Shift+Tab 模式循环（REPL 注入，原位更新 chrome + 输入框） */
+  setModeCycleHandler(handler: () => void | Promise<void>): void {
+    this.onModeCycle = handler;
+  }
+
+  /**
+   * 更新模式 chrome：顶栏 Mode + 输入框三态。
+   *
+   * 注意：Windows/ConPTY 上 \x1b[H 局部重写顶栏不可靠，会叠出第二行顶栏。
+   * 因此模式切换只走一次清屏重画（与 /theme 相同），保证顶栏只出现一次。
+   */
+  applySessionChrome(patch: {
+    sessionMode?: string;
+    permissionMode?: string;
+  }): void {
+    if (patch.sessionMode !== undefined) {
+      this.chromeStatus.sessionMode = patch.sessionMode;
+    }
+    if (patch.permissionMode !== undefined) {
+      this.chromeStatus.permissionMode = patch.permissionMode;
+    }
+    if (!this.running) return;
+    if (this.streamActive) return;
+    // 浮层打开时只更新状态，关闭后再由调用方刷新
+    if (this.overlay) return;
+    // 单次清屏重画：顶栏 1 次 + 输入框 1 次，禁止 repaintTopBar+redraw 叠双顶栏
+    this.repaintChrome({ clearScreen: true });
+  }
+
+  /** 由 REPL 在拉到 sessions 后调用 */
+  showSessionPicker(items: SessionPickerItem[]): void {
+    // 全量列表（按更新时间倒序）；可视窗口在 panel 内滑动，不再硬截断只留 24 条
+    // slash Enter 后 streamActive 可能为 true；切换器需可交互
+    this.streamActive = false;
+    // 若已有其它浮层（options/turns），先擦除再开，避免叠层
+    if (this.overlay) {
+      this.closeOverlay(undefined, true);
+    }
+    const mapped = [...items].sort(
+      (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+    );
+    this.armJumpRestore();
+    this.focus = "scrollback";
+    this.overlay = {
+      kind: "sessions",
+      items: mapped,
+      selected: Math.max(
+        0,
+        mapped.findIndex((i) => i.active)
+      ),
+      lineCount: 0,
+      blockLines: 0,
+    };
+    if (this.overlay.selected < 0) this.overlay.selected = 0;
+    this.paintOverlay(false);
+  }
+
+  openSessionPicker(): void {
+    // 对标 jump_slot_taken：其它浮层打开时先关再开 sessions（避免叠层）
+    if (this.overlay) {
+      this.closeOverlay(undefined, true);
+    }
+    void this.onRequestSessionList?.();
+  }
+
+  /**
+   * 通用选项切换器（model / theme / sandbox / mode …）。
+   * 规则与会话切换器一致：
+   * - 打开前关闭已有浮层并擦除 block
+   * - 导航原地 replace paint（不追加）
+   * - 确认先 close 再 onPick（副作用不画在浮层内）
+   *
+   * 注意：slash Enter 会把 streamActive=true；此处必须允许打开，
+   * 并清掉 stream 标志，否则切换器静默失败 + showPrompt 叠空框。
+   */
+  showOptionPicker(spec: OptionPickerSpec): void {
+    if (!this.running) return;
+    const items = [...(spec.items ?? [])];
+    if (items.length === 0) return;
+
+    // 从 slash 提交态恢复为可交互 chrome（会话切换器同理不挡 streamActive）
+    this.streamActive = false;
+
+    if (this.overlay) {
+      this.closeOverlay(undefined, true);
+    }
+
+    let selected = 0;
+    if (spec.selectedId) {
+      const byId = items.findIndex((i) => i.id === spec.selectedId);
+      if (byId >= 0) selected = byId;
+    } else {
+      const byActive = items.findIndex((i) => i.active);
+      if (byActive >= 0) selected = byActive;
+    }
+
+    this.armJumpRestore();
+    this.focus = "scrollback";
+    this.overlay = {
+      kind: "options",
+      title: spec.title || "选择",
+      items,
+      selected,
+      footerHint: spec.footerHint,
+      onPick: spec.onPick,
+      lineCount: 0,
+      blockLines: 0,
+    };
+    // paintOverlay(false)：若刚 Enter 离开输入框，会用 lastInput* 高度擦掉
+    // 已提交的「/theme + 补全提示」旧块，再画切换器，避免叠层。
+    this.paintOverlay(false);
+  }
+
+  openOptionPicker(spec: OptionPickerSpec): void {
+    this.showOptionPicker(spec);
+  }
+
+  isOverlayOpen(): boolean {
+    return this.overlay !== null;
+  }
+
+  getFocus(): TuiFocus {
+    return this.focus;
+  }
+
+  /** 测试/REPL：取消浮层并恢复 JumpRestore → 始终回到可编辑 prompt（AC3） */
+  dismissOverlay(hint?: string): void {
+    this.closeOverlay(hint, true);
+  }
+
+  /** 测试/REPL：确认当前浮层选择（Enter） */
+  confirmOverlay(): void {
+    this.handleOverlayEnter();
+  }
+
+  /** 测试/REPL：浮层选择移动 */
+  moveOverlay(delta: number): void {
+    this.moveOverlaySelection(delta);
+  }
+
+  /** 测试/REPL：打开轮次浏览（空输入语义的公开入口） */
+  openTurnBrowser(delta = 0): void {
+    if (this.input.value.trim()) return;
+    this.openTurnBrowse(delta);
+  }
+
+  getOverlayKind(): "sessions" | "turns" | "options" | null {
+    return this.overlay?.kind ?? null;
+  }
+
+  getOverlaySelectedIndex(): number {
+    return this.overlay?.selected ?? -1;
+  }
+
+  /**
+   * 单键序列调度（测试与可编程入口）。
+   * 避免多测并行抢 process.stdin。
+   */
+  dispatchKey(seq: string): void {
+    if (!this.running) return;
+    if (seq === "\x1c") {
+      this.handleSessionPickerToggle();
+      return;
+    }
+    if (seq === "\x1b") {
+      if (this.overlay) this.dismissOverlay();
+      return;
+    }
+    if (seq === "\r" || seq === "\n") {
+      if (this.overlay) this.handleOverlayEnter();
+      else this.handleEnter();
+      return;
+    }
+    if (seq === " ") {
+      if (this.overlay?.kind === "turns" || this.focus === "scrollback") {
+        this.focusPromptFromScrollback("输入焦点");
+      } else if (this.overlay?.kind === "sessions" || this.overlay?.kind === "options") {
+        // 浮层占用输入槽：不插入空格、不误确认（与 sessions 一致）
+        return;
+      } else {
+        this.handleChar(" ");
+      }
+      return;
+    }
+    if (seq === "\t") {
+      this.handleTab();
+      return;
+    }
+    // Shift+Tab（常见 CSI u / 传统 \x1b[Z）
+    if (seq === "\x1b[Z" || seq === "\x1b[1;2Z") {
+      this.handleShiftTab();
+      return;
+    }
+    if (seq === "\x03") {
+      if (this.overlay) this.dismissOverlay();
+      else this.handleCtrlC();
+      return;
+    }
+    if (seq === "\x1b[A") {
+      if (this.overlay) this.moveOverlaySelection(-1);
+      else if (this.focus === "scrollback") this.navigateTurns(-1);
+      else this.handleHistoryUp();
+      return;
+    }
+    if (seq === "\x1b[B") {
+      if (this.overlay) this.moveOverlaySelection(1);
+      else if (this.focus === "scrollback") this.navigateTurns(1);
+      else this.handleHistoryDown();
+      return;
+    }
+    if (seq === "\x1b[5~" || seq === "\x1b[1;2A") {
+      this.navigateTurns(-1);
+      return;
+    }
+    if (seq === "\x1b[6~" || seq === "\x1b[1;2B") {
+      this.navigateTurns(1);
+      return;
+    }
+    if (seq === "\x0f") {
+      if (!this.overlay) this.handleCtrlO();
+      return;
+    }
+    if (seq.length === 1 && seq >= " ") {
+      if (!this.overlay) this.handleChar(seq);
+    }
+  }
+
+  private armJumpRestore(): void {
+    if (!this.jumpRestore) {
+      this.jumpRestore = captureJumpRestore(this.focus, this.turnSelected);
+    }
+  }
+
+  private lookupCtx() {
+    return {
+      focus: this.focus,
+      overlayOpen: this.overlay !== null,
+      inputEmpty: !this.input.value.trim(),
+    };
+  }
+
+  /** 展开并重绘最近一次工具输出（/expand last） */
+  expandLastToolOutput(): boolean {
+    if (!this.lastToolOutputBlob?.trim()) return false;
+    this.expandLongToolOutput = true;
+    this.moveAfterInputFrame();
+    process.stdout.write("\n" + S.s("📄 重放最近工具输出（展开）") + "\n");
+    this.printToolOutput(this.lastToolOutputBlob, "success");
+    this.writeInputValue(true);
+    this.syncCursor();
+    return true;
+  }
+
   start(): void {
     this.running = true;
+    // 先进入安静模式，再画框，避免后续 ProjectionWorker/Memory 日志打穿输入区
+    enterTuiQuietMode();
     void this.slashUiPromise;
     this.printHeader();
     this.printInputBar();
@@ -184,6 +514,7 @@ export class StreamUI {
   stop(): void {
     this.running = false;
     this.stopProgress();
+    leaveTuiQuietMode();
     if (this.dataHandler) {
       process.stdin.off("data", this.dataHandler);
       this.dataHandler = null;
@@ -241,7 +572,7 @@ export class StreamUI {
   }
 
   private appendRecoveryCard(state: RecoveryState): void {
-    this.moveAfterInputFrame();
+    this.ensureStreamMode();
     const failure = state.lastFailure;
     process.stdout.write("\n" + [
       S.y("执行已暂停"),
@@ -249,8 +580,10 @@ export class StreamUI {
       `${DIM("证据")} ${failure?.fingerprint ?? "-"}  ${DIM("剩余预算")} ${state.remainingStrategyAttempts}`,
       `${S.p("R")} 重试  ${S.p("S")} 下一策略  ${S.p("E")} 编辑任务  ${S.p("C")} 取消并保存摘要`,
     ].join("\n") + "\n");
+    this.streamActive = false;
     this.writeInputValue(true);
     this.syncCursor();
+    this.promptLive = true;
   }
 
   isExpandLongToolOutput(): boolean {
@@ -270,15 +603,23 @@ export class StreamUI {
     this.input.setHistory(entries);
   }
 
-  startProgress(label: string = "agent", intervalMs: number = 10_000): void {
+  startProgress(label: string = "agent", intervalMs: number = 80): void {
     this.stopProgress();
+    // 绝不在活动输入框内容行上 \r，否则会画出「框里转圈」的错乱画面
+    this.ensureStreamMode();
     this.progressLabel = label.trim() || "agent";
     this.progressStartedAt = Date.now();
-    const safeIntervalMs = Math.max(1_000, intervalMs);
-    this.progressTimer = setInterval(() => {
+    // 独占一行：后续 \r 只刷新这一行
+    process.stdout.write("\n");
+    const paint = () => {
       const elapsedMs = Date.now() - this.progressStartedAt;
-      process.stdout.write("\n" + DIM(formatProgressPulse(this.progressLabel, elapsedMs)));
-    }, safeIntervalMs);
+      process.stdout.write(
+        "\r\x1b[K" + formatProgressPulse(this.progressLabel, elapsedMs)
+      );
+    };
+    paint();
+    const safeIntervalMs = intervalMs;
+    this.progressTimer = setInterval(paint, safeIntervalMs);
     this.progressTimer.unref?.();
   }
 
@@ -286,12 +627,22 @@ export class StreamUI {
     if (!this.progressTimer) return;
     clearInterval(this.progressTimer);
     this.progressTimer = null;
+    process.stdout.write("\r\x1b[K");
+  }
+
+  /** 清掉 spinner 当前行，但不停止计时（工具输出落盘前调用） */
+  private clearProgressLine(): void {
+    if (!this.progressTimer) return;
+    process.stdout.write("\r\x1b[K");
   }
 
   // ── Header（只调用一次） ───────────────────────────
 
   private printHeader(): void {
     const width = process.stdout.columns || 120;
+    const sessionMode = this.chromeStatus.sessionMode ?? "agent";
+    const permissionMode = this.chromeStatus.permissionMode ?? "ask";
+    const uiMode = resolveGrokUiMode(sessionMode, permissionMode);
     const lines = formatTopBar({
       productName: "轻灵",
       englishName: "Qling",
@@ -301,24 +652,28 @@ export class StreamUI {
       tokens: this.chromeStatus.tokens ?? 0,
       branch: this.chromeStatus.branch ?? "-",
       ready: this.chromeStatus.ready ?? true,
-      sessionMode: this.chromeStatus.sessionMode ?? "agent",
-      permissionMode: this.chromeStatus.permissionMode ?? "ask",
+      sessionMode,
+      permissionMode,
       width,
     });
-    // 批量写入减少闪烁
-    const chunks: string[] = [S.p(lines[0]) + "\n", S.d(lines[1]) + "\n"];
-    const homeSnap = {
-      model: this.model,
-      workspace: this.chromeStatus.workspace,
-      memoryStatus: this.chromeStatus.memoryStatus || "本地",
-      permissionMode: this.chromeStatus.permissionMode || "ask",
-      recentSessions: [],
-      width,
-    };
-    for (const line of formatWelcomeGuide(width, homeSnap)) {
-      chunks.push(DIM(line) + "\n");
+    // Mode 段独立着色（normal=绿 plan=青 auto=黄），其余主色
+    const plain = lines[0] ?? "";
+    const modeToken = `Mode:${uiMode}`;
+    const at = plain.indexOf(modeToken);
+    let headLine: string;
+    if (at >= 0) {
+      const before = plain.slice(0, at);
+      const after = plain.slice(at + modeToken.length);
+      headLine = S.p(BOLD(before)) + paintModeSegment(uiMode) + S.p(BOLD(after));
+    } else {
+      headLine = S.p(BOLD(plain));
     }
-    process.stdout.write(chunks.join(""));
+    const sepW = Math.max(20, width);
+    const accentLen = Math.min(14, sepW);
+    const accentHex = modeBorderHex(uiMode);
+    const sep =
+      fg(accentHex, "━".repeat(accentLen)) + S.d("─".repeat(Math.max(0, sepW - accentLen)));
+    process.stdout.write(headLine + "\n" + sep + "\n");
   }
 
   // ── 底部输入栏 ────────────────────────────────────
@@ -335,25 +690,92 @@ export class StreamUI {
     this.printPromptHint();
     this.writeInputValue(true);
     this.syncCursor();
+    this.promptLive = true;
+    this.streamActive = false;
   }
 
   private backToPrompt(): void {
     this.moveToInputContentStart();
     process.stdout.write("\r");
     process.stdout.write("\x1b[J");
+    this.promptLive = false;
+  }
+
+  /**
+   * Enter 提交后：光标已在旧输入框下方，inputCursorAnchor=current、cursorLine=0，
+   * backToPrompt 的 rowsUp 会变成 0，无法擦掉「/theme + 补全提示」残留。
+   * 用提交前仍保留的 lastInput* 行数整块上移擦除。
+   */
+  private eraseSubmittedInputBlock(): void {
+    const rows = Math.max(
+      0,
+      this.lastInputContentLineCount + this.lastInputHintLineCount
+    );
+    if (rows > 0) {
+      process.stdout.write("\x1b[" + rows + "A\r\x1b[J");
+    } else {
+      process.stdout.write("\r\x1b[J");
+    }
+    this.lastInputCursorLineIndex = 0;
+    this.inputCursorAnchor = "current";
+    this.lastInputContentLineCount = 1;
+    this.lastInputHintLineCount = 0;
+    this.promptLive = false;
+  }
+
+  /**
+   * 打开浮层前清掉当前输入 chrome：
+   * - 活动输入框 → backToPrompt
+   * - 刚提交残留块 → eraseSubmittedInputBlock
+   */
+  private clearInputChromeForOverlay(): void {
+    if (this.promptLive) {
+      this.backToPrompt();
+      return;
+    }
+    if (this.lastInputContentLineCount + this.lastInputHintLineCount > 0) {
+      this.eraseSubmittedInputBlock();
+    }
   }
 
   private redrawInput(): void {
-    this.backToPrompt();
-    this.writeInputValue();
+    // 仅任务流式期禁止；测试/未 start 时仍允许首绘输入框
+    if (this.streamActive) return;
+    if (this.promptLive) {
+      this.moveToInputContentStart();
+      process.stdout.write("\r\x1b[J");
+    }
+    this.writeInputValue(!this.input.value);
     this.syncCursor();
+    this.promptLive = true;
   }
 
+  /**
+   * 空闲输入态：反馈写在旧框下方并重画输入框。
+   * 任务流式态：只追加一行，绝不重画输入框。
+   */
   private appendFeedbackAndRedraw(message: string, usePlaceholder = false): void {
+    if (this.streamActive || !this.promptLive) {
+      this.clearProgressLine();
+      // 必须换行结束，避免进度条 \r 与下一条输出粘在同一行
+      process.stdout.write("\n" + message + "\n");
+      return;
+    }
     this.moveAfterInputFrame();
     process.stdout.write("\n" + message + "\n");
     this.writeInputValue(usePlaceholder);
     this.syncCursor();
+    this.promptLive = true;
+  }
+
+  /** 离开活动输入框，进入只追加的流式输出区（提交任务 / 工具输出前调用） */
+  private ensureStreamMode(): void {
+    if (this.promptLive) {
+      this.moveAfterInputFrame();
+      process.stdout.write("\n");
+      this.promptLive = false;
+    }
+    this.streamActive = true;
   }
 
   private wrapInputVisualLines(value: string, width: number, cursor: number): {
@@ -446,8 +868,9 @@ export class StreamUI {
   }
 
   private formatInputFrameBorder(left: string, right: string, label: string, totalWidth: number): string {
+    const h = getBorderChars().h;
     if (!label) {
-      return left + "─".repeat(totalWidth - 2) + right;
+      return left + h.repeat(totalWidth - 2) + right;
     }
     const text = " " + label + " ";
     const textLen = sw(text);
@@ -457,7 +880,7 @@ export class StreamUI {
     }
     const leftDash = Math.floor((borderLen - textLen) / 2);
     const rightDash = borderLen - textLen - leftDash;
-    return left + "─".repeat(leftDash) + text + "─".repeat(rightDash) + right;
+    return left + h.repeat(leftDash) + text + h.repeat(rightDash) + right;
   }
 
   private syncCursor(): void {
@@ -497,11 +920,13 @@ export class StreamUI {
   }
 
   private inputFrameTop(): string {
-    return "┌" + "─".repeat(this.inputFrameContentWidth() + 2) + "┐";
+    const b = getBorderChars();
+    return b.tl + b.h.repeat(this.inputFrameContentWidth() + 2) + b.tr;
   }
 
   private inputFrameBottom(): string {
-    return "└" + "─".repeat(this.inputFrameContentWidth() + 2) + "┘";
+    const b = getBorderChars();
+    return b.bl + b.h.repeat(this.inputFrameContentWidth() + 2) + b.br;
   }
 
   private inputCursorPosition(wrapped: { cursorRow: number; cursorCol: number; lines: string[] }): { lineIndex: number; columnText: string } {
@@ -537,7 +962,12 @@ export class StreamUI {
 
   private writeInputValue(usePlaceholder = false): void {
     const contentWidth = this.inputFrameContentWidth();
-    const valueToWrap = this.input.value || (usePlaceholder ? "输入任务，或按 / 打开命令面板" : "");
+    const uiMode = resolveGrokUiMode(
+      this.chromeStatus.sessionMode,
+      this.chromeStatus.permissionMode
+    );
+    const valueToWrap =
+      this.input.value || (usePlaceholder ? modePlaceholder(uiMode) : "");
     const isPlaceholder = !this.input.value && usePlaceholder;
 
     const wrapWidth = contentWidth - 2;
@@ -560,30 +990,40 @@ export class StreamUI {
       ? [this.formatDraftChip(this.input.value)]
       : wrapped.lines.slice(this.inputStartRow, this.inputStartRow + visibleCount);
 
-    const topLabel = !compactDraft && this.inputStartRow > 0
-      ? "▲ 更多内容 (当前第 " + (wrapped.cursorRow + 1) + " 行)"
-      : "";
-    const bottomLabel = !compactDraft && this.inputStartRow + visibleCount < wrapped.lines.length
-      ? "▼ 更多内容 (共 " + wrapped.lines.length + " 行)"
-      : "";
+    // Grok 三态：角标 + 描边色分模式（原框内更新）
+    const scrollUp =
+      !compactDraft && this.inputStartRow > 0
+        ? "▲ 更多内容 (当前第 " + (wrapped.cursorRow + 1) + " 行)"
+        : "";
+    const topLabel = modeInputTopLabel(uiMode, scrollUp);
+    const scrollDown =
+      !compactDraft && this.inputStartRow + visibleCount < wrapped.lines.length
+        ? "▼ 更多内容 (共 " + wrapped.lines.length + " 行)"
+        : "";
+    // 无滚动时底边展示能力微文案，强化三态边界
+    const bottomLabel = scrollDown || modeCapabilityFooter(uiMode);
 
     const frameWidth = contentWidth + 4;
-    const topBorder = this.formatInputFrameBorder("┌", "┐", topLabel, frameWidth);
-    const bottomBorder = this.formatInputFrameBorder("└", "┘", bottomLabel, frameWidth);
+    const b = getBorderChars();
+    const topBorder = this.formatInputFrameBorder(b.tl, b.tr, topLabel, frameWidth);
+    const bottomBorder = this.formatInputFrameBorder(b.bl, b.br, bottomLabel, frameWidth);
 
-    // 批量拼串后一次写出，降低 Windows 终端重绘闪烁
-    const chunks: string[] = [S.p(topBorder)];
+    const borderHex = modeBorderHex(uiMode);
+    const borderPaint = (s: string) => fg(borderHex, s);
+    const chunks: string[] = [borderPaint(topBorder)];
+    const promptPrefix = modePromptPrefix(uiMode);
 
     for (let i = 0; i < visibleLines.length; i++) {
       const absoluteRow = this.inputStartRow + i;
-      const prefix = compactDraft || absoluteRow === 0 ? "› " : "  ";
+      const prefix = compactDraft || absoluteRow === 0 ? promptPrefix : "  ";
       const textLine = visibleLines[i] ?? "";
-      const contentText = textLine;
-      const rendered = truncateVisible(prefix + contentText, contentWidth);
-      chunks.push("\n" + S.p("│ " + padVisible(rendered, contentWidth) + " │"));
+      const rendered = truncateVisible(prefix + textLine, contentWidth);
+      const padded = padVisible(rendered, contentWidth);
+      const body = isPlaceholder ? S.d(padded) : S.b(padded);
+      chunks.push("\n" + borderPaint(b.v + " ") + body + borderPaint(" " + b.v));
     }
 
-    chunks.push("\n" + S.p(bottomBorder));
+    chunks.push("\n" + borderPaint(bottomBorder));
 
     let extraHint = "";
     if (compactDraft) {
@@ -679,11 +1119,23 @@ export class StreamUI {
 
   showPrompt(): void {
     if (!this.running) return;
+    // 浮层（切换器）占用输入槽时禁止再叠一份输入框
+    if (this.overlay) {
+      this.streamActive = false;
+      return;
+    }
     this.inputStartRow = 0;
+    this.streamActive = false;
+    // 已有活动输入框时只重绘，避免任务结束后再叠一份空框
+    if (this.promptLive) {
+      this.redrawInput();
+      return;
+    }
     process.stdout.write("\n");
     this.printPromptHint();
     this.writeInputValue(true);
     this.syncCursor();
+    this.promptLive = true;
   }
 
   /** 测试与 slash 复用：当前是否默认展开长工具输出 */
@@ -702,7 +1154,8 @@ export class StreamUI {
     process.stdin.setEncoding("utf8");
 
     this.resizeHandler = () => {
-      if (this.running) {
+      // 任务流式期禁止；输入态才重绘
+      if (this.running && !this.streamActive) {
         this.redrawInput();
       }
     };
@@ -714,13 +1167,23 @@ export class StreamUI {
 
     this.dataHandler = (chunk: string) => {
       if (!this.running) return;
-      if (this.recoveryState?.status === "paused" && !this.input.value && /^[rsec]$/i.test(chunk)) {
+      // Ctrl+\ → 会话切换器（Grok 风格入口）
+      if (chunk === "\x1c") {
+        partial = "";
+        this.handleSessionPickerToggle();
+        return;
+      }
+      if (this.recoveryState?.status === "paused" && !this.input.value && !this.overlay && /^[rsec]$/i.test(chunk)) {
         const action = ({ r: "retry", s: "next", e: "edit", c: "cancel" } as const)[chunk.toLowerCase() as "r" | "s" | "e" | "c"];
         this.inputCallback?.(`/recover ${action}`);
         return;
       }
+      // 裸 Esc：浮层打开时对标 JumpRestore dismiss（勿吞键）
       if (chunk === "\x1b") {
         partial = "";
+        if (this.overlay) {
+          this.dismissOverlay();
+        }
         return;
       }
 
@@ -783,92 +1246,144 @@ export class StreamUI {
           }
         } else if (seq === "\r" || seq === "\n") {
           partial = "";
-          this.handleEnter();
+          if (this.overlay) this.handleOverlayEnter();
+          else this.handleEnter();
+        } else if (seq === " ") {
+          partial = "";
+          // 对标 panes.rs：scrollback 下 Space → FocusPrompt
+          if (this.overlay?.kind === "turns" || this.focus === "scrollback") {
+            this.focusPromptFromScrollback("输入焦点");
+          } else if (this.overlay?.kind === "sessions" || this.overlay?.kind === "options") {
+            // 浮层：空格不插入、不确认
+          } else {
+            this.handleChar(" ");
+          }
         } else if (seq === "\t") {
           partial = "";
           this.handleTab();
         } else if (seq === "\x1b[Z") {
           partial = "";
+          if (this.overlay) return;
           this.handleShiftTab();
         } else if (seq === "\x03") {
           partial = "";
+          if (this.overlay) {
+            this.closeOverlay(undefined, true);
+            return;
+          }
           this.handleCtrlC();
         } else if (seq === "\x7f") {
           partial = "";
+          if (this.overlay) return;
           this.handleBackspace();
         } else if (seq === "\x01") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlA();
         } else if (seq === "\x05") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlE();
         } else if (seq === "\x15") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlU();
         } else if (seq === "\x0b") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlK();
         } else if (seq === "\x17") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlW();
         } else if (seq === "\x1a") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlZ();
         } else if (seq === "\x0c") {
           partial = "";
           this.handleCtrlL();
         } else if (seq === "\x04") {
           partial = "";
+          if (this.overlay) {
+            this.closeOverlay(undefined, true);
+            return;
+          }
           this.handleCtrlD();
         } else if (seq === "\x1b[A") {
           partial = "";
-          this.handleHistoryUp();
+          if (this.overlay) this.moveOverlaySelection(-1);
+          else if (this.focus === "scrollback") this.navigateTurns(-1);
+          else this.handleHistoryUp();
         } else if (seq === "\x1b[B") {
           partial = "";
-          this.handleHistoryDown();
+          if (this.overlay) this.moveOverlaySelection(1);
+          else if (this.focus === "scrollback") this.navigateTurns(1);
+          else this.handleHistoryDown();
+        } else if (seq === "\x1b[5~" || seq === "\x1b[1;2A") {
+          partial = "";
+          this.navigateTurns(-1);
+        } else if (seq === "\x1b[6~" || seq === "\x1b[1;2B") {
+          partial = "";
+          this.navigateTurns(1);
         } else if (seq === "\x1b[1;3A" || seq === "\x1b[1;5A" || seq === "\x1b[5A") {
           partial = "";
-          this.handleLineUp();
+          if (this.overlay) this.moveOverlaySelection(-1);
+          else this.handleLineUp();
         } else if (seq === "\x1b[1;3B" || seq === "\x1b[1;5B" || seq === "\x1b[5B") {
           partial = "";
-          this.handleLineDown();
+          if (this.overlay) this.moveOverlaySelection(1);
+          else this.handleLineDown();
         } else if (seq === "\x1b[3~") {
           partial = "";
+          if (this.overlay) return;
           this.handleDelete();
         } else if (seq === "\x1bd" || seq === "\x1b[3;5~" || seq === "\x1b[3;3~") {
           partial = "";
+          if (this.overlay) return;
           this.handleAltD();
         } else if (seq === "\x1bb" || seq === "\x1b[1;3D" || seq === "\x1b[1;5D" || seq === "\x1b[5D") {
           partial = "";
+          if (this.overlay) return;
           this.handleWordLeft();
         } else if (seq === "\x1bf" || seq === "\x1b[1;3C" || seq === "\x1b[1;5C" || seq === "\x1b[5C") {
           partial = "";
+          if (this.overlay) return;
           this.handleWordRight();
         } else if (seq === "\x1b[C") {
           partial = "";
+          if (this.overlay) return;
           this.handleRight();
         } else if (seq === "\x1b[D") {
           partial = "";
+          if (this.overlay) return;
           this.handleLeft();
         } else if (seq === "\x1b[H" || seq === "\x1b[1~") {
           partial = "";
+          if (this.overlay) return;
           this.handleHome();
         } else if (seq === "\x1b[F" || seq === "\x1b[4~") {
           partial = "";
+          if (this.overlay) return;
           this.handleEnd();
         } else if (seq === "\x0f") {
           partial = "";
+          if (this.overlay) return;
           this.handleCtrlO();
         } else if (seq === "\x0e") {
-          // Ctrl+N inserts a newline while Enter still submits.
           partial = "";
+          if (this.overlay) return;
           this.handleNewline();
         } else if (seq === "\x12") {
-          // Ctrl+R restores the latest history entry matching the current input.
           partial = "";
+          if (this.overlay) return;
           this.handleHistorySearch();
+        } else if (seq === "\x1c") {
+          partial = "";
+          this.handleSessionPickerToggle();
         } else if (ch >= " " || ch === "\t") {
           partial = "";
+          if (this.overlay) return;
           this.handleChar(ch);
         } else {
           partial = "";
@@ -885,6 +1400,9 @@ export class StreamUI {
     this.inputStartRow = 0;
     this.moveAfterInputFrame();
     process.stdout.write("\n");
+    // 提交后进入流式区：后续 tool/validation/resize 不得再画输入框
+    this.promptLive = false;
+    this.streamActive = true;
     this.input.submit();
     this.draftDisplaySource = null;
     if (this.inputCallback) {
@@ -893,6 +1411,30 @@ export class StreamUI {
   }
 
   private handleTab(): void {
+    // 浮层占用输入槽时 Tab 不触发 agents（对标 jump_slot_taken）
+    if (this.overlay) {
+      if (this.overlay.kind === "turns") {
+        this.focusPromptFromScrollback();
+      }
+      return;
+    }
+    // 对标 Grok：空输入 Tab = FocusScrollback
+    const next = tabStructuralFocus(
+      { focus: this.focus, overlay: "none" },
+      !this.input.value.trim()
+    );
+    if (next === "scrollback") {
+      // 有用户轮 → 轮次浏览；尚无轮次则保留原 /agents 入口
+      if (this.turnLog.length > 0) {
+        this.openTurnBrowse(0);
+        return;
+      }
+    }
+    if (next === "prompt") {
+      this.focusPromptFromScrollback();
+      return;
+    }
+    // 非空：slash 补全；空且未进 scrollback 时保留 /agents
     if (!this.input.value) {
       this.lastEmptyCtrlCAt = 0;
       process.stdout.write("\n");
@@ -911,6 +1453,12 @@ export class StreamUI {
 
   private handleShiftTab(): void {
     this.lastEmptyCtrlCAt = 0;
+    // 不 leave 输入框、不提交 slash：只在原框内换 Mode/Perm 外观
+    if (this.onModeCycle) {
+      void this.onModeCycle();
+      return;
+    }
+    // 无 handler 时回退为 slash（会离开输入区）
     this.moveAfterInputFrame();
     process.stdout.write("\n");
     if (this.inputCallback) {
@@ -1031,7 +1579,25 @@ export class StreamUI {
   }
 
   private handleCtrlL(): void {
-    process.stdout.write("\x1b[2J\x1b[H");
+    this.repaintChrome({ clearScreen: true });
+  }
+
+  /**
+   * 主题/chrome 变更后立即重绘可见 UI。
+   * append-only 终端无法改写已输出的顶栏 ANSI，必须清屏重画才能「直接改主题」。
+   */
+  repaintChrome(options: { clearScreen?: boolean } = {}): void {
+    if (!this.running) return;
+    this.streamActive = false;
+    if (this.overlay) {
+      // 不 restore jump：主题切换是主动确认
+      this.overlay = null;
+      this.jumpRestore = null;
+      this.focus = "prompt";
+    }
+    if (options.clearScreen !== false) {
+      process.stdout.write("\x1b[2J\x1b[H");
+    }
     this.printHeader();
     this.printInputBar();
     this.syncCursor();
@@ -1135,6 +1701,211 @@ export class StreamUI {
     this.redrawInput();
   }
 
+  // ── G1 浮层：会话切换 / 轮次浏览 ───────────────────
+
+  private handleSessionPickerToggle(): void {
+    if (this.overlay?.kind === "sessions") {
+      this.dismissOverlay();
+      return;
+    }
+    // 互斥：先关掉 turns 再开 sessions（对标 jump_slot_taken）
+    if (this.overlay) this.closeOverlay(undefined, true);
+    this.openSessionPicker();
+  }
+
+  private moveOverlaySelection(delta: number): void {
+    if (!this.overlay || this.overlay.items.length === 0) return;
+    const n = this.overlay.items.length;
+    this.overlay.selected = (this.overlay.selected + delta + n) % n;
+    if (this.overlay.kind === "turns") {
+      this.turnSelected = this.overlay.selected;
+    }
+    this.paintOverlay(true);
+  }
+
+  private handleOverlayEnter(): void {
+    if (!this.overlay) return;
+    if (this.overlay.kind === "sessions") {
+      const item = this.overlay.items[this.overlay.selected];
+      this.closeOverlay(undefined, false); // 确认选择：不回旧 focus 书签
+      this.focus = "prompt";
+      if (item) void this.onSessionPick?.(item.sessionId);
+      return;
+    }
+    if (this.overlay.kind === "options") {
+      const item = this.overlay.items[this.overlay.selected];
+      const onPick = this.overlay.onPick;
+      this.closeOverlay(undefined, false);
+      this.focus = "prompt";
+      if (item && onPick) {
+        void Promise.resolve(onPick(item)).catch(() => {
+          // onPick 错误不抛到键盘路径
+        });
+      }
+      return;
+    }
+    // turns: 回显选中轮次摘要后回 prompt（对标 jump Enter 落点后可继续输入）
+    const turn = this.overlay.items[this.overlay.selected];
+    const full = turn ? this.turnLog[turn.index]?.fullText : null;
+    this.closeOverlay(undefined, false);
+    this.focus = "prompt";
+    if (full) {
+      this.moveAfterInputFrame();
+      process.stdout.write("\n" + S.s(`↩ 轮次 #${(turn?.index ?? 0) + 1}`) + "\n");
+      for (const line of full.split("\n").slice(0, 12)) {
+        process.stdout.write(S.d(line) + "\n");
+      }
+      this.writeInputValue(true);
+      this.syncCursor();
+    }
+  }
+
+  private navigateTurns(delta: number): void {
+    if (
+      this.overlay?.kind === "sessions" ||
+      this.overlay?.kind === "turns" ||
+      this.overlay?.kind === "options"
+    ) {
+      this.moveOverlaySelection(delta);
+      return;
+    }
+    // 有草稿时不抢键（对标 prompt 编辑优先）
+    if (this.input.value.trim()) return;
+    this.openTurnBrowse(delta);
+  }
+
+  /** 进入 scrollback 焦点 + 轮次浮层（Grok FocusScrollback 的轻量等价） */
+  private openTurnBrowse(delta = 0): void {
+    const items: TurnBrowseItem[] = this.turnLog.map((t, index) => ({
+      index,
+      preview: t.preview,
+    }));
+    this.armJumpRestore();
+    this.focus = "scrollback";
+    let selected = items.length > 0 ? items.length - 1 : 0;
+    if (items.length > 0 && delta < 0) {
+      selected = Math.max(0, items.length - 2);
+    }
+    this.turnSelected = selected;
+    this.overlay = {
+      kind: "turns",
+      items,
+      selected,
+      lineCount: 0,
+      blockLines: 0,
+    };
+    this.paintOverlay(false);
+  }
+
+  private focusPromptFromScrollback(hint = "输入焦点"): void {
+    if (this.overlay) {
+      this.closeOverlay(hint, false);
+    }
+    this.focus = "prompt";
+    this.jumpRestore = null;
+  }
+
+  /**
+   * 浮层块布局（append-only 终端）：
+   *   [overlay lines]
+   *   [input frame + optional hints]
+   * 光标在 input 内容行。↑/↓ 必须从块顶整段擦除再画，否则会叠出多份面板。
+   */
+  private eraseOverlayBlock(): void {
+    if (!this.overlay || this.overlay.blockLines <= 0) return;
+
+    // 从当前光标精确回到块首行（面板 top），再 \x1b[J 清到屏尾。
+    // input 行号：1=顶边, 2=首行内容, …；hints 接在底边之后。
+    // 块绝对行：1..lineCount 面板，lineCount+1.. 输入框(+hints)。
+    let rowsUp: number;
+    if (this.inputCursorAnchor === "bottom") {
+      // 光标在块最末行 → 上移 blockLines-1 到面板 top
+      rowsUp = Math.max(1, this.overlay.blockLines - 1);
+    } else {
+      const cursorLine = Math.max(1, this.lastInputCursorLineIndex);
+      // 绝对行 = lineCount + cursorLine；到 top(1) 需上移 abs-1
+      rowsUp = Math.max(1, this.overlay.lineCount + cursorLine - 1);
+    }
+    process.stdout.write("\x1b[" + rowsUp + "A\r\x1b[J");
+    this.lastInputCursorLineIndex = 0;
+    this.inputCursorAnchor = "current";
+    this.overlay.blockLines = 0;
+  }
+
+  private paintOverlay(replace = false): void {
+    if (!this.overlay) return;
+    const width = process.stdout.columns || 80;
+    let plain: string[];
+    let painted: string;
+    if (this.overlay.kind === "sessions") {
+      plain = formatSessionPickerPanel(this.overlay.items, this.overlay.selected, width);
+      painted = paintSessionPickerPanel(plain, this.overlay.selected);
+    } else if (this.overlay.kind === "options") {
+      plain = formatOptionPickerPanel(
+        this.overlay.title,
+        this.overlay.items,
+        this.overlay.selected,
+        width,
+        this.overlay.footerHint
+      );
+      painted = paintOptionPickerPanel(plain);
+    } else {
+      plain = formatTurnBrowsePanel(this.overlay.items, this.overlay.selected, width);
+      painted = paintTurnBrowsePanel(plain, this.overlay.selected);
+    }
+    const lineCount = plain.length;
+
+    if (replace && this.overlay.blockLines > 0) {
+      this.eraseOverlayBlock();
+    } else if (this.overlay.blockLines > 0) {
+      // 同一次会话内重开：仍按块擦
+      this.eraseOverlayBlock();
+    } else {
+      // 首次打开：擦掉活动输入框，或 Enter 后残留的「命令+补全」块
+      this.clearInputChromeForOverlay();
+    }
+
+    // 面板 lineCount 行 + trailing \n 后接输入框
+    process.stdout.write(painted + "\n");
+    this.writeInputValue(!this.input.value);
+    const inputBlock =
+      this.lastInputContentLineCount + this.lastInputHintLineCount;
+    this.overlay.lineCount = lineCount;
+    // block = 面板行 + 输入框(+hints) 行；光标经 syncCursor 回到内容行
+    this.overlay.blockLines = lineCount + inputBlock;
+    this.syncCursor();
+    this.promptLive = true;
+  }
+
+  /**
+   * @param restoreJump 对标 restore_jump_viewport：Esc 取消时恢复 focus/选中
+   */
+  private closeOverlay(hint?: string, restoreJump = true): void {
+    if (!this.overlay) return;
+    if (this.overlay.blockLines > 0) {
+      this.eraseOverlayBlock();
+    } else {
+      process.stdout.write("\r\x1b[J");
+    }
+    this.overlay = null;
+
+    if (restoreJump && this.jumpRestore) {
+      this.turnSelected = this.jumpRestore.turnSelected;
+      this.focus = "prompt";
+    } else {
+      this.focus = "prompt";
+    }
+    this.jumpRestore = null;
+
+    if (hint) {
+      process.stdout.write(DIM(hint) + "\n");
+    }
+    this.writeInputValue(!this.input.value);
+    this.syncCursor();
+    this.promptLive = true;
+    this.streamActive = false;
+  }
+
   // ── 工具块渲染 ────────────────────────────────────
 
   private printToolHeader(tool: string, command: string, status: "running" | "success" | "error", durationMs = 0): void {
@@ -1145,6 +1916,9 @@ export class StreamUI {
   }
 
   private printToolOutput(output: string, _status: "success" | "error"): void {
+    if (output.trim()) {
+      this.lastToolOutputBlob = output;
+    }
     const card = formatToolOutputCard(output, {
       expand: this.expandLongToolOutput,
       maxTop: 8,
@@ -1164,14 +1938,19 @@ export class StreamUI {
   }
 
   // ── 事件输出（全部 append，不清屏） ────────────────
+  // 任务执行中一律 ensureStreamMode：只往下追加，禁止重画输入框。
 
   appendToolStart(tool: string, command: string): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     this.currentToolRunning = true;
     process.stdout.write("\n" + S.m(formatRoleHeader("executing")));
     this.printToolHeader(tool, command, "running");
   }
 
   appendToolSuccess(tool: string, command: string, output: string, durationMs: number): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     if (this.currentToolRunning) {
       this.currentToolRunning = false;
     }
@@ -1183,6 +1962,8 @@ export class StreamUI {
   }
 
   appendToolError(tool: string, command: string, error: string, durationMs: number): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     if (this.currentToolRunning) {
       this.currentToolRunning = false;
     }
@@ -1195,6 +1976,8 @@ export class StreamUI {
   }
 
   appendThinking(text: string): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     const lines = text.split("\n").filter((l) => l.trim());
     if (lines.length === 0) return;
     process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
@@ -1205,38 +1988,211 @@ export class StreamUI {
   }
 
   appendCogitated(durationMs: number): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     process.stdout.write("\n" + DIM("◆ Cogitated for " + fmtDur(durationMs)));
   }
 
   appendValidation(status: "pass" | "fail" | "warn", text: string): void {
     const icon = status === "pass" ? S.g("●") : status === "fail" ? S.r("●") : S.y("●");
     const label = status === "pass" ? S.g("pass") : status === "fail" ? S.r("fail") : S.y("warn");
-    process.stdout.write("\n" + icon + " " + label + "  " + S.d(text));
+    const line = icon + " " + label + "  " + S.d(text);
+    // 空闲输入态：离开输入框再写，避免盖住底边
+    // 任务流式态：只追加一行（执行阶段事件极多，绝不能每条都重画输入框）
+    this.appendFeedbackAndRedraw(line, !this.input.value);
   }
 
   appendOutput(text: string): void {
+    this.ensureStreamMode();
     const lines = text.split("\n");
     for (const line of lines) {
       process.stdout.write(line.trim() ? "\n" + S.b("› ") + line : "\n");
     }
   }
 
+  /**
+   * Slash / 切换器确认后的本地一行反馈（非 agent 流）。
+   * 避免 appendOutput 的 › 聊天样式 + ensureStreamMode 叠框。
+   */
+  appendNotice(text: string): void {
+    if (!this.running) return;
+    const msg = String(text ?? "").trim();
+    if (!msg) return;
+    this.streamActive = false;
+    // 浮层仍开着时不抢画（确认路径应先 close）
+    if (this.overlay) return;
+
+    const painted = S.d(msg);
+    if (this.promptLive) {
+      this.moveAfterInputFrame();
+      process.stdout.write("\n" + painted + "\n");
+      this.writeInputValue(true);
+      this.syncCursor();
+      this.promptLive = true;
+      return;
+    }
+    process.stdout.write("\n" + painted + "\n");
+    this.writeInputValue(true);
+    this.syncCursor();
+    this.promptLive = true;
+  }
+
   appendUserInput(text: string): void {
+    this.ensureStreamMode();
     const lines = text.split("\n");
     process.stdout.write("\n" + S.s(formatRoleHeader("user")) + "\n");
     for (const line of lines) {
       process.stdout.write(line + "\n");
     }
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 64);
+    this.turnLog.push({ preview: preview || "(空)", fullText: text });
+    if (this.turnLog.length > 40) this.turnLog.shift();
   }
 
-  appendRepair(reason: string, action: string, retryCount: number): void {
-    process.stdout.write("\n" + S.y("[repair]"));
-    process.stdout.write("\n  " + S.d("原因:") + " " + S.r(reason));
-    process.stdout.write("\n  " + S.d("动作:") + " " + S.b(action));
-    process.stdout.write("\n  " + S.d("retry:") + " " + S.y(String(retryCount)));
+  /**
+   * 会话切换/恢复后：把已 hydrate 的 messages 回放到终端，并重建 turnLog。
+   * - 先擦掉当前输入框，避免叠出多份输入框
+   * - 过滤 Token 预算 nudge、纯 tool 占位助手行
+   * - 可选 statusLine 与最终输入框一次画完（调用方勿再 appendValidation）
+   */
+  replaySessionMessages(
+    messages: Array<{
+      role?: string;
+      content?: unknown;
+      tool_calls?: Array<{ function?: { name?: string } }>;
+    }>,
+    options: {
+      maxMessages?: number;
+      label?: string;
+      /** 回放末尾状态行（如 ● pass 已切换…），与输入框一并绘制 */
+      statusLine?: string;
+      /** 默认 true；false 时不画输入框（极少用） */
+      drawInput?: boolean;
+    } = {}
+  ): void {
+    const maxMessages = Math.max(4, Math.min(options.maxMessages ?? 24, 60));
+    const label = options.label?.trim() || "已载入会话内容";
+    const drawInput = options.drawInput !== false;
+
+    // 换会话必须丢掉上一会话的轮次索引
+    this.turnLog = [];
+    this.turnSelected = 0;
+
+    const dialog = (Array.isArray(messages) ? messages : [])
+      .map((m) => {
+        const role = String(m?.role || "");
+        if (role !== "user" && role !== "assistant") return null;
+        const text = this.formatReplayMessageText(m);
+        if (!text.trim()) return null;
+        if (role === "user" && isInternalUserNoise(text)) return null;
+        if (role === "assistant" && isToolOnlyAssistantText(text)) return null;
+        return { role: role as "user" | "assistant", text };
+      })
+      .filter((m): m is { role: "user" | "assistant"; text: string } => m !== null);
+
+    // 擦掉当前输入框，历史接在顶栏/既有 scrollback 下，最后只画一次输入框
+    this.backToPrompt();
+    process.stdout.write(S.s(`── ${label} ──`) + "\n");
+
+    if (dialog.length === 0) {
+      process.stdout.write(DIM("(该会话暂无可显示的对话消息)") + "\n");
+    } else {
+      const hidden = Math.max(0, dialog.length - maxMessages);
+      if (hidden > 0) {
+        process.stdout.write(
+          DIM(`(仅显示最近 ${maxMessages} 条对话，另有 ${hidden} 条已折叠；模型上下文仍完整)`) + "\n"
+        );
+      }
+
+      const slice = dialog.slice(-maxMessages);
+      for (const msg of slice) {
+        if (msg.role === "user") {
+          const lines = msg.text.split("\n");
+          process.stdout.write("\n" + S.s(formatRoleHeader("user")) + "\n");
+          for (const line of this.clipReplayLines(lines, 24)) {
+            process.stdout.write(line + "\n");
+          }
+          const preview = msg.text.replace(/\s+/g, " ").trim().slice(0, 64);
+          this.turnLog.push({ preview: preview || "(空)", fullText: msg.text });
+          if (this.turnLog.length > 40) this.turnLog.shift();
+        } else {
+          this.writeReplayAssistant(msg.text);
+        }
+      }
+    }
+
+    process.stdout.write("\n" + DIM("── 以上为历史回放；继续输入即可在该会话上下文中对话 ──") + "\n");
+    if (options.statusLine?.trim()) {
+      process.stdout.write(options.statusLine.trim() + "\n");
+    }
+    if (drawInput) {
+      this.writeInputValue(!this.input.value);
+      this.syncCursor();
+      this.promptLive = true;
+      this.streamActive = false;
+    } else {
+      this.promptLive = false;
+      this.streamActive = true;
+    }
+  }
+
+  private formatReplayMessageText(message: {
+    content?: unknown;
+    tool_calls?: Array<{ function?: { name?: string } }>;
+  }): string {
+    if (typeof message.content === "string" && message.content.trim()) {
+      return message.content;
+    }
+    if (message.content != null && typeof message.content !== "string") {
+      try {
+        return JSON.stringify(message.content);
+      } catch {
+        return String(message.content);
+      }
+    }
+    const tools = message.tool_calls;
+    if (Array.isArray(tools) && tools.length > 0) {
+      return tools
+        .map((tc) => `[tool] ${tc?.function?.name || "call"}`)
+        .join(", ");
+    }
+    return "";
+  }
+
+  private clipReplayLines(lines: string[], maxLines: number): string[] {
+    if (lines.length <= maxLines) return lines;
+    const head = Math.max(1, Math.floor(maxLines * 0.7));
+    const tail = Math.max(1, maxLines - head - 1);
+    return [
+      ...lines.slice(0, head),
+      DIM(`… 省略 ${lines.length - head - tail} 行 …`),
+      ...lines.slice(-tail),
+    ];
+  }
+
+  /**
+   * 回放助手消息：走与 appendFinal 相同的 Markdown 渲染（含表格），
+   * 避免历史里 `| col |` 原样倾倒、表格错位。
+   */
+  private writeReplayAssistant(text: string): void {
+    const width = process.stdout.columns || 100;
+    const mdWidth = Math.max(40, width - 4);
+    process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
+    const mdLines = formatMarkdownForTerminal(text, { width: mdWidth });
+    // 含表格时提高行上限，尽量不把 ┌─┬─┐ 结构从中间截断
+    const hasTable =
+      /\|.+\|/.test(text) ||
+      mdLines.some((line) => /[┌┬┐├┼┤└┴┘]/.test(line.replace(/\x1b\[[0-9;]*m/g, "")));
+    const maxLines = hasTable ? 100 : 48;
+    for (const line of this.clipReplayLines(mdLines, maxLines)) {
+      // Markdown 渲染已带色；勿再包一层 S.b 以免表格边框/对齐观感变差
+      process.stdout.write(line + "\n");
+    }
   }
 
   appendFinal(text: string): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     const width = process.stdout.columns || 100;
     const mdWidth = Math.max(40, width - 4);
     const mdLines = formatMarkdownForTerminal(text, { width: mdWidth });
@@ -1261,15 +2217,30 @@ export class StreamUI {
   }
 
   appendError(text: string): void {
-    process.stdout.write("\n" + S.r("● error") + "  " + S.r(text));
+    this.appendFeedbackAndRedraw(S.r("● error") + "  " + S.r(text), !this.input.value);
   }
 
   appendState(from: string, to: string): void {
-    process.stdout.write("\n" + DIM("[state] ") + S.y(from) + " " + DIM("→") + " " + S.g(to));
+    this.ensureStreamMode();
+    this.clearProgressLine();
+    process.stdout.write(
+      "\n" + DIM("[state] ") + S.y(from) + " " + DIM("→") + " " + S.g(to) + "\n"
+    );
   }
 
   appendDone(durationMs: number): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
     const dur = fmtDur(durationMs);
     process.stdout.write("\n" + S.g(BOLD("☑ 任务完成")) + "  " + S.p(dur) + "\n");
+  }
+
+  appendRepair(reason: string, action: string, retryCount: number): void {
+    this.ensureStreamMode();
+    this.clearProgressLine();
+    process.stdout.write("\n" + S.y("[repair]"));
+    process.stdout.write("\n  " + S.d("原因:") + " " + S.r(reason));
+    process.stdout.write("\n  " + S.d("动作:") + " " + S.b(action));
+    process.stdout.write("\n  " + S.d("retry:") + " " + S.y(String(retryCount)) + "\n");
   }
 }

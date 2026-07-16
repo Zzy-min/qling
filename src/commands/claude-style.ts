@@ -8,8 +8,10 @@ import { SlashCommand } from "./types.js";
 import {
   formatPresetTableLines,
   getProviderPreset,
+  listProviderPresets,
   resolveModelCandidates,
 } from "../providers/presets.js";
+import { openOptionPickerOrFallback } from "../tui/option-picker-helpers.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -96,10 +98,10 @@ export const usageCommand: SlashCommand = {
 
 export const modelCommand: SlashCommand = {
   name: "/model",
-  description: "查看或切换当前会话模型 / Provider 预设",
-  usage: "/model [list|use <preset>|model]",
+  description: "切换器选择模型 / Provider 预设",
+  usage: "/model [list|use <preset>|model|status]",
   category: "session",
-  argumentHint: "[list|use <preset>|<model>]",
+  argumentHint: "[list|use <preset>|<model>|status]",
   availability: "local",
   claudeCompatibleName: "/model",
   execute: async (args, context) => {
@@ -120,51 +122,11 @@ export const modelCommand: SlashCommand = {
     const sub = (args[0] ?? "").trim().toLowerCase();
     const rest = args.slice(1).join(" ").trim();
 
-    context.writeLine("");
-    context.writeLine("🤖 【模型 / Provider】");
-    context.writeLine("-----------------------------------------");
-
-    if (!sub) {
-      context.writeLine(`Provider  : ${currentProvider}`);
-      context.writeLine(`Endpoint  : ${currentEndpoint}`);
-      context.writeLine(`Model     : ${currentModel}`);
-      context.writeLine(`候选模型  : ${DEFAULT_MODELS.join(", ")}`);
-      context.writeLine("用法      : /model list");
-      context.writeLine("          : /model use <preset|序号>");
-      context.writeLine("          : /model <model>");
-      context.writeLine("边界      : 默认只影响当前进程；不写 ~/.qling/.env。");
-      context.writeLine("-----------------------------------------");
-      context.writeLine("");
-      return;
-    }
-
-    if (sub === "list" || sub === "ls" || sub === "presets") {
-      context.writeLine("可用 Provider 预设:");
-      for (const line of formatPresetTableLines()) {
-        context.writeLine(line);
-      }
-      context.writeLine("");
-      context.writeLine("切换整包: /model use ollama");
-      context.writeLine("只改模型: /model deepseek-chat");
-      context.writeLine("-----------------------------------------");
-      context.writeLine("");
-      return;
-    }
-
-    if (sub === "use" || sub === "preset") {
-      const presetKey = rest || args[1] || "";
-      if (!presetKey) {
-        context.writeError("❌ 用法: /model use <preset|序号>，例如 /model use ollama");
-        context.writeLine("-----------------------------------------");
-        context.writeLine("");
-        return;
-      }
+    const applyPreset = async (presetKey: string): Promise<boolean> => {
       const preset = getProviderPreset(presetKey);
       if (!preset) {
-        context.writeError(`❌ 未找到预设 '${presetKey}'。运行 /model list 查看。`);
-        context.writeLine("-----------------------------------------");
-        context.writeLine("");
-        return;
+        context.writeError(`❌ 未找到预设 '${presetKey}'。`);
+        return false;
       }
       if (typeof loop.applyLlmSession === "function") {
         loop.applyLlmSession({
@@ -180,23 +142,77 @@ export const modelCommand: SlashCommand = {
         process.env.QLING_LLM_MODEL = preset.model;
       } else {
         context.writeError("❌ 当前 AgentLoop 不支持 session 级模型切换。");
-        context.writeLine("-----------------------------------------");
-        context.writeLine("");
-        return;
+        return false;
       }
       await context.onModelChanged?.(preset.model);
-      context.writeLine(`已应用预设: ${preset.id} (${preset.displayName})`);
-      context.writeLine(`Provider  : ${currentProvider} -> ${preset.provider}`);
-      context.writeLine(`Endpoint  : ${currentEndpoint} -> ${preset.endpoint}`);
-      context.writeLine(`Model     : ${currentModel} -> ${preset.model}`);
+      // 切换器确认后仅一行反馈，避免刷长文
       context.writeLine(
-        preset.requiresApiKey
-          ? "密钥      : 仍使用当前进程已有 API key（不写盘）。"
-          : "密钥      : 本地预设，无需 API key。"
+        `🤖 ${preset.id} · ${preset.displayName} → ${preset.model}`
       );
-      context.writeLine("范围      : 仅当前会话/当前进程，不写入默认配置。");
+      return true;
+    };
+
+    const openModelPicker = (): boolean => {
+      const presets = listProviderPresets();
+      return openOptionPickerOrFallback(
+        context,
+        {
+          title: "模型切换 · Provider",
+          footerHint: "↑/↓ 选择预设 · Enter 应用 · Esc 取消",
+          selectedId: presets.find((p) => p.model === currentModel)?.id,
+          items: presets.map((p) => ({
+            id: p.id,
+            label: `${p.displayName || p.id}`,
+            description: `${p.provider} · ${p.model}`,
+            active: p.model === currentModel || p.provider === currentProvider,
+          })),
+          onPick: async (item) => {
+            await applyPreset(item.id);
+          },
+        },
+        () => {
+          context.writeLine("");
+          context.writeLine("🤖 【模型 / Provider】");
+          context.writeLine("-----------------------------------------");
+          context.writeLine(`当前      : ${currentProvider} · ${currentModel}`);
+          context.writeLine(`Endpoint  : ${currentEndpoint}`);
+          for (const line of formatPresetTableLines()) {
+            context.writeLine(line);
+          }
+          context.writeLine("切换: /model use <preset>");
+          context.writeLine("-----------------------------------------");
+          context.writeLine("");
+        }
+      );
+    };
+
+    // 默认 / list / pick → 切换器（TUI）；status 仅文字
+    if (!sub || sub === "list" || sub === "ls" || sub === "presets" || sub === "pick" || sub === "ui") {
+      openModelPicker();
+      return;
+    }
+
+    if (sub === "status" || sub === "状态") {
+      context.writeLine("");
+      context.writeLine("🤖 【模型 / Provider】");
+      context.writeLine("-----------------------------------------");
+      context.writeLine(`Provider  : ${currentProvider}`);
+      context.writeLine(`Endpoint  : ${currentEndpoint}`);
+      context.writeLine(`Model     : ${currentModel}`);
+      context.writeLine(`候选模型  : ${DEFAULT_MODELS.join(", ")}`);
+      context.writeLine("切换      : /model  （打开切换器）");
       context.writeLine("-----------------------------------------");
       context.writeLine("");
+      return;
+    }
+
+    if (sub === "use" || sub === "preset") {
+      const presetKey = rest || args[1] || "";
+      if (!presetKey) {
+        openModelPicker();
+        return;
+      }
+      await applyPreset(presetKey);
       return;
     }
 
@@ -227,116 +243,159 @@ export const modelCommand: SlashCommand = {
 
 export const planCommand: SlashCommand = {
   name: "/plan",
-  description: "Plan Mode：只读规划（禁 write/patch/bash 等）或排队计划 prompt",
-  usage: "/plan [on|off|status|description]",
+  description: "切换 Plan 模式（顶栏 Mode:plan · 青色输入框）",
+  usage: "/plan [on|off|status|list|approve|description]",
   category: "session",
-  argumentHint: "[on|off|status|description]",
+  argumentHint: "[on|off|status|list|approve|description]",
   availability: "local",
   claudeCompatibleName: "/plan",
   execute: async (args, context) => {
+    // 风格对齐 Grok：模式靠 UI 标签，不刷长说明
+    const {
+      buildImplementPromptFromPlan,
+      ensureDefaultPlanDir,
+      listPlanFiles,
+      readLatestPlanFile,
+    } = await import("../plan/plan-artifacts.js");
+
     const loop = context.agentLoop as {
       isPlanMode?: () => boolean;
       setPlanMode?: (enabled: boolean) => void;
-      getSessionMode?: () => string;
+      getWorkspaceDir?: () => string;
     };
+    const workspace =
+      context.workspaceDir ||
+      (typeof loop.getWorkspaceDir === "function" ? loop.getWorkspaceDir() : "") ||
+      process.cwd();
     const sub = (args[0] ?? "").trim().toLowerCase();
     const hasPlanApi =
       typeof loop.isPlanMode === "function" && typeof loop.setPlanMode === "function";
 
-    const writeStatus = (mode: string) => {
-      context.writeLine("");
-      context.writeLine("🧭 【Plan Mode】");
-      context.writeLine("-----------------------------------------");
-      context.writeLine(`当前模式  : ${mode}`);
-      context.writeLine("说明      : plan=只读规划（禁 write/patch/bash/subtask/browser_fetch/browser_act）");
-      context.writeLine("          : agent=正常工具权限");
-      context.writeLine("用法      : /plan on | /plan off | /plan status");
-      context.writeLine("          : /plan <任务描述>  → 进入 plan 并排队计划 prompt");
-      context.writeLine("边界      : 仅当前进程；不写配置文件。");
-      context.writeLine("-----------------------------------------");
-      context.writeLine("");
-    };
+    const readPerm = () =>
+      typeof (loop as { getPermissionMode?: () => string }).getPermissionMode === "function"
+        ? (loop as { getPermissionMode: () => string }).getPermissionMode()
+        : "ask";
 
-    if (!sub || sub === "status") {
-      const mode = hasPlanApi
+    const modeLabel = () =>
+      hasPlanApi
         ? loop.isPlanMode!()
           ? "plan"
           : "agent"
         : process.env.QLING_PLAN_MODE === "1"
           ? "plan"
           : "agent";
-      writeStatus(mode);
+
+    const paintMode = (sessionMode: "plan" | "agent", permissionMode?: string) => {
+      const perm = permissionMode ?? readPerm();
+      if (typeof context.applySessionChrome === "function") {
+        context.applySessionChrome({ sessionMode, permissionMode: perm });
+        return;
+      }
+      // 与 Grok 三态标签一致：normal | plan | auto
+      const ui =
+        sessionMode === "plan" ? "plan" : perm === "allow" ? "auto" : "normal";
+      context.writeLine(`Mode: ${ui}`);
+    };
+
+    if (!sub || sub === "status") {
+      paintMode(modeLabel() === "plan" ? "plan" : "agent");
+      return;
+    }
+
+    if (sub === "list" || sub === "pick" || sub === "ls") {
+      const files = await listPlanFiles(workspace, 40);
+      if (files.length === 0) {
+        context.writeLine("(no plans)");
+        return;
+      }
+      const { openOptionPickerOrFallback } = await import("../tui/option-picker-helpers.js");
+      openOptionPickerOrFallback(
+        context,
+        {
+          title: "计划文件 · Plans",
+          footerHint: "↑/↓ 选择 · Enter 写入草稿路径 · Esc 取消",
+          items: files.map((f) => ({
+            id: f.path,
+            label: f.name,
+            description: f.path,
+          })),
+          onPick: (item) => {
+            if (typeof context.setInputDraft === "function") {
+              context.setInputDraft(`请阅读并执行计划: ${item.id}`);
+            }
+            context.writeLine(`📋 已选计划: ${item.label}`);
+          },
+        },
+        () => {
+          for (const f of files) {
+            context.writeLine(`${f.name}  ${f.path}`);
+          }
+        }
+      );
       return;
     }
 
     if (sub === "on" || sub === "enable" || sub === "enter") {
       if (!hasPlanApi) {
-        context.writeError("❌ 当前 AgentLoop 不支持 Plan Mode。");
+        context.writeError("Plan mode unavailable");
         return;
       }
       loop.setPlanMode!(true);
-      writeStatus("plan");
-      context.writeLine("✅ 已进入 Plan Mode。写工具将被拒绝，直到 /plan off。");
-      context.writeLine("");
+      await ensureDefaultPlanDir(workspace);
+      paintMode("plan");
       return;
     }
 
     if (sub === "off" || sub === "disable" || sub === "exit" || sub === "agent") {
       if (!hasPlanApi) {
-        context.writeError("❌ 当前 AgentLoop 不支持 Plan Mode。");
+        context.writeError("Plan mode unavailable");
         return;
       }
       loop.setPlanMode!(false);
-      writeStatus("agent");
-      context.writeLine("✅ 已退出 Plan Mode，恢复正常工具权限。");
-      context.writeLine("");
+      paintMode("agent");
       return;
     }
 
-    // /plan <description> → 进入 plan mode + 排队计划 prompt
+    if (sub === "approve" || sub === "go" || sub === "implement" || sub === "实施") {
+      if (!hasPlanApi) {
+        context.writeError("Plan mode unavailable");
+        return;
+      }
+      loop.setPlanMode!(false);
+      const latest = await readLatestPlanFile(workspace);
+      if (context.setImmediatePrompt) {
+        context.setImmediatePrompt(
+          latest
+            ? buildImplementPromptFromPlan(latest.path, latest.content)
+            : "Implement the agreed plan. Prefer small verified steps."
+        );
+      }
+      paintMode("agent");
+      return;
+    }
+
+    // /plan <description>
     const description = args.join(" ").trim();
-    if (hasPlanApi) {
-      loop.setPlanMode!(true);
-    }
+    if (hasPlanApi) loop.setPlanMode!(true);
+    const planDir = await ensureDefaultPlanDir(workspace);
     const prompt = [
-      "你正处于轻灵 Plan Mode（只读规划）。",
-      "约束：不要调用 write/patch/bash/subtask/browser_fetch/browser_act；只做阅读、搜索与计划输出。",
-      "请先给出分步实施计划，标出风险与验证方式，再等待用户确认。",
-      "用户确认后可用 /plan off 退出 Plan Mode 再实施。",
-      "",
-      `任务: ${description}`,
+      `Plan mode. Read/search only; write plan markdown under ${planDir}/ only.`,
+      `Task: ${description}`,
     ].join("\n");
-
-    if (!context.setImmediatePrompt) {
-      context.writeLine("");
-      context.writeLine("🧭 已进入 Plan Mode（当前会话不支持排队 prompt）");
-      context.writeLine("-----------------------------------------");
-      context.writeLine(`任务     : ${description}`);
-      context.writeLine("边界     : 写工具已禁用；请直接输入规划请求。");
-      context.writeLine("-----------------------------------------");
-      context.writeLine("");
-      return;
+    if (context.setImmediatePrompt) {
+      context.setImmediatePrompt(prompt);
     }
-
-    context.setImmediatePrompt(prompt);
-    context.writeLine("");
-    context.writeLine("🧭 已进入 Plan Mode 并排队计划请求");
-    context.writeLine("-----------------------------------------");
-    context.writeLine(`任务     : ${description}`);
-    context.writeLine("边界     : 写工具禁用；计划作为下一条 prompt 执行。");
-    context.writeLine("退出     : /plan off");
-    context.writeLine("-----------------------------------------");
-    context.writeLine("");
+    paintMode("plan");
   },
 };
 
 export const expandCommand: SlashCommand = {
   name: "/expand",
   aliases: ["/展开", "/折叠"],
-  description: "切换长工具输出默认展开/折叠（与 Ctrl+O 同源）",
-  usage: "/expand [on|off|status]",
+  description: "切换长工具输出展开/折叠；/expand last 重放最近一次",
+  usage: "/expand [on|off|status|last]",
   category: "session",
-  argumentHint: "[on|off|status]",
+  argumentHint: "[on|off|status|last]",
   availability: "local",
   execute: async (args, context) => {
     const sub = (args[0] ?? "toggle").toLowerCase();
@@ -349,6 +408,19 @@ export const expandCommand: SlashCommand = {
     if (!toolOutput) {
       context.writeLine("状态      : 当前会话未挂载 TUI 工具输出控制。");
       context.writeLine("替代      : 在交互 TUI 中使用 Ctrl+O。");
+      context.writeLine("-----------------------------------------");
+      context.writeLine("");
+      return;
+    }
+
+    if (sub === "last" || sub === "最近" || sub === "prev") {
+      const ok = toolOutput.expandLast?.() ?? false;
+      context.writeLine(
+        ok
+          ? "已重放    : 最近一次工具输出（展开模式）"
+          : "无内容    : 本会话还没有可重放的工具输出"
+      );
+      context.writeLine("快捷键    : Ctrl+O 切换默认；/expand last 重放");
       context.writeLine("-----------------------------------------");
       context.writeLine("");
       return;
@@ -367,8 +439,8 @@ export const expandCommand: SlashCommand = {
       context.writeLine(`已切换    : ${next ? "展开" : "折叠"}后续长工具输出`);
     }
 
-    context.writeLine("快捷键    : Ctrl+O");
-    context.writeLine("边界      : 仅影响后续工具输出；不重绘历史块。");
+    context.writeLine("快捷键    : Ctrl+O · /expand last");
+    context.writeLine("边界      : on/off 仅影响后续块；last 会重放最近一次。");
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },
@@ -555,36 +627,7 @@ export const initCommand: SlashCommand = {
   },
 };
 
-export const rewindCommand: SlashCommand = {
-  name: "/rewind",
-  aliases: ["/undo"],
-  description: "查看可恢复会话点，不自动回滚代码",
-  usage: "/rewind",
-  category: "session",
-  availability: "local",
-  claudeCompatibleName: "/rewind",
-  execute: async (_args, context) => {
-    const sessions = context.listSavedSessions
-      ? await context.listSavedSessions()
-      : typeof (context.agentLoop as any).listSessionsDetailed === "function"
-        ? await (context.agentLoop as any).listSessionsDetailed()
-        : [];
-    context.writeLine("");
-    context.writeLine("⏪ 【可恢复点】");
-    context.writeLine("-----------------------------------------");
-    if (!sessions.length) {
-      context.writeLine("(无)");
-    } else {
-      for (const session of sessions.slice(0, 8)) {
-        context.writeLine(`- ${session.name} | ${session.sessionId} | turns=${session.turnCount}`);
-      }
-    }
-    context.writeLine("下一步    : 使用 /resume <session> 恢复会话，或 /checkpoint 保存新恢复点。");
-    context.writeLine("边界      : 不自动回滚代码、不修改文件。");
-    context.writeLine("-----------------------------------------");
-    context.writeLine("");
-  },
-};
+// /rewind 已迁至 commands/rewind.ts（真实回退用户轮）
 
 export const unavailableClaudeCommands: SlashCommand[] = [
   createUnavailableCommand("/login", "Claude 账号登录入口", "/config 查看本地 provider 配置"),
@@ -600,11 +643,15 @@ export const unavailableClaudeCommands: SlashCommand[] = [
   createUnavailableCommand("/schedule", "创建 Claude 云端 routine", "/loop daemon 使用本地持久任务", ["/routines"], "[description]"),
   createUnavailableCommand("/radio", "打开 Claude FM"),
   createUnavailableCommand("/stickers", "订购 Claude Code stickers"),
-  createUnavailableCommand("/background", "Claude cloud/background agent", "/detach 或 /mission 使用轻灵本地后台能力", ["/bg"], "[prompt]"),
-  createUnavailableCommand("/branch", "Claude 会话分支", "/checkpoint 与 /resume 使用本地恢复点", [], "[name]"),
-  createUnavailableCommand("/fork", "Claude forked subagent", "/agents 查看轻灵本地后台任务", [], "<directive>"),
+  createUnavailableCommand(
+    "/background",
+    "Claude cloud/background agent",
+    "本地后台请用 bash background:true + /tasks wait|kill，或 /mission",
+    [],
+    "[prompt]"
+  ),
+  createUnavailableCommand("/branch", "Claude 会话分支", "/fork 分叉当前会话，或 /checkpoint 与 /resume", [], "[name]"),
   createUnavailableCommand("/remote-control", "Claude remote control", "/sessions 与 /resume 使用本地会话", ["/rc"]),
   createUnavailableCommand("/plugin", "Claude 插件管理", "/mcp 查看轻灵本地 MCP", [], "[subcommand]"),
-  createUnavailableCommand("/theme", "Claude 主题选择", "/shortcuts 查看轻灵 TUI 输入能力"),
   createUnavailableCommand("/tui", "Claude renderer 切换", "/statusline 查看轻灵 TUI 状态线", [], "[default|fullscreen]"),
 ];

@@ -651,7 +651,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName} memory graph [count]     # 查看本地知识图谱节点摘要
   ${binName} memory show <id>         # 查看指定本地记忆详情
   ${binName} memory reindex [--full]  # 重新构建语义记忆向量索引
-  ${binName} dashboard start [--port] # 启动本地白盒化观测控制台
+  ${binName} dashboard [start] [--port] # 启动本地任务工作台（Mission Control）
   ${binName} discovery sync           # 同步动态插件与技能
 
 使命管理:

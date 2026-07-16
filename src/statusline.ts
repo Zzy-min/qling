@@ -123,19 +123,23 @@ function normalizeTokenSource(value: unknown): "provider" | "unknown" {
   return value === "provider" ? "provider" : "unknown";
 }
 
-function formatSessionMode(mode: string | null | undefined): string {
+/** Grok 三态：normal | plan | auto */
+function formatSessionMode(
+  mode: string | null | undefined,
+  permissionMode?: string | null
+): string {
   const m = String(mode ?? "").trim().toLowerCase();
+  const p = String(permissionMode ?? "").trim().toLowerCase();
   if (m === "plan") return "plan";
-  if (m === "agent") return "agent";
-  return m || "agent";
+  if (p === "allow") return "auto";
+  return "normal";
 }
 
 export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   const t = getLocalizedText();
   const goal = snapshot.goalStatus || "无";
   const branch = snapshot.branch || "-";
-  const permission = formatPermissionMode(snapshot.permissionMode);
-  const sessionMode = formatSessionMode(snapshot.sessionMode);
+  const sessionMode = formatSessionMode(snapshot.sessionMode, snapshot.permissionMode);
   const cost = formatCostEstimate(snapshot.tokens, snapshot.costPer1kTokens);
   const prompt = Math.max(0, Math.floor(Number(snapshot.promptTokens ?? 0)));
   const completion = Math.max(0, Math.floor(Number(snapshot.completionTokens ?? 0)));
@@ -144,7 +148,6 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
     `模式=${sessionMode}`,
     `会话=${resolveShortSessionId(snapshot.sessionId)}`,
     `分支=${branch}`,
-    `权限=${permission}`,
     `目标=${goal}`,
     `任务=${snapshot.activeTasks}`,
     `令牌=${Number(snapshot.tokens ?? 0).toLocaleString()}`,

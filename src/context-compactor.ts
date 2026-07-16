@@ -135,7 +135,11 @@ export class ContextCompactor {
   }
 
   // 执行压缩：摘要旧消息 + 保留 recent
-  async compact(messages: Message[], recentKeep = 6): Promise<Message[]> {
+  async compact(
+    messages: Message[],
+    recentKeep = 6,
+    options: { theme?: string } = {}
+  ): Promise<Message[]> {
     const modifiedFiles = getModifiedFilesFromHistory(messages);
     const skeletonizedAll = skeletonizeMessages(messages, modifiedFiles);
 
@@ -194,12 +198,13 @@ export class ContextCompactor {
       }
     }
 
-    // 3. 摘要旧消息
+    // 3. 摘要旧消息（可选主题焦点）
     const oldText = cleanedOldMsgs
       .map((m) => `${m.role}: ${m.content}`)
       .join("\n\n");
 
-    const summary = await this.summarize(oldText);
+    const theme = options.theme?.trim();
+    const summary = await this.summarize(oldText, theme);
 
     // 4. 构建冲突警告（如果有）
     let conflictNote = "";
@@ -215,11 +220,12 @@ export class ContextCompactor {
     // 用 user 消息注入摘要（AgentLoop.messages 不含 system role）
     const result: Message[] = [];
 
-    if (summary || conflictNote) {
+    if (summary || conflictNote || theme) {
+      const themeLine = theme ? `【保留主题】${theme}\n` : "";
       result.push({
         role: "user",
         content:
-          `【会话记忆摘要（压缩后）】\n${summary}${
+          `【会话记忆摘要（压缩后）】\n${themeLine}${summary}${
             conflictNote ? `\n\n⚠️ 冲突警告：\n${conflictNote}` : ""
           }`,
       });
@@ -258,19 +264,26 @@ export class ContextCompactor {
   }
 
   // 调用 DeepSeek 摘要
-  private async summarize(text: string): Promise<string> {
+  private async summarize(text: string, theme?: string): Promise<string> {
     if (!text.trim()) return "";
     try {
       const { default: axios } = await import("axios");
       const apiKey = process.env.DEEPSEEK_API_KEY;
       if (!apiKey) return "[无 API Key，无法摘要]";
 
+      let system = SUMMARY_PROMPT;
+      if (theme?.trim()) {
+        system +=
+          `\n\n特别要求：优先保留与「${theme.trim()}」相关的事实、结论、路径与未决问题；` +
+          `与主题无关的工具流水可更大幅度压缩。`;
+      }
+
       const resp = await axios.post(
         "https://api.deepseek.com/chat/completions",
         {
           model: this.model,
           messages: [
-            { role: "system", content: SUMMARY_PROMPT },
+            { role: "system", content: system },
             { role: "user", content: text.slice(0, 4000) },
           ],
           max_tokens: 500,

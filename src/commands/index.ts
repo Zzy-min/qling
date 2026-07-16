@@ -14,7 +14,9 @@ import { sessionsCommand } from "./sessions.js";
 import { resumeCommand } from "./resume.js";
 import { checkpointCommand } from "./checkpoint.js";
 import { permissionsCommand } from "./permissions.js";
-import { modeCommand } from "./mode.js";
+import { alwaysApproveCommand, modeCommand } from "./mode.js";
+import { themeCommand } from "./theme.js";
+import { sandboxCommand } from "./sandbox.js";
 import { statuslineCommand } from "./statusline.js";
 import { doctorCommand } from "./doctor.js";
 import { contextCommand } from "./context.js";
@@ -49,10 +51,11 @@ import {
   initCommand,
   modelCommand,
   planCommand,
-  rewindCommand,
   unavailableClaudeCommands,
   usageCommand,
 } from "./claude-style.js";
+import { rewindCommand } from "./rewind.js";
+import { forkCommand } from "./fork.js";
 import { getSkillDirs, runSkill } from "../tools/skill.js";
 import { listSkills } from "../skills/registry.js";
 import { existsSync, readdirSync, type Dirent } from "fs";
@@ -64,6 +67,7 @@ export const COMMANDS: SlashCommand[] = [
   sessionsCommand,
   resumeCommand,
   rewindCommand,
+  forkCommand,
   checkpointCommand,
   clearCommand,
   statusCommand,
@@ -71,6 +75,9 @@ export const COMMANDS: SlashCommand[] = [
   modelCommand,
   planCommand,
   modeCommand,
+  alwaysApproveCommand,
+  themeCommand,
+  sandboxCommand,
   expandCommand,
   diffCommand,
   commitCommand,

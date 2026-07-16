@@ -37,10 +37,27 @@ test("tui shell formats screenshot-style top bar", () => {
   assert.match(text, /Workspace: agent-cli/);
   assert.match(text, /Model: qling-agent-1\.0/);
   assert.match(text, /Mode:plan/);
-  assert.match(text, /Perm:ask/);
+  // Grok 三态：plan 时不拆 Perm 段
+  assert.doesNotMatch(text, /Perm:ask/);
   assert.match(text, /就绪/);
-  // Tokens/Git 在宽屏保留；窄宽可截断，但 120 列应至少容纳 Mode/Perm/就绪
   assert.match(text, /Tokens:12\.4k|Tokens: 12\.4k|就绪/);
+});
+
+test("tui shell Mode:auto for always-approve", () => {
+  const text = formatTopBar({
+    productName: "轻灵",
+    englishName: "Qling",
+    version: "1.0.0",
+    workspace: "w",
+    model: "m",
+    ready: true,
+    tokens: 0,
+    branch: "-",
+    sessionMode: "agent",
+    permissionMode: "allow",
+    width: 120,
+  }).join("\n");
+  assert.match(text, /Mode:auto/);
 });
 
 test("formatToolOutputCard collapses long output and expands on request", () => {
@@ -102,17 +119,17 @@ test("tui shell formats result boxes and bottom input hints", () => {
   assert.match(box, /┌/);
   assert.match(box, /src\//);
   assert.match(input, /› 输入任务，或按 \/ 打开命令面板/);
-  assert.match(input, /└/);
+  assert.match(input, /[╰└]/);
   assert.match(highlight, /结果/);
   assert.match(highlight, /模块化结构/);
-  assert.match(highlight, /┌─/);
-  assert.match(highlight, /└/);
+  assert.match(highlight, /[╭┌]─/);
+  assert.match(highlight, /[╰└]/);
   // 左右边框完整闭合，且各行可见宽度一致（右侧不再缺边）
   const frameW = visibleWidth(highlightLines[0]);
   for (const line of highlightLines) {
     assert.equal(visibleWidth(line), frameW, `frame width mismatch: ${line}`);
-    assert.match(line, /[│┌└]/);
-    assert.match(line, /[│┐┘]$/);
+    assert.match(line, /[│╭┌╰└]/);
+    assert.match(line, /[│╮┐╯┘]$/);
   }
   // formatBottomHints 仍供帮助文案使用，不再强制画在输入框上方
   assert.match(hints, /Enter 发送/);

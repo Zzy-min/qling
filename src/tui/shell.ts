@@ -1,5 +1,18 @@
 import { default as stringWidth } from "string-width";
 import { getLocalizedText } from "../i18n/index.js";
+import {
+  modeBadgeLabel,
+  resolveGrokUiMode,
+} from "./mode-chrome.js";
+import {
+  fg,
+  getBorderChars,
+  paint,
+  resolveBorderStyle,
+  timelineStatusColor,
+  timelineStatusIcon,
+  type TuiBorderStyle,
+} from "./theme.js";
 
 export interface TopBarSnapshot {
   productName?: string;
@@ -30,6 +43,8 @@ export interface InputFrameOptions {
   placeholder: string;
   value?: string;
   width?: number;
+  /** 默认 rounded（可用 QLING_TUI_BORDER=square 降级） */
+  border?: TuiBorderStyle;
 }
 
 const sw = (value: string): number => stringWidth(value);
@@ -94,10 +109,12 @@ function workspaceName(workspace: string): string {
   return parts.at(-1) ?? normalized;
 }
 
-function formatSessionModeLabel(mode: string | null | undefined): string {
-  const m = String(mode ?? "agent").trim().toLowerCase();
-  if (m === "plan") return "plan";
-  return "agent";
+/** 测试与外部用：Grok 三态标签 plain */
+export function formatGrokModeLabel(
+  sessionMode: string | null | undefined,
+  permissionMode: string | null | undefined
+): string {
+  return modeBadgeLabel(resolveGrokUiMode(sessionMode, permissionMode));
 }
 
 function formatPermLabel(mode: string | null | undefined): string {
@@ -116,13 +133,16 @@ export function formatTopBar(snapshot: TopBarSnapshot): string[] {
   const left = `${product} ${english} v${version}`;
   const workspace = `Workspace: ${workspaceName(snapshot.workspace)}`;
   const model = `Model: ${normalizeLabel(snapshot.model, "unknown")}`;
-  const sessionMode = `Mode:${formatSessionModeLabel(snapshot.sessionMode)}`;
-  const perm = `Perm:${formatPermLabel(snapshot.permissionMode)}`;
+  const uiMode = resolveGrokUiMode(snapshot.sessionMode, snapshot.permissionMode);
+  // 占位纯文本宽度；着色在 printHeader 注入，避免整行被单色覆盖
+  const modePlain = `Mode:${modeBadgeLabel(uiMode)}`;
   const ready = `${snapshot.ready === false ? "○" : "●"} ${snapshot.ready === false ? "忙碌" : "就绪"}`;
   const tokens = `Tokens:${formatTokenCount(snapshot.tokens)}`;
   const branch = `Git:${normalizeLabel(snapshot.branch, "-")}`;
-  // 优先级：身份/工作区/模型/模式/权限/状态 > 令牌/分支（空间不足时先丢后者）
-  const high = [left, workspace, model, sessionMode, perm, ready];
+  const high =
+    uiMode === "normal" && formatPermLabel(snapshot.permissionMode) === "deny"
+      ? [left, workspace, model, modePlain, "Perm:deny", ready]
+      : [left, workspace, model, modePlain, ready];
   const low = [tokens, branch];
   const parts = [...high, ...low];
 
@@ -147,9 +167,14 @@ export function formatTopBar(snapshot: TopBarSnapshot): string[] {
 }
 
 export function formatRoleHeader(role: RoleKind): string {
-  if (role === "user") return "👤  You";
-  if (role === "executing") return "◌  正在执行...";
+  if (role === "user") return "◆  You";
+  if (role === "executing") return "◎  正在执行";
   return "✦  轻灵";
+}
+
+/** 是否对输入/结果使用圆角框（顶栏始终直线分隔） */
+export function boxBorderStyle(override?: TuiBorderStyle): TuiBorderStyle {
+  return resolveBorderStyle(override);
 }
 
 function extractTarget(tool: string, command: string): string {
@@ -185,15 +210,25 @@ function toolAction(tool: string, command: string): string {
 
 export function formatToolTimelineRow(event: ToolTimelineEvent): string {
   const width = normalizeWidth(event.width);
-  const icon = event.status === "error" ? "×" : event.status === "success" ? "✓" : "│";
+  const icon = timelineStatusIcon(event.status);
+  const iconPainted = fg(timelineStatusColor(event.status), icon);
   const action = toolAction(event.tool, event.command);
   const target = extractTarget(event.tool, event.command);
   const duration = formatDuration(event.durationMs);
-  const base = `${icon}  ${action}    ${target}`;
-  if (!duration) return truncateVisible(base, width);
-  const room = width - visibleWidth(base) - visibleWidth(duration);
-  if (room > 2) return `${base}${" ".repeat(room)}${duration}`;
-  return truncateVisible(`${base}  ${duration}`, width);
+  // 可见宽度按去 ANSI 计；着色只加在 icon / 耗时
+  const plainBase = `${icon}  ${action}    ${target}`;
+  const coloredBase = `${iconPainted}  ${paint.bright(action)}    ${paint.dim(target)}`;
+  if (!duration) return truncateVisible(plainBase, width) === plainBase
+    ? coloredBase
+    : truncateVisible(plainBase, width);
+  const room = width - visibleWidth(plainBase) - visibleWidth(duration);
+  if (room > 2) {
+    return `${coloredBase}${" ".repeat(room)}${paint.dim(duration)}`;
+  }
+  const plain = truncateVisible(`${plainBase}  ${duration}`, width);
+  // 窄终端降级：无色截断，避免半截 ANSI
+  if (plain !== `${plainBase}  ${duration}`) return plain;
+  return `${coloredBase}  ${paint.dim(duration)}`;
 }
 
 export function formatResultBox(lines: string[], width: number, options?: { compactLong?: boolean }): string[] {
@@ -228,6 +263,7 @@ export interface ResultHighlightOptions {
   /** 正文行（可含 ANSI）；超宽时截断以保证右侧边框对齐 */
   lines: string[];
   width?: number;
+  border?: TuiBorderStyle;
 }
 
 /**
@@ -245,26 +281,27 @@ function fitVisible(value: string, maxWidth: number): string {
  * 顶/底/左右边框完整闭合，各行可见宽度一致。
  */
 export function formatResultHighlight(options: ResultHighlightOptions): string[] {
+  const b = getBorderChars(options.border);
   const safeWidth = normalizeWidth(options.width);
   const contentWidth = Math.max(20, safeWidth - 4);
   const frameInner = contentWidth + 2; // 左右各 1 空格 + 正文区
   const header = normalizeLabel(options.header, "结果");
   const title = ` ${header} `;
   const titleW = visibleWidth(title);
-  // ┌─ + title + dashes + ┐  总可见宽 = contentWidth + 4
+  // corner + ─ + title + dashes + corner
   const dashAfter = Math.max(1, frameInner - 1 - titleW);
-  const top = `┌─${title}${"─".repeat(dashAfter)}┐`;
+  const top = `${b.tl}${b.h}${title}${b.h.repeat(dashAfter)}${b.tr}`;
   const bodyLines = options.lines.length > 0 ? options.lines : [""];
   const body = bodyLines.map((line) => {
     const text = fitVisible(line, contentWidth);
-    return `│ ${padVisible(text, contentWidth)} │`;
+    return `${b.v} ${padVisible(text, contentWidth)} ${b.v}`;
   });
-  const bottom = "└" + "─".repeat(frameInner) + "┘";
+  const bottom = `${b.bl}${b.h.repeat(frameInner)}${b.br}`;
   return [top, ...body, bottom];
 }
 
 export function formatInputFrame(options: InputFrameOptions): string[] {
-  const t = getLocalizedText();
+  const b = getBorderChars(options.border);
   const safeWidth = normalizeWidth(options.width);
   const contentWidth = Math.max(20, safeWidth - 4);
   const value = options.value && options.value.length > 0
@@ -272,9 +309,9 @@ export function formatInputFrame(options: InputFrameOptions): string[] {
     : (options.placeholder || "输入任务，或按 / 打开命令面板");
   const inputLine = `› ${value}`;
   return [
-    "┌" + "─".repeat(contentWidth + 2) + "┐",
-    `│ ${padVisible(truncateVisible(inputLine, contentWidth), contentWidth)} │`,
-    "└" + "─".repeat(contentWidth + 2) + "┘",
+    `${b.tl}${b.h.repeat(contentWidth + 2)}${b.tr}`,
+    `${b.v} ${padVisible(truncateVisible(inputLine, contentWidth), contentWidth)} ${b.v}`,
+    `${b.bl}${b.h.repeat(contentWidth + 2)}${b.br}`,
   ];
 }
 

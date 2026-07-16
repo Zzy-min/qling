@@ -64,7 +64,20 @@ export interface SlashCommandContext {
     expanded: boolean;
     setExpanded: (expanded: boolean) => void;
     toggle: () => boolean;
+    /** 重放并展开最近一次工具输出 */
+    expandLast?: () => boolean;
   };
+  /** G1: 打开 TUI 会话切换器 */
+  openSessionPicker?: () => void;
+  /** 通用选项切换器（model/theme/sandbox/mode…）；无则命令降级文本列表 */
+  openOptionPicker?: (spec: import("./tui/overlay-panel.js").OptionPickerSpec) => void;
+  /** 主题等变更后清屏重画顶栏+输入框（append-only 下唯一可靠方式） */
+  repaintChrome?: () => void;
+  /** 原位更新 Mode/Perm 外观（不重打输入框） */
+  applySessionChrome?: (patch: {
+    sessionMode?: string;
+    permissionMode?: string;
+  }) => void;
   setImmediatePrompt?: (prompt: string) => void;
   setInputDraft?: (draft: string) => void;
   onRecoveryStateChanged?: (state: unknown | null) => void;
@@ -88,6 +101,11 @@ export function withDefaultWriters(
     daemonSessionApi: context.daemonSessionApi,
     statusLine: context.statusLine,
     toolOutput: context.toolOutput,
+    // 必须透传：否则 /resume、/sessions、/model 等会丢 TUI 切换器，降级成文本列表
+    openSessionPicker: context.openSessionPicker,
+    openOptionPicker: context.openOptionPicker,
+    repaintChrome: context.repaintChrome,
+    applySessionChrome: context.applySessionChrome,
     setImmediatePrompt: context.setImmediatePrompt,
     setInputDraft: context.setInputDraft,
     onRecoveryStateChanged: context.onRecoveryStateChanged,

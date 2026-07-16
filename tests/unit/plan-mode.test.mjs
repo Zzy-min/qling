@@ -34,6 +34,7 @@ test("PLAN_MODE_DENY_TOOLS covers write-side tools", () => {
 
 test("plan mode denies write/patch/bash but allows read", async () => {
   const hm = createHookManager("allow");
+  hm.setWorkspaceDir(process.cwd());
   assert.equal(hm.isPlanMode(), false);
 
   hm.setPlanMode(true);
@@ -50,7 +51,7 @@ test("plan mode denies write/patch/bash but allows read", async () => {
 
   const patch = await hm.runPreHook({
     toolName: "patch",
-    arguments: {},
+    arguments: { path: "src/foo.ts" },
     isReadOnly: false,
     isDestructive: false,
   });
@@ -72,6 +73,15 @@ test("plan mode denies write/patch/bash but allows read", async () => {
   });
   assert.equal(read.decision, "allow");
 
+  // G3.1：计划目录 write 允许
+  const planWrite = await hm.runPreHook({
+    toolName: "write",
+    arguments: { path: ".qling/plans/demo.md", content: "# plan" },
+    isReadOnly: false,
+    isDestructive: false,
+  });
+  assert.equal(planWrite.decision, "allow");
+
   hm.setPlanMode(false);
   const writeAgain = await hm.runPreHook({
     toolName: "write",
@@ -82,57 +92,89 @@ test("plan mode denies write/patch/bash but allows read", async () => {
   assert.equal(writeAgain.decision, "allow");
 });
 
-test("/plan on and off toggle AgentLoop plan mode", async () => {
-  let plan = false;
+test("/plan approve exits plan mode and queues implement prompt", async () => {
+  let plan = true;
   const lines = [];
   const prompts = [];
-  const context = {
+  await planCommand.execute(["approve"], {
     writeLine: (s) => lines.push(String(s)),
     writeError: (s) => lines.push(String(s)),
     setImmediatePrompt: (p) => prompts.push(p),
+    workspaceDir: process.cwd(),
     agentLoop: {
       isPlanMode: () => plan,
       setPlanMode: (v) => {
         plan = Boolean(v);
       },
+      getWorkspaceDir: () => process.cwd(),
+    },
+  });
+  assert.equal(plan, false);
+  assert.match(lines.join("\n"), /Mode:\s*normal/i);
+  assert.equal(prompts.length, 1);
+});
+
+test("/plan on and off toggle AgentLoop plan mode", async () => {
+  let plan = false;
+  const lines = [];
+  const chrome = [];
+  const prompts = [];
+  const context = {
+    writeLine: (s) => lines.push(String(s)),
+    writeError: (s) => lines.push(String(s)),
+    setImmediatePrompt: (p) => prompts.push(p),
+    applySessionChrome: (p) => chrome.push(p),
+    agentLoop: {
+      isPlanMode: () => plan,
+      setPlanMode: (v) => {
+        plan = Boolean(v);
+      },
+      getPermissionMode: () => "ask",
     },
   };
 
   await planCommand.execute(["on"], context);
   assert.equal(plan, true);
-  assert.match(lines.join("\n"), /plan/i);
+  // TUI 路径：只改 chrome，不写提示行
+  assert.equal(lines.filter(Boolean).length, 0);
+  assert.deepEqual(chrome.at(-1), { sessionMode: "plan", permissionMode: "ask" });
 
   await planCommand.execute(["off"], context);
   assert.equal(plan, false);
+  assert.deepEqual(chrome.at(-1), { sessionMode: "agent", permissionMode: "ask" });
 
   lines.length = 0;
   await planCommand.execute(["fix the flaky test"], context);
   assert.equal(plan, true);
   assert.equal(prompts.length, 1);
-  assert.match(prompts[0], /Plan Mode/);
   assert.match(prompts[0], /fix the flaky test/);
+  assert.deepEqual(chrome.at(-1), { sessionMode: "plan", permissionMode: "ask" });
 });
 
 test("/plan status reports mode", async () => {
-  const lines = [];
+  const chrome = [];
   await planCommand.execute(["status"], {
-    writeLine: (s) => lines.push(String(s)),
-    writeError: (s) => lines.push(String(s)),
+    writeLine: () => {},
+    writeError: () => {},
+    applySessionChrome: (p) => chrome.push(p),
     agentLoop: {
       isPlanMode: () => true,
       setPlanMode: () => {},
+      getPermissionMode: () => "ask",
     },
   });
-  assert.match(lines.join("\n"), /plan/);
+  assert.deepEqual(chrome.at(-1), { sessionMode: "plan", permissionMode: "ask" });
 });
 
-test("/mode cycle rotates agent ask, plan ask, and agent allow", async () => {
+test("/mode cycle is Grok order: normal → plan → auto → normal", async () => {
   let plan = false;
   let permission = "ask";
+  const chrome = [];
   const lines = [];
   const context = {
     writeLine: (line) => lines.push(String(line)),
     writeError: (line) => lines.push(String(line)),
+    applySessionChrome: (p) => chrome.push(p),
     agentLoop: {
       isPlanMode: () => plan,
       setPlanMode: (enabled) => { plan = Boolean(enabled); },
@@ -141,18 +183,51 @@ test("/mode cycle rotates agent ask, plan ask, and agent allow", async () => {
     },
   };
 
+  // normal → plan
   await modeCommand.execute(["cycle"], context);
   assert.deepEqual({ plan, permission }, { plan: true, permission: "ask" });
+  assert.deepEqual(chrome.at(-1), { sessionMode: "plan", permissionMode: "ask" });
 
+  // plan → auto (always-approve)
   await modeCommand.execute(["cycle"], context);
   assert.deepEqual({ plan, permission }, { plan: false, permission: "allow" });
+  assert.deepEqual(chrome.at(-1), { sessionMode: "agent", permissionMode: "allow" });
 
+  // auto → normal
   await modeCommand.execute(["cycle"], context);
   assert.deepEqual({ plan, permission }, { plan: false, permission: "ask" });
-  assert.match(lines.join("\n"), /Always Agree/);
+  assert.equal(lines.filter(Boolean).length, 0);
+  assert.deepEqual(chrome.at(-1), { sessionMode: "agent", permissionMode: "ask" });
 });
 
-test("/mode cycle normalizes deny mode into plan ask", async () => {
+test("/mode plan|auto|normal sets directly", async () => {
+  let plan = false;
+  let permission = "ask";
+  const chrome = [];
+  const context = {
+    writeLine: () => {},
+    writeError: () => {},
+    applySessionChrome: (p) => chrome.push(p),
+    agentLoop: {
+      isPlanMode: () => plan,
+      setPlanMode: (enabled) => { plan = Boolean(enabled); },
+      getPermissionMode: () => permission,
+      setPermissionMode: (mode) => { permission = mode; },
+    },
+  };
+
+  await modeCommand.execute(["auto"], context);
+  assert.deepEqual({ plan, permission }, { plan: false, permission: "allow" });
+  assert.deepEqual(chrome.at(-1), { sessionMode: "agent", permissionMode: "allow" });
+
+  await modeCommand.execute(["plan"], context);
+  assert.deepEqual({ plan, permission }, { plan: true, permission: "ask" });
+
+  await modeCommand.execute(["normal"], context);
+  assert.deepEqual({ plan, permission }, { plan: false, permission: "ask" });
+});
+
+test("/mode cycle from deny (treated as normal) goes to plan", async () => {
   let plan = false;
   let permission = "deny";
   const context = {

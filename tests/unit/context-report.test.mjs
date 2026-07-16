@@ -83,11 +83,13 @@ test("context report formatter is readable and local-first", async () => {
   assert.match(text, /轻灵 · 本地上下文/);
   assert.match(text, /会话/);
   assert.match(text, /Token（官方 usage）/);
-  assert.match(text, /Harness 层|工具输出|本地字符/);
+  assert.match(text, /Harness 层|工具输出|本地字符|占用分类/);
+  assert.match(text, /System|Messages|Tools|Free/);
   assert.match(text, /本地路径/);
   assert.match(text, /session-test/);
   assert.match(text, /Token 来源\s*: provider/);
-  assert.doesNotMatch(text, /预算|budget|%\s*of/i);
+  // 官方 Token 不再使用「Token 预算」口径；本地 harness 可用字符上限估计
+  assert.doesNotMatch(text, /Token\s*预算|token budget|%\s*of/i);
   assert.match(text, /边界\s*: \/context 只展示本地统计与路径/);
 });
 

@@ -73,6 +73,42 @@ function renderSummary(): void {
   byId("runtime-label").textContent = snapshot.runtime.ready ? "运行时就绪" : "等待运行时";
   byId("runtime-signal").classList.toggle("ready", snapshot.runtime.ready);
   byId("permission-label").textContent = `权限 ${snapshot.runtime.permissionMode}`;
+  const permTop = document.getElementById("permission-label-top");
+  if (permTop) permTop.textContent = `权限 ${snapshot.runtime.permissionMode}`;
+  const budget = document.getElementById("budget-label");
+  if (budget) {
+    const tokens = snapshot.budget?.sessionTokens ?? 0;
+    budget.textContent = `Tokens ${tokens}`;
+  }
+  const live = document.getElementById("agent-live-label");
+  if (live && snapshot.agentLive) {
+    live.textContent = `会话 ${snapshot.agentLive.sessionId.slice(0, 12)} · turn ${snapshot.agentLive.turnCount}`;
+  }
+  renderSessions();
+}
+
+function renderSessions(): void {
+  const rail = document.getElementById("session-list");
+  if (!rail || !snapshot) return;
+  const sessions = snapshot.sessions ?? [];
+  if (sessions.length === 0) {
+    rail.replaceChildren(node("span", "muted", "暂无会话。在 TUI 对话后会出现在此。"));
+    return;
+  }
+  rail.replaceChildren(
+    ...sessions.map((s) => {
+      const chip = node("div", s.active ? "session-chip active" : "session-chip");
+      const sid = node("span", "sid", s.name || s.sessionId);
+      sid.title = s.sessionId;
+      const meta = node(
+        "div",
+        "meta",
+        `${s.turnCount} turns · ${s.sessionTokens} tok${s.active ? " · 当前" : ""}`
+      );
+      chip.append(sid, meta);
+      return chip;
+    })
+  );
 }
 
 function renderTasks(): void {
@@ -186,7 +222,26 @@ function renderDetail(detail: DashboardTaskDetail): void {
   const events = node("ol", "event-log");
   for (const event of detail.events.slice(-30).reverse()) {
     const item = node("li");
-    item.append(node("time", "", formatTime(Number(event.timestamp))), node("span", "", eventMessage(event)));
+    const timeNode = node("time", "", formatTime(Number(event.timestamp)));
+    const contentSpan = node("span");
+    const badge = node("span", "event-badge");
+    const msg = eventMessage(event);
+    const type = String(event.type || "");
+    if (type.includes("tool_start")) {
+      badge.className = "event-badge tool";
+      badge.textContent = "TOOL";
+    } else if (type.includes("success") || type.includes("complete")) {
+      badge.className = "event-badge success";
+      badge.textContent = "OK";
+    } else if (type.includes("error") || type.includes("fail")) {
+      badge.className = "event-badge error";
+      badge.textContent = "ERR";
+    } else {
+      badge.className = "event-badge info";
+      badge.textContent = "LOG";
+    }
+    contentSpan.append(badge, document.createTextNode(msg));
+    item.append(timeNode, contentSpan);
     events.append(item);
   }
   if (detail.events.length) content.append(node("p", "detail-kicker", "RECENT LOG"), events);

@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import * as path from "path";
 
 import type { Message } from "../types.js";
+import { deriveSessionTitle } from "./session-title.js";
 
 export interface SavedSessionSnapshot {
   version: number;
@@ -18,7 +19,13 @@ export interface SavedSessionSnapshot {
 }
 
 export interface SavedSessionSummary {
+  /** 文件键 / 内部名（多为 session-<id>） */
   name: string;
+  /**
+   * 展示标题：会话第一条真实用户问题；无则回退 name。
+   * 不改变磁盘文件名，仅用于列表与切换器。
+   */
+  title: string;
   sessionId: string;
   workspaceDir: string | null;
   createdAt: string;
@@ -38,8 +45,10 @@ function cloneMessages(messages: Message[]): Message[] {
 }
 
 function toSummary(snapshot: SavedSessionSnapshot): SavedSessionSummary {
+  const title = deriveSessionTitle(snapshot.messages) || snapshot.name;
   return {
     name: snapshot.name,
+    title,
     sessionId: snapshot.sessionId,
     workspaceDir: snapshot.workspaceDir,
     createdAt: snapshot.createdAt,

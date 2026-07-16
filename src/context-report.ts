@@ -119,9 +119,18 @@ export async function buildContextReport(
   const tokenSource = normalizeTokenSource(stats.tokenSource);
   const messageCount = Array.isArray(messages) ? messages.length : Number(stats.messageCount ?? 0);
   const compactions = Number(stats.compactions ?? stats.compactionCount ?? 0);
-  const layers = Array.isArray(messages) && messages.length > 0
-    ? estimateContextLayers(messages)
-    : null;
+  const systemPrompt =
+    typeof agentLoop.config?.systemPrompt === "string"
+      ? agentLoop.config.systemPrompt
+      : typeof agentLoop.getSystemPromptPreview === "function"
+        ? String(agentLoop.getSystemPromptPreview() ?? "")
+        : "";
+  const layers =
+    Array.isArray(messages) && messages.length > 0
+      ? estimateContextLayers(messages, { systemPrompt })
+      : systemPrompt
+        ? estimateContextLayers([], { systemPrompt })
+        : null;
 
   return {
     sessionId: stats.sessionId || agentLoop.getSessionId?.() || "-",
@@ -201,15 +210,35 @@ export function formatContextReport(report: ContextReport): string[] {
         ],
       },
       {
-        heading: "Harness 层（本地字符估计）",
+        heading: "占用分类（本地字符 · 对标 Grok /context）",
+        rows: report.layers
+          ? [
+              ["System", `${report.layers.systemChars.toLocaleString()} 字符 (${report.layers.systemPct}%)`],
+              [
+                "Messages",
+                `${report.layers.messagesChars.toLocaleString()} 字符 (${report.layers.messagesPct}%) · user ${report.layers.userMessageCount} / asst ${report.layers.assistantMessageCount}`,
+              ],
+              [
+                "Tools",
+                `${report.layers.toolsChars.toLocaleString()} 字符 (${report.layers.toolsPct}%) · ${report.layers.toolMessageCount} 条 tool`,
+              ],
+              ["Free", `${report.layers.freeChars.toLocaleString()} 字符 (${report.layers.freePct}%)`],
+              [
+                "本地上限",
+                `${report.layers.budgetChars.toLocaleString()} 字符（仅 harness 字符估计，非 provider token）`,
+              ],
+            ]
+          : [["状态", "当前无会话消息快照"]],
+      },
+      {
+        heading: "Harness 层（兼容明细）",
         rows: report.layers
           ? [
               ["对话 history", `${report.layers.historyChars.toLocaleString()} 字符 (${report.layers.historyPct}%)`],
               ["工具输出", `${report.layers.toolOutputChars.toLocaleString()} 字符 (${report.layers.toolOutputPct}%)`],
               ["其他", `${report.layers.otherChars.toLocaleString()} 字符 (${report.layers.otherPct}%)`],
               ["合计字符", report.layers.totalChars.toLocaleString()],
-              ["工具消息数", report.layers.toolMessageCount],
-              ["说明", "非 provider token；用于观察 harness 膨胀。超长工具结果默认折叠（QLING_TOOL_RESULT_MAX_CHARS）。"],
+              ["说明", "非 provider token；超长工具结果默认折叠（QLING_TOOL_RESULT_MAX_CHARS）。"],
             ]
           : [
               ["状态", "当前无会话消息快照"],

@@ -317,7 +317,8 @@ export function buildDefaultConfig(): QlingConfig {
         custom_patterns: [],
       },
       permissions: {
-        default: "allow" as const,
+        // Grok normal：默认需确认（Mode:normal）；auto 由 /mode 或 Shift+Tab 切 allow
+        default: "ask" as const,
         rules: [],
       },
     },

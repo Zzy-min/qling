@@ -156,8 +156,12 @@ export class PersistedMemory {
         // 专项修复：处理 404 (Endpoint 不支持)
         if (err.message.includes("404")) {
            if (!(this as any)._warned404) {
-             console.warn(`[Memory] ⚠️ 当前提供商不支持 Embedding 接口 (404)，已降级为纯关键词检索模式。`);
+             // 一次性提示：TUI 活跃时由 console-guard 静默，避免打穿输入框
+             console.warn(
+               `[Memory] ⚠️ 当前提供商不支持 Embedding 接口 (404)，已降级为纯关键词检索模式。`
+             );
              (this as any)._warned404 = true;
+             this.embeddingClient = null;
            }
         } else {
            console.error(`[PersistedMemory] Vector search failed: ${err.message}`);
@@ -207,12 +211,13 @@ export class PersistedMemory {
       const msg = err.message || String(err);
       if (msg.includes("404")) {
         if (!(this as any)._semanticWarned404) {
-          console.warn(`[Memory] ⚠️ 当前提供商不支持 Embedding 接口 (404)，已禁用语义索引（降级为关键词+实践检索）。请为语义记忆配置支持 embeddings 的 provider（如 OpenAI）或设置 QLING_MEMORY_SEMANTIC_ENDPOINT / _MODEL。`);
+          console.warn(
+            `[Memory] ⚠️ 当前提供商不支持 Embedding 接口 (404)，已禁用语义索引（降级为关键词+实践检索）。可配置支持 embeddings 的 provider，或 QLING_MEMORY_SEMANTIC_ENDPOINT / _MODEL。`
+          );
           (this as any)._semanticWarned404 = true;
-          // 禁用后续索引
           this.embeddingClient = null;
         }
-      } else {
+      } else if (process.env.QLING_MEMORY_DEBUG === "1") {
         console.error(`[PersistedMemory] Async cognitive indexing failed: ${msg}`);
       }
     }

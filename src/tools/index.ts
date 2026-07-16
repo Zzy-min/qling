@@ -19,6 +19,14 @@ import { runBrowserAct, browserActTool } from "./browser-act.js";
 import { runCodeSymbols, codeSymbolsTool } from "./code-symbols.js";
 import { runLsp, lspTool } from "./lsp.js";
 import { runPatch, patchTool } from "./patch.js";
+import {
+  bgKillTool,
+  bgListTool,
+  bgWaitTool,
+  runBgKill,
+  runBgList,
+  runBgWait,
+} from "./bg-task.js";
 import { toolError } from "./error-utils.js";
 import { isMCPTool, parseMCPToolName } from "../mcp/bridge.js";
 import type { MCPRegistry } from "../mcp/registry.js";
@@ -39,6 +47,9 @@ export {
   codeSymbolsTool,
   lspTool,
   patchTool,
+  bgListTool,
+  bgWaitTool,
+  bgKillTool,
 };
 
 export const ALL_TOOLS: ToolDefinition[] = [
@@ -57,6 +68,9 @@ export const ALL_TOOLS: ToolDefinition[] = [
   codeSymbolsTool,
   lspTool,
   patchTool,
+  bgListTool,
+  bgWaitTool,
+  bgKillTool,
 ];
 
 // Runtime MCP registry reference
@@ -106,6 +120,9 @@ const handlers: Record<string, ToolHandler> = {
   code_symbols: runCodeSymbols as ToolHandler,
   lsp: runLsp as ToolHandler,
   patch: runPatch as ToolHandler,
+  bg_list: runBgList as ToolHandler,
+  bg_wait: runBgWait as ToolHandler,
+  bg_kill: runBgKill as ToolHandler,
 };
 
 export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {
