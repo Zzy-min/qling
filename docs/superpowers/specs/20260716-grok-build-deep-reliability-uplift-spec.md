@@ -53,4 +53,4 @@
 - 定向单测覆盖上述协议与失败路径。
 - `npm run build`、`npm run ci:check`、`node scripts/eval-recovery.mjs`、`git diff --check` 通过。
 - MCP 目录基准在 100 工具样本中减少至少 80% 初始 schema 字符量，Top-5 查询命中率至少 90%。
-- 锚定编辑不得发生错误写入；未达到收益阈值时保持实验状态。
+- 锚定编辑不得发生错误写入；未达到收益阈值时保持实验状态。确定性对比门禁：`npm run eval:anchored`（20 fixtures，要求相对 `patch` 提升至少15个百分点且错误写入为0）。当前基线为普通 `patch` 50%、`patch_anchored` 100%、提升50个百分点、错误写入0；脚本输出是权威结果。

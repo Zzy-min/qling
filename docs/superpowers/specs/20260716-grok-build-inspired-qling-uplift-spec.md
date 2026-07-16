@@ -108,11 +108,11 @@ xai-acp-lib            Agent Client Protocol
 
 | ID | 交付 | 对标 | 验收 |
 |----|------|------|------|
-| G1.1 | **会话切换器**（TUI 内） | `/dashboard` Ctrl+\ 舰队 | `/sessions` 弹层：↑↓ 选、Enter resume；不离开终端 |
+| G1.1 | **会话切换器**（TUI 内，已完成 2026-07-17） | `/dashboard` Ctrl+\ 舰队 | `/sessions` 弹层：↑↓ 选、Enter resume；不离开终端 |
 | G1.2 | **Managed Scrollback Viewport**（已完成 2026-07-17） | 真实 user/assistant/tool 内容、按轮跳转、轮内分页 | ↑/↓ 或 Shift+↑↓ 按用户轮；PageUp/Down 轮内翻页；不依赖全屏 alternate |
-| G1.3 | **折叠工具输出统一** | fold/expand | 已有 Ctrl+O；补齐「选中块 e/E」或 slash `/expand last` |
-| G1.4 | **Prompt 焦点模型** | Space → focus prompt | 滚动浏览时 Enter 回到输入；文档化快捷键 |
-| G1.5 | 架构拆分 | pager vs shell | `StreamUI` 只负责显示；事件总线与 Agent 解耦（接口层，非重写） |
+| G1.3 | **折叠工具输出统一**（已完成 2026-07-17） | fold/expand | Ctrl+O 切换后续输出；`/expand last` 重放最近工具证据 |
+| G1.4 | **Prompt 焦点模型**（已完成 2026-07-17） | Space → focus prompt | `prompt | scrollback` 双焦点；Tab/Space/i/Enter/Esc 行为已覆盖 |
+| G1.5 | 架构拆分（已完成 2026-07-17） | pager vs shell | `StreamingREPL` 桥接 Agent 事件，`StreamUI`/viewport/action/focus 分层 |
 
 **刻意不做（G1）**: 迁 ratatui/Rust；全量 Vim 模式（可放 G3）。
 
@@ -153,8 +153,8 @@ xai-acp-lib            Agent Client Protocol
 |----|------|------|
 | G5.1 | `qling run --json` / headless 事件流 | `grok -p` |
 | G5.2 | Skills 扫描 `.claude` / `.cursor` / `.agents` 兼容路径 | 08-skills · **部分完成 2026-07-16**（路径+斜杠空格+参数） |
-| G5.3 | Hooks JSON 生命周期（Pre/PostToolUse, SessionStart） | 10-hooks |
-| G5.4 | 插件/技能安装源（自建 registry，不做 xAI marketplace 克隆） | 09-plugins |
+| G5.3 | Hooks JSON 生命周期（已完成 2026-07-17） | SessionStart/End、Pre/PostToolUse、PostToolUseFailure；Pre 异常转确认 |
+| G5.4 | 插件/技能安装源（已完成 2026-07-17） | 受信 Ed25519 清单约束的本地安装；未签名必须显式 opt-in |
 | G5.5 | ACP v1 stdio 适配器（已完成 2026-07-17） | `qling acp` · session/mode/prompt/tool/approval/cancel；客户端 MCP 与额外目录继续拒绝 |
 | G5.6 | （可选）OTEL 外部导出（已完成 2026-07-17） | 24-monitoring · 双 opt-in · 默认关 · 仅白名单元数据 |
 

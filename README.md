@@ -415,7 +415,7 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 - 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)
 - Skills：见 [docs/skills.md](docs/skills.md)
 - 演示路径：见 [docs/demo.md](docs/demo.md)
-- 评测：`npm run eval:smoke` / `eval:recovery` / `eval:tasks`
+- 评测：`npm run eval:smoke` / `eval:recovery` / `eval:tasks` / `eval:anchored`
 - 网页/平台路由：见 [docs/web-routing.md](docs/web-routing.md)
 - SDK：见 [docs/sdk.md](docs/sdk.md)
 - 可选 OTEL 元数据导出：见 [docs/otel.md](docs/otel.md)（默认关闭、双重确认、不导出内容）
