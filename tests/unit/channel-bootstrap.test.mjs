@@ -62,6 +62,22 @@ test("channel bootstrap matrix: non-run modes do not mount channels", () => {
   assert.equal(resolveRunModeChannel("help", channels), null);
 });
 
+test("channel bootstrap: headless console auto-denies approval without prompting", async () => {
+  const channel = resolveRunModeChannel("run", makeChannels(), { headless: true });
+  assert.ok(channel);
+  await channel.start();
+  const response = await channel.requestApproval({
+    id: "approval-1",
+    toolName: "bash",
+    arguments: { command: "echo ok" },
+    reason: "tool requires confirmation",
+    timestamp: Date.now(),
+  });
+  assert.equal(response.requestId, "approval-1");
+  assert.equal(response.decision, "deny");
+  await channel.stop();
+});
+
 test("channel bootstrap: missing telegram token throws coded error", () => {
   assert.throws(
     () => resolveRunModeChannel("run", makeChannels({ default: "telegram" })),
@@ -94,4 +110,3 @@ test("channel bootstrap: invalid default throws coded error", () => {
     }
   );
 });
-

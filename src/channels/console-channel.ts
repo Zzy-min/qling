@@ -10,8 +10,14 @@ export class ConsoleChannel implements Channel {
   name = "console";
   private userMessageHandler: ((msg: string) => Promise<void>) | null = null;
   private rl: readline.Interface | null = null;
+  private readonly headless: boolean;
+
+  constructor(options: { headless?: boolean } = {}) {
+    this.headless = options.headless === true;
+  }
 
   async start(): Promise<void> {
+    if (this.headless) return;
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -60,6 +66,13 @@ export class ConsoleChannel implements Channel {
   }
 
   async requestApproval(request: ApprovalRequest): Promise<ApprovalResponse> {
+    if (this.headless) {
+      return {
+        requestId: request.id,
+        decision: "deny",
+        timestamp: Date.now(),
+      };
+    }
     await this.sendText(
       "\n[Approval Required] Tool: " + request.toolName + "\n" +
       "Reason: " + request.reason + "\n" +

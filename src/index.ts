@@ -26,6 +26,12 @@ import {
   listExecutableSlashCommandsForPicker,
 } from "./commands/index.js";
 import { buildHelpText, formatCliError, parseCliArgs } from "./cli/startup-contract.js";
+import {
+  formatHeadlessError,
+  formatHeadlessExecutionEvent,
+  formatHeadlessResult,
+  writeHeadlessLine,
+} from "./cli/headless-json.js";
 import { runBootstrap } from "./cli/bootstrap.js";
 import { applyConfigToProcessEnv, loadQlingConfig } from "./config.js";
 import {
@@ -363,11 +369,27 @@ async function buildMissionReader(
 }
 
 async function main() {
-  const decision = parseCliArgs(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const jsonRequested = rawArgs.includes("--json");
+  const decision = parseCliArgs(rawArgs);
   if (decision.kind === "error") {
-    console.error(formatCliError(decision.code, decision.message));
-    process.exit(decision.exitCode);
+    if (jsonRequested) {
+      writeHeadlessLine(formatHeadlessError(decision.code, decision.message));
+    } else {
+      console.error(formatCliError(decision.code, decision.message));
+    }
+    process.exitCode = decision.exitCode;
+    return;
   }
+
+  const jsonMode = decision.mode === "run" && decision.outputFormat === "json";
+  const reportError = (code: string, message: string): void => {
+    if (jsonMode) {
+      writeHeadlessLine(formatHeadlessError(code, message));
+      return;
+    }
+    console.error(formatCliError(code, message));
+  };
 
   if (decision.mode === "help") {
     console.log(buildHelpText("qling", decision.subArgs.join(" ")));
@@ -408,10 +430,9 @@ async function main() {
   try {
     loaded = await loadQlingConfig(decision.global);
   } catch (err) {
-    console.error(
-      formatCliError("CONFIG_LOAD_FAILED", err instanceof Error ? err.message : String(err))
-    );
-    process.exit(1);
+    reportError("CONFIG_LOAD_FAILED", err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return;
   }
 
   for (const warning of loaded.warnings) {
@@ -1076,9 +1097,15 @@ async function main() {
   }
 
   const agent = new AgentLoop(agentConfig);
-  await agent.waitForInit();
+  let unsubscribeExecutionEvents: (() => void) | undefined;
 
   try {
+    await agent.waitForInit();
+    if (jsonMode) {
+      unsubscribeExecutionEvents = agent.subscribeExecutionEvents((event) => {
+        writeHeadlessLine(formatHeadlessExecutionEvent(event));
+      });
+    }
     if (decision.mode === "workflow") {
       const [sub, runId] = decision.subArgs;
       if (sub === "resume" && runId) {
@@ -1288,23 +1315,25 @@ async function main() {
 
     if (decision.mode === "run") {
       try {
-        const channel = resolveRunModeChannel(decision.mode, loaded.config.channels);
+        const channel = resolveRunModeChannel(decision.mode, loaded.config.channels, {
+          headless: jsonMode,
+        });
         if (channel) {
           await channel.start();
           agent.setChannel(channel);
         }
       } catch (err) {
         if (err instanceof CliChannelBootstrapError) {
-          console.error(formatCliError(err.code, err.message));
-          process.exit(1);
+          reportError(err.code, err.message);
+          process.exitCode = 1;
+          return;
         }
-        console.error(
-          formatCliError(
-            "CLI_CHANNEL_INIT_FAILED",
-            err instanceof Error ? err.message : String(err)
-          )
+        reportError(
+          "CLI_CHANNEL_INIT_FAILED",
+          err instanceof Error ? err.message : String(err)
         );
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     }
 
@@ -1339,12 +1368,17 @@ async function main() {
     const task = decision.task ?? "";
     agent.addUserMessage(task);
     const response = await agent.run();
-    console.log(response);
+    if (jsonMode) {
+      writeHeadlessLine(formatHeadlessResult(response, agent.getSessionStats()));
+    } else {
+      console.log(response);
+    }
   } catch (err: any) {
     const code = err.code || "RUN_FAILED";
-    console.error(formatCliError(code, err.message || String(err)));
-    process.exit(1);
+    reportError(code, err.message || String(err));
+    process.exitCode = 1;
   } finally {
+    unsubscribeExecutionEvents?.();
     try {
       await agent.shutdown();
     } catch {

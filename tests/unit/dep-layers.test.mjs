@@ -11,6 +11,7 @@ test("layerOf classifies key paths", () => {
   assert.equal(layerOf("types.ts"), "foundation");
   assert.equal(layerOf("config.ts"), "foundation");
   assert.equal(layerOf("pipeline/hooks.ts"), "core-services");
+  assert.equal(layerOf("plan/plan-artifacts.ts"), "core-services");
   assert.equal(layerOf("lsp/ts-service.ts"), "core-services");
   assert.equal(layerOf("mission/manager.ts"), "domain");
   assert.equal(layerOf("tools/lsp.ts"), "agent-runtime");

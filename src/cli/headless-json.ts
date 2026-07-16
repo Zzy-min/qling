@@ -1,0 +1,61 @@
+import type { ExecutionEvent } from "../execution/types.js";
+import type { TokenUsageSource } from "../token-usage.js";
+
+export const HEADLESS_JSON_SCHEMA_VERSION = 1;
+
+export interface HeadlessSessionStats {
+  sessionId: string;
+  turnCount: number;
+  tokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  tokenSource: TokenUsageSource;
+}
+
+function timestamp(value = Date.now()): string {
+  return new Date(value).toISOString();
+}
+
+export function formatHeadlessExecutionEvent(event: ExecutionEvent): string {
+  return JSON.stringify({
+    schemaVersion: HEADLESS_JSON_SCHEMA_VERSION,
+    ...event,
+    timestamp: timestamp(event.timestamp),
+  });
+}
+
+export function formatHeadlessResult(result: string, stats: HeadlessSessionStats): string {
+  return JSON.stringify({
+    schemaVersion: HEADLESS_JSON_SCHEMA_VERSION,
+    type: "result",
+    timestamp: timestamp(),
+    ok: true,
+    mode: "run",
+    result,
+    session: {
+      id: stats.sessionId,
+      turnCount: stats.turnCount,
+    },
+    usage: {
+      totalTokens: stats.tokens,
+      promptTokens: stats.promptTokens,
+      completionTokens: stats.completionTokens,
+      source: stats.tokenSource,
+    },
+  });
+}
+
+export function formatHeadlessError(code: string, message: string): string {
+  return JSON.stringify({
+    schemaVersion: HEADLESS_JSON_SCHEMA_VERSION,
+    type: "error",
+    timestamp: timestamp(),
+    ok: false,
+    mode: "run",
+    error: { code, message },
+  });
+}
+
+export function writeHeadlessLine(line: string): void {
+  process.stdout.write(`${line}\n`);
+}

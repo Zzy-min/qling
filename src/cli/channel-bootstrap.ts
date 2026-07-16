@@ -37,7 +37,8 @@ export class CliChannelBootstrapError extends Error {
 
 export function resolveRunModeChannel(
   mode: CliModeForChannel,
-  channels: ChannelConfigView
+  channels: ChannelConfigView,
+  options: { headless?: boolean } = {}
 ): Channel | null {
   if (mode !== "run") {
     return null;
@@ -46,7 +47,7 @@ export function resolveRunModeChannel(
   const channelDefault = String(channels.default ?? "").trim().toLowerCase();
   switch (channelDefault) {
     case "console":
-      return new ConsoleChannel();
+      return new ConsoleChannel({ headless: options.headless });
     case "telegram": {
       const token = String(channels.telegram.token ?? "").trim();
       if (!token) {
@@ -83,4 +84,3 @@ export function resolveRunModeChannel(
       );
   }
 }
-

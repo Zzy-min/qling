@@ -50,6 +50,7 @@ test("chat smoke: exit command triggers graceful shutdown", async () => {
           ...process.env,
           QLING_MEMORY_WAL_ENABLED: "false",
           QLING_METRICS_ENABLED: "false",
+          QLING_FEATURES_DASHBOARD: "false",
         },
         stdio: ["pipe", "pipe", "pipe"],
       }

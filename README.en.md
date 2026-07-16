@@ -102,6 +102,7 @@ Any OpenAI-compatible endpoint works via `QLING_LLM_ENDPOINT` + `QLING_LLM_MODEL
 ```bash
 qling                   # streaming TUI (chat)
 qling run "analyze this repo"
+qling run "analyze this repo" --json  # NDJSON events for CI/orchestration
 qling doctor            # local diagnostics
 qling privacy           # data retention paths
 ```
@@ -113,6 +114,7 @@ qling privacy           # data retention paths
 | `qling` / `qling chat` | Streaming TUI |
 | `qling repl` | Minimal REPL |
 | `qling run "…"` | One-shot task |
+| `qling run "…" --json` | NDJSON evidence events plus a final result; non-interactive approvals are safely denied. |
 | `qling bootstrap` | Local init checks |
 | `qling setup` | Provider/model wizard |
 | `qling daemon` / `mission` | Background long tasks |

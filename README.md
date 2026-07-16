@@ -122,6 +122,7 @@ qling setup
 qling                   # 默认进入流式 TUI（chat）
 qling chat              # 显式进入流式 TUI
 qling run "分析这个仓库" # 单次执行，推荐形式
+qling run "分析这个仓库" --json # NDJSON 事件流，适合 CI / 外部编排
 qling bootstrap         # 本机初始化检查
 qling setup             # 交互式配置 LLM 提供商
 ```
@@ -134,6 +135,7 @@ qling setup             # 交互式配置 LLM 提供商
 | `qling chat` | 显式进入流式 TUI。 |
 | `qling repl` | 简易 REPL，无 TUI 装饰。 |
 | `qling run "任务"` | 单次执行后退出，适合脚本调用。 |
+| `qling run "任务" --json` | 将执行证据、工具状态与最终结果逐行输出为 JSON。无交互审批会安全拒绝，不会阻塞管道。 |
 | `qling bootstrap` | 本机初始化检查、配置提示和 doctor 验证。 |
 | `qling --continue` | 恢复最近一次交互会话。 |
 | `qling --resume <session>` | 恢复指定交互会话。 |

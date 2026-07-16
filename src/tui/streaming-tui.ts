@@ -1442,6 +1442,16 @@ export class StreamUI {
       // 非 bracketed 粘贴：多字符纯文本整块插入（含单行 /dashboard web）
       if (!bracketedPaste && !chunk.includes("\x1b") && chunk.length > 1) {
         const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        // 管道/自动化输入中的单行尾换行代表 Enter，不应被识别成多行粘贴草稿。
+        if (!process.stdin.isTTY && normalized.endsWith("\n")) {
+          const line = normalized.replace(/\n+$/, "");
+          if (!line.includes("\n") && (!this.overlay || this.isFilterableOverlay())) {
+            if (line) this.insertBulkText(line);
+            if (this.overlay) this.handleOverlayEnter();
+            else this.handleEnter();
+            return;
+          }
+        }
         // 允许 filterable 浮层粘贴；其它浮层拒绝
         if (!this.overlay || this.isFilterableOverlay()) {
           this.insertBulkText(normalized);

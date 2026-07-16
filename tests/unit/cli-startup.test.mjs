@@ -334,6 +334,29 @@ test("cli: positional task remains valid for one-shot execution (compat)", () =>
   assert.equal(result.task, "修复 bug");
 });
 
+test("cli: --json selects structured output for run regardless of flag position", () => {
+  const trailing = parseCliArgs(["run", "fix bug", "--json"]);
+  const leading = parseCliArgs(["--json", "run", "fix bug"]);
+  const positional = parseCliArgs(["--json", "fix bug"]);
+
+  for (const result of [trailing, leading, positional]) {
+    assert.equal(result.kind, "ok");
+    assert.equal(result.mode, "run");
+    assert.equal(result.task, "fix bug");
+    assert.equal(result.outputFormat, "json");
+  }
+});
+
+test("cli: --json rejects interactive and management modes", () => {
+  for (const args of [["chat", "--json"], ["repl", "--json"], ["doctor", "--json"], ["--json"]]) {
+    const result = parseCliArgs(args);
+    assert.equal(result.kind, "error", args.join(" "));
+    assert.equal(result.code, "CLI_INVALID_MODE_COMBINATION", args.join(" "));
+    assert.equal(result.exitCode, 2, args.join(" "));
+    assert.match(result.message, /--json/);
+  }
+});
+
 test("cli: top-level english typo suggests local command without running task", () => {
   const result = parseCliArgs(["expors"]);
   assert.equal(result.kind, "error");
@@ -426,6 +449,8 @@ test("cli: help text includes subcommands and compatibility hints", () => {
   assert.match(help, /新手路径/);
   assert.match(help, /qling bootstrap/);
   assert.match(help, /qling run "你的任务"/);
+  assert.match(help, /qling run "你的任务" --json/);
+  assert.match(help, /NDJSON/);
   assert.match(help, /qling run "分析这个仓库"/);
   assert.match(help, /qling help/);
   assert.match(help, /qling setup/);

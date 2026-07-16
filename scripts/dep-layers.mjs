@@ -37,6 +37,7 @@ export function layerOf(rel) {
   }
   if (
     p.startsWith("pipeline/") ||
+    p.startsWith("plan/") ||
     p.startsWith("guard/") ||
     p === "guard.ts" ||
     p.startsWith("lsp/") ||

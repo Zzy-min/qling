@@ -74,7 +74,10 @@ test("e2e: tool call chain with fake LLM server", async () => {
         ...process.env,
         QLING_MEMORY_WAL_ENABLED: "false",
         QLING_METRICS_ENABLED: "false",
+        QLING_FEATURES_DASHBOARD: "false",
         QLING_GUARD_ENABLED: "false",
+        QLING_GUARD_PERMISSIONS_DEFAULT: "allow",
+        QLING_PERMISSIONS_MODE: "allow",
       },
       stdio: ["ignore", "pipe", "pipe"],
     }

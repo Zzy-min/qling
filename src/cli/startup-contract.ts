@@ -181,6 +181,7 @@ export interface CliResolutionOk {
   kind: "ok";
   mode: CliMode;
   task?: string;
+  outputFormat?: "json";
   subArgs: string[];
   global: CliGlobalOptions;
   warnings: string[];
@@ -218,6 +219,7 @@ export function parseCliArgs(args: string[]): CliResolution {
   const warnings: string[] = [];
   const positional: string[] = [];
   const subArgs: string[] = [];
+  const jsonRequested = args.includes("--json");
 
   let hasHelp = false;
   let hasVersion = false;
@@ -244,7 +246,7 @@ export function parseCliArgs(args: string[]): CliResolution {
       if (resolvedMode) {
         modeFromSubcommand = resolvedMode;
         if (isManagementMode(resolvedMode)) {
-          subArgs.push(...args.slice(i + 1));
+          subArgs.push(...args.slice(i + 1).filter((value) => value !== "--json"));
           break;
         }
         continue;
@@ -307,6 +309,9 @@ export function parseCliArgs(args: string[]): CliResolution {
       global.noWorkspace = true;
       continue;
     }
+    if (arg === "--json") {
+      continue;
+    }
     if (arg === "--continue") {
       global.continueSession = true;
       continue;
@@ -362,6 +367,25 @@ export function parseCliArgs(args: string[]): CliResolution {
 
   if (modeFromSubcommand && modeFromSubcommand !== "help" && isManagementMode(modeFromSubcommand) && subArgs.some(isHelpFlag)) {
     return { kind: "ok", mode: "help", subArgs: [modeFromSubcommand], global, warnings };
+  }
+
+  const jsonCanResolveToRun =
+    modeFromSubcommand === "run" ||
+    onceTask !== null ||
+    (modeFromSubcommand === null && !modeFromAliasChat && !modeFromAliasRepl && positional.length > 0);
+  if (jsonRequested && !jsonCanResolveToRun) {
+    return {
+      kind: "error",
+      code: "CLI_INVALID_MODE_COMBINATION",
+      message: formatLocalGuidancePanel({
+        title: "--json 仅支持单次 run 模式",
+        reason: "结构化事件流需要一个明确的单次任务。",
+        next: "将 --json 与 qling run 一起使用。",
+        example: 'qling run "分析这个仓库" --json',
+        boundary: getLocalizedText().boundaries.localValidation,
+      }),
+      exitCode: 2,
+    };
   }
 
   if (global.continueSession && global.resumeSession) {
@@ -433,7 +457,7 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "run", task, subArgs: [], global, warnings };
+    return { kind: "ok", mode: "run", task, outputFormat: jsonRequested ? "json" : undefined, subArgs: [], global, warnings };
   }
 
   if (isManagementMode(modeFromSubcommand)) {
@@ -547,7 +571,7 @@ export function parseCliArgs(args: string[]): CliResolution {
         exitCode: 2,
       };
     }
-    return { kind: "ok", mode: "run", task: onceTask!, subArgs: [], global, warnings };
+    return { kind: "ok", mode: "run", task: onceTask!, outputFormat: jsonRequested ? "json" : undefined, subArgs: [], global, warnings };
   }
 
   if (hasPositional) {
@@ -578,7 +602,7 @@ export function parseCliArgs(args: string[]): CliResolution {
       }
     }
     warnings.push("positional one-shot form is deprecated, prefer `qling run \"task\"`.");
-    return { kind: "ok", mode: "run", task: positional.join(" "), subArgs: [], global, warnings };
+    return { kind: "ok", mode: "run", task: positional.join(" "), outputFormat: jsonRequested ? "json" : undefined, subArgs: [], global, warnings };
   }
 
   return { kind: "ok", mode: "chat", subArgs: [], global, warnings };
@@ -608,6 +632,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName} --resume <session>       # 恢复指定交互会话
   ${binName} repl                     # 简易 REPL
   ${binName} run "你的任务"            # 单次执行（推荐）
+  ${binName} run "你的任务" --json     # 输出可供脚本解析的 NDJSON 事件流
   ${binName} bootstrap                # 本机一键启动检查
   ${binName} setup                    # 快速配置 LLM 提供商（不保存 API key 到 .env）
   ${binName} --version                # 打印版本（亦支持 -V / version）
@@ -682,6 +707,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   --file-state-dir <path>             # 指定 file state 根
   --inspect-prompt                    # 落盘 prompt 调试信息
   --inspect-request                   # 落盘 request 调试信息
+  --json                              # 仅 run：输出 NDJSON 执行事件和终态结果
   --version, -V                       # 打印版本并退出
   --log-format <text|json>            # 日志格式
   --log-level <debug|info|warn|error> # 日志级别
