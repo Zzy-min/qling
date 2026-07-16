@@ -156,7 +156,7 @@ xai-acp-lib            Agent Client Protocol
 | G5.3 | Hooks JSON 生命周期（Pre/PostToolUse, SessionStart） | 10-hooks |
 | G5.4 | 插件/技能安装源（自建 registry，不做 xAI marketplace 克隆） | 09-plugins |
 | G5.5 | ACP v1 stdio 适配器（已完成 2026-07-17） | `qling acp` · session/mode/prompt/tool/approval/cancel；客户端 MCP 与额外目录继续拒绝 |
-| G5.6 | （可选）OTEL 外部导出 | 24-monitoring · 默认关 |
+| G5.6 | （可选）OTEL 外部导出（已完成 2026-07-17） | 24-monitoring · 双 opt-in · 默认关 · 仅白名单元数据 |
 
 ---
 

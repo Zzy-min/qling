@@ -103,6 +103,7 @@ export function formatPrivacyReport(report: PrivacyReport): string[] {
     ...secretLines,
     "-----------------------------------------",
     "本命令只读取本地状态，不上传诊断数据，也不扫描消息正文。",
+    "OTEL 外部观测默认关闭；即使双重确认启用，也只导出固定白名单元数据，不导出正文、Prompt、路径或工具参数。",
     "边界说明: 模型请求仍按 provider 配置发送必要上下文；如需完全离线，需要配置本地模型/provider。",
     "提示: 用 /context 查看上下文占用，用 /doctor 检查本地稳定性。",
     "",

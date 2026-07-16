@@ -20,6 +20,8 @@ import { ANCHORED_EDIT_TOOLS } from "./tools/anchored-edit.js";
 import { ApprovalGate } from "./guard/approval.js";
 import { MetricsCollector } from "./metrics/collector.js";
 import { AgentTelemetry } from "./metrics/agent-telemetry.js";
+import { createOtelTraceBridge, type OtelTraceBridge } from "./execution/otel-trace.js";
+import { getPackageVersion } from "./package-version.js";
 import type { Channel } from "./channels/types.js";
 import type { MCPServerConfig } from "./types.js";
 import { VerificationAgent } from "./pipeline/verification.js";
@@ -171,6 +173,8 @@ export class AgentLoop extends AgentEventEmitter {
   private discoveryRegistry: DiscoveryRegistry;
   private missionManager: MissionManager;
   private telemetry: AgentTelemetry | null = null;
+  private otelTraceBridge: OtelTraceBridge | null = null;
+  private unsubscribeOtelEvents: (() => void) | null = null;
   private channel: Channel | null = null;
   private sessionId: string;
   private sessionCreatedAt: string;
@@ -572,6 +576,24 @@ export class AgentLoop extends AgentEventEmitter {
       } catch (err) {
         console.error("[Metrics/Dashboard] init failed: " + (err as Error).message);
       }
+    }
+
+    try {
+      const otel = await createOtelTraceBridge({
+        sessionId: this.sessionId,
+        version: getPackageVersion(),
+        onDisabled: () => console.error("[OTEL] metadata-only export disabled after exporter failure"),
+      });
+      this.otelTraceBridge = otel.bridge;
+      if (otel.bridge) {
+        this.unsubscribeOtelEvents = this.executionEventBus.subscribe((event) => otel.bridge?.record(event));
+        console.error(`[OTEL] metadata-only export enabled: ${otel.config.displayEndpoint}`);
+      } else if (otel.config.state === "armed" || otel.config.state === "invalid") {
+        console.error(`[OTEL] metadata-only export not started: ${otel.config.reason}`);
+      }
+    } catch {
+      console.error("[OTEL] metadata-only export disabled: initialization failed");
+      this.otelTraceBridge = null;
     }
 
     // MCP initialization
@@ -1014,6 +1036,16 @@ export class AgentLoop extends AgentEventEmitter {
     if (this.telemetry) {
       this.telemetry.recordSessionEnd();
       await this.telemetry.flush();
+    }
+    this.unsubscribeOtelEvents?.();
+    this.unsubscribeOtelEvents = null;
+    if (this.otelTraceBridge) {
+      try {
+        await this.otelTraceBridge.shutdown();
+      } catch {
+        console.error("[OTEL] metadata-only export shutdown incomplete");
+      }
+      this.otelTraceBridge = null;
     }
     if (this.metricsCollector) {
       const retentionDays = Number(process.env.QLING_METRICS_RETENTION_DAYS ?? "30");

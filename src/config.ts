@@ -166,6 +166,12 @@ export interface QlingConfig {
     dir: string;
     flush_interval_ms: number;
     retention_days: number;
+    otel?: {
+      enabled: boolean;
+      endpoint: string;
+      timeout_ms: number;
+      batch_delay_ms: number;
+    };
   };
   channels: {
     default: string;
@@ -379,6 +385,12 @@ export function buildDefaultConfig(): QlingConfig {
       dir: path.join(DEFAULT_STATE_DIR, "metrics"),
       flush_interval_ms: 10000,
       retention_days: 30,
+      otel: {
+        enabled: false,
+        endpoint: "",
+        timeout_ms: 3000,
+        batch_delay_ms: 250,
+      },
     },
     channels: {
       default: "console",
@@ -578,6 +590,14 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_METRICS_DIR = config.metrics.dir;
   process.env.QLING_METRICS_FLUSH_INTERVAL_MS = String(config.metrics.flush_interval_ms);
   process.env.QLING_METRICS_RETENTION_DAYS = String(config.metrics.retention_days);
+  process.env.QLING_METRICS_OTEL_ENABLED = String(config.metrics.otel?.enabled ?? false);
+  process.env.QLING_METRICS_OTEL_TIMEOUT_MS = String(config.metrics.otel?.timeout_ms ?? 3000);
+  process.env.QLING_METRICS_OTEL_BATCH_DELAY_MS = String(config.metrics.otel?.batch_delay_ms ?? 250);
+  if (config.metrics.otel?.endpoint) {
+    process.env.QLING_METRICS_OTEL_ENDPOINT = config.metrics.otel.endpoint;
+  } else {
+    delete process.env.QLING_METRICS_OTEL_ENDPOINT;
+  }
 
   // Channels (Phase 5)
   process.env.QLING_CHANNEL_DEFAULT = config.channels.default;

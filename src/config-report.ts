@@ -1,5 +1,6 @@
 import type { QlingConfig } from "./config.js";
 import { formatPermissionMode } from "./statusline.js";
+import { resolveOtelExportConfig, type OtelExportState } from "./metrics/otel-config.js";
 
 export interface LocalConfigReport {
   provider: string;
@@ -27,6 +28,10 @@ export interface LocalConfigReport {
   mcp: {
     total: number;
     enabled: number;
+  };
+  otel: {
+    state: OtelExportState;
+    endpoint: string;
   };
   channelDefault: string;
 }
@@ -70,8 +75,20 @@ function countEnabledMcpServers(config: QlingConfig): { total: number; enabled: 
   };
 }
 
-export function buildLocalConfigReport(config: QlingConfig): LocalConfigReport {
+export function buildLocalConfigReport(
+  config: QlingConfig,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): LocalConfigReport {
   const mcp = countEnabledMcpServers(config);
+  const otelConfig = config.metrics?.otel;
+  const otelEnv: Record<string, string | undefined> = { ...env };
+  if (otelConfig) {
+    otelEnv.QLING_METRICS_OTEL_ENABLED = String(otelConfig.enabled);
+    otelEnv.QLING_METRICS_OTEL_ENDPOINT = otelConfig.endpoint || env.QLING_METRICS_OTEL_ENDPOINT;
+    otelEnv.QLING_METRICS_OTEL_TIMEOUT_MS = String(otelConfig.timeout_ms);
+    otelEnv.QLING_METRICS_OTEL_BATCH_DELAY_MS = String(otelConfig.batch_delay_ms);
+  }
+  const otel = resolveOtelExportConfig(otelEnv);
   return {
     provider: safeText(config.llm.provider),
     model: safeText(config.llm.model),
@@ -104,6 +121,7 @@ export function buildLocalConfigReport(config: QlingConfig): LocalConfigReport {
       nonGitPolicy: safeText(config.agents.isolation.non_git_policy),
     },
     mcp,
+    otel: { state: otel.state, endpoint: otel.displayEndpoint },
     channelDefault: safeText(config.channels.default),
   };
 }
@@ -133,9 +151,10 @@ export function formatLocalConfigReport(report: LocalConfigReport): string[] {
     `Logging    : level=${report.logging.level} format=${report.logging.format} inspect_prompt=${report.logging.inspectPrompt} inspect_request=${report.logging.inspectRequest}`,
     `Isolation  : mode=${report.isolation.mode} require_git=${report.isolation.requireGit} non_git=${report.isolation.nonGitPolicy}`,
     `MCP        : enabled=${report.mcp.enabled}/${report.mcp.total}`,
+    `OTEL       : state=${report.otel.state} endpoint=${report.otel.endpoint} metadata_only=true`,
     `Channel    : ${report.channelDefault}`,
     "-----------------------------------------",
-    "边界      : 只读取当前本地配置；不修改配置、不调用模型、不联网；密钥始终脱敏。",
+    "边界      : 只读取当前本地配置；不修改配置、不调用模型、不联网；密钥始终脱敏。OTEL 默认关闭，双重确认后也只导出白名单元数据。",
     "",
   ];
 }

@@ -418,6 +418,7 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 - 评测：`npm run eval:smoke` / `eval:recovery` / `eval:tasks`
 - 网页/平台路由：见 [docs/web-routing.md](docs/web-routing.md)
 - SDK：见 [docs/sdk.md](docs/sdk.md)
+- 可选 OTEL 元数据导出：见 [docs/otel.md](docs/otel.md)（默认关闭、双重确认、不导出内容）
 - 本地评测：`npm run eval:smoke`（无 LLM）；可选 `QLING_EVAL_LLM=1 npm run eval:llm`
 - Phase 4 路线：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
 - 可选 TS 语义：`QLING_LSP=1` 后使用工具 `lsp`（definition/hover/…）

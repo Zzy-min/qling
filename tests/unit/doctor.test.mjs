@@ -3,10 +3,34 @@ import assert from "node:assert/strict";
 
 import {
   buildDoctorReport,
+  buildOtelCheck,
   buildPhase3FeatureChecks,
   buildPhase5FeatureChecks,
   formatDoctorReport,
 } from "../../dist/doctor.js";
+
+test("doctor reports OTEL state without exposing endpoint credentials", () => {
+  const enabled = buildOtelCheck({
+    QLING_METRICS_OTEL_ENABLED: "true",
+    QLING_OTEL_EXPORT_CONFIRM: "metadata-only",
+    QLING_METRICS_OTEL_ENDPOINT: "https://collector.example/v1/traces",
+    OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer%20SUPER_SECRET",
+  });
+  assert.equal(enabled.status, "pass");
+  assert.match(enabled.detail, /state=enabled/);
+  assert.match(enabled.detail, /https:\/\/collector\.example/);
+  assert.doesNotMatch(enabled.detail, /v1\/traces/);
+  assert.doesNotMatch(enabled.detail, /SUPER_SECRET|authorization|Bearer/);
+
+  const invalid = buildOtelCheck({
+    QLING_METRICS_OTEL_ENABLED: "true",
+    QLING_OTEL_EXPORT_CONFIRM: "metadata-only",
+    QLING_METRICS_OTEL_ENDPOINT: "https://user:pass@collector.example/v1/traces?token=secret",
+  });
+  assert.equal(invalid.status, "warn");
+  assert.equal(invalid.detail.includes("user"), false);
+  assert.equal(invalid.detail.includes("secret"), false);
+});
 
 function createContext(overrides = {}) {
   return {

@@ -8,6 +8,7 @@ import { buildLocalMcpReport } from "./mcp-report.js";
 import { guardConfigFromEnv, scanRuntimeDotEnvSecrets, type EnvSecretHit } from "./config.js";
 import { buildLocalHooksReport } from "./hooks-report.js";
 import { getLocalizedText } from "./i18n/index.js";
+import { resolveOtelExportConfig } from "./metrics/otel-config.js";
 
 const t = getLocalizedText();
 
@@ -279,6 +280,9 @@ function buildRecommendations(checks: DoctorCheck[]): string[] {
   if (byId.get("ollama")?.status === "pass") {
     recommendations.push("- 已检测到本机 Ollama。可用 `/model use ollama` 切换到本地模型（无需 API key）。");
   }
+  if (byId.get("otel")?.status === "warn") {
+    recommendations.push("- OTEL 尚未安全启用：检查 metadata-only 双重确认和无凭据、无 query/hash 的 OTLP trace endpoint。");
+  }
 
   // P4: channel connectors (完善 Telegram/Slack，规划其他)
   const hasTelegram = !!process.env.QLING_CHANNEL_TELEGRAM_TOKEN;
@@ -331,6 +335,16 @@ function buildHooksCheck(env: DoctorOptions["env"]): DoctorCheck {
     label: "hooks",
     status: report.guardEnabled ? "pass" : "warn",
     detail: `guard=${boolText(report.guardEnabled)} json_lifecycle=${boolText(envText(env, "QLING_JSON_HOOKS_ENABLED").toLowerCase() === "true")} permission=${report.permissionDefault} rules=${report.permissionRuleCount} rate_limit=${boolText(report.rateLimitEnabled)}(${report.rateLimitMaxPerMinute}/min) content_filter=${boolText(report.contentFilterEnabled)} custom=${report.customContentPatternCount}`,
+  };
+}
+
+export function buildOtelCheck(env: DoctorOptions["env"] = process.env): DoctorCheck {
+  const report = resolveOtelExportConfig(env ?? process.env);
+  return {
+    id: "otel",
+    label: "OTEL metadata export",
+    status: report.state === "enabled" || report.state === "off" ? "pass" : "warn",
+    detail: `state=${report.state} endpoint=${report.displayEndpoint} metadata_only=true; ${report.reason}`,
   };
 }
 
@@ -459,6 +473,7 @@ export async function buildDoctorReport(
     secretsCheck,
     buildMcpCheck(env),
     buildHooksCheck(env),
+    buildOtelCheck(env),
     // P4 connectors
     {
       id: "channel_telegram",

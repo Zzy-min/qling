@@ -203,6 +203,8 @@ test("applyConfigToProcessEnv maps memory/mcp/metrics/channels and guard fields"
   );
   assert.equal(process.env.QLING_MCP_SERVERS, JSON.stringify(loaded.config.mcp.servers));
   assert.equal(process.env.QLING_METRICS_ENABLED, String(loaded.config.metrics.enabled));
+  assert.equal(process.env.QLING_METRICS_OTEL_ENABLED, "false");
+  assert.equal(process.env.QLING_METRICS_OTEL_TIMEOUT_MS, "3000");
   assert.equal(process.env.QLING_CHANNEL_DEFAULT, loaded.config.channels.default);
   assert.equal(process.env.QLING_GUARD_RATE_LIMIT_ENABLED, "true");
   assert.equal(process.env.QLING_GUARD_RATE_LIMIT_MAX_PER_MINUTE, "17");
@@ -211,4 +213,19 @@ test("applyConfigToProcessEnv maps memory/mcp/metrics/channels and guard fields"
   assert.equal(process.env.QLING_GUARD_CONTENT_FILTER_INJECTION, "false");
   assert.equal(process.env.QLING_GUARD_CONTENT_FILTER_CUSTOM, JSON.stringify(["SECRET_CONFIG_PATTERN"]));
   assert.equal(process.env.QLING_GUARD_PERMISSIONS_RULES, JSON.stringify([{ tool_pattern: "bash", decision: "ask" }]));
+});
+
+test("config loads optional OTEL settings from QLING environment", async () => {
+  const loaded = await loadQlingConfig({}, {
+    QLING_METRICS_OTEL_ENABLED: "true",
+    QLING_METRICS_OTEL_ENDPOINT: "http://127.0.0.1:4318/v1/traces",
+    QLING_METRICS_OTEL_TIMEOUT_MS: "4500",
+    QLING_METRICS_OTEL_BATCH_DELAY_MS: "400",
+  });
+  assert.deepEqual(loaded.config.metrics.otel, {
+    enabled: true,
+    endpoint: "http://127.0.0.1:4318/v1/traces",
+    timeout_ms: 4500,
+    batch_delay_ms: 400,
+  });
 });
