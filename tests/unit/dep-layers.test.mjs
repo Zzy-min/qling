@@ -10,6 +10,9 @@ import {
 test("layerOf classifies key paths", () => {
   assert.equal(layerOf("types.ts"), "foundation");
   assert.equal(layerOf("config.ts"), "foundation");
+  assert.equal(layerOf("daemon-security.ts"), "foundation");
+  assert.equal(layerOf("execution/types.ts"), "foundation");
+  assert.equal(layerOf("persistence/atomic-json.ts"), "foundation");
   assert.equal(layerOf("pipeline/hooks.ts"), "core-services");
   assert.equal(layerOf("plan/plan-artifacts.ts"), "core-services");
   assert.equal(layerOf("lsp/ts-service.ts"), "core-services");

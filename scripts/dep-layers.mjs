@@ -31,6 +31,9 @@ export function layerOf(rel) {
     p === "usage-ledger.ts" ||
     p === "package-version.ts" ||
     p === "output-style.ts" ||
+    p === "daemon-security.ts" ||
+    p === "execution/types.ts" ||
+    p.startsWith("persistence/") ||
     p.startsWith("utils/") ||
     p.startsWith("i18n/") ||
     p.startsWith("providers/")
