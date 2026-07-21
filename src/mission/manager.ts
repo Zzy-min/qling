@@ -8,6 +8,11 @@ import * as path from "path";
 import { existsSync } from "fs";
 import { Mission, MissionStatus, MissionEvent } from "./types.js";
 import { notifyMissionLog, notifyMissionProgress } from "./progress-notify.js";
+import {
+  atomicWriteJson,
+  enqueueFileOperation,
+  readJsonWithBackup,
+} from "../persistence/atomic-json.js";
 
 const TERMINAL_STATUSES = new Set<MissionStatus>(["succeeded", "exhausted", "failed", "canceled"]);
 const PAUSABLE_STATUSES = new Set<MissionStatus>(["queued", "running", "blocked"]);
@@ -225,7 +230,8 @@ export class MissionManager {
 
   private async saveMission(mission: Mission): Promise<void> {
     const filePath = this.getMissionPath(mission.id);
-    await fs.writeFile(filePath, JSON.stringify(mission, null, 2), "utf-8");
+    const snapshot = JSON.parse(JSON.stringify(mission)) as Mission;
+    await atomicWriteJson(filePath, snapshot, { backup: true });
   }
 
   private async loadMissions(): Promise<void> {
@@ -233,8 +239,13 @@ export class MissionManager {
     for (const file of files) {
       if (file.endsWith(".json")) {
         try {
-          const raw = await fs.readFile(path.join(this.stateDir, file), "utf-8");
-          const mission = JSON.parse(raw) as Mission;
+          const filePath = path.join(this.stateDir, file);
+          const read = await readJsonWithBackup<Mission>(filePath);
+          if (!read) throw new Error("primary and backup snapshots are unreadable");
+          if (read.source === "backup") {
+            console.warn(`[MissionManager] recovered ${file} from local backup`);
+          }
+          const mission = read.value;
           this.missions.set(mission.id, mission);
         } catch (err) {
           console.error(`[MissionManager] Failed to load mission ${file}: ${(err as Error).message}`);
@@ -253,7 +264,8 @@ export class MissionManager {
 
   private async appendEvent(event: MissionEvent): Promise<void> {
     const filePath = this.getEventPath(event.missionId);
-    await fs.appendFile(filePath, JSON.stringify(event) + "\n", "utf-8");
+    const line = JSON.stringify(event) + "\n";
+    await enqueueFileOperation(filePath, () => fs.appendFile(filePath, line, "utf-8"));
   }
 
   private async applyControlTransition(

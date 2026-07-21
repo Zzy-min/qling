@@ -31,6 +31,7 @@ import type { LlmChatResponse } from "../providers/llm-client.js";
 import { findLastUserMessageContent } from "./system-prompt.js";
 import { formatRecoveryPause } from "../execution/recovery-messages.js";
 import type { UsageLedger } from "../usage-ledger.js";
+import type { ToolDispatcher } from "../tools/index.js";
 
 export interface TurnTelemetry {
   turn: number;
@@ -191,6 +192,7 @@ export interface InnerLoopHost {
   recoveryController: RecoveryController;
   verifier: VerificationAgent;
   usageLedger?: UsageLedger;
+  dispatchTool?: ToolDispatcher;
 
   buildSystemPrompt: () => Promise<string>;
   chat: (systemPrompt: string, overrides?: Record<string, unknown>) => Promise<LlmChatResponse>;
@@ -363,6 +365,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         emit: host.emit,
         reflectiveThink: host.reflectiveThink,
         usageLedger: host.usageLedger,
+        dispatchTool: host.dispatchTool,
       },
       {
         preparedCalls,

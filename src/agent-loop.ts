@@ -6,7 +6,7 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
-import { ALL_TOOLS, setMCPRegistry } from "./tools/index.js";
+import { ALL_TOOLS } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry } from "./pipeline/sections.js";
 import { MemoryStore } from "./memory.js";
@@ -61,6 +61,7 @@ import {
   isLoopbackEndpoint,
 } from "./providers/presets.js";
 import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
+import { RuntimeServices } from "./runtime-services.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
@@ -166,7 +167,7 @@ export class AgentLoop extends AgentEventEmitter {
   private memoryDreamLLMEnabled = false;
   private memoryDreamTurnThreshold = 24;
   private memoryMaxEntries = 1000;
-  private mcpRegistry: MCPRegistry | null = null;
+  private runtimeServices: RuntimeServices;
   private approvalGate: ApprovalGate;
   private metricsCollector: MetricsCollector | null = null;
   private metricsFlushTimer: ReturnType<typeof setInterval> | null = null;
@@ -423,6 +424,12 @@ export class AgentLoop extends AgentEventEmitter {
       timeoutMs: this.resolveLlmRequestTimeout(),
       provider: this.config.provider,
     });
+    this.runtimeServices = new RuntimeServices(this.llmClient, this.memoryStore, {
+      provider: this.config.provider ?? "unknown",
+      model: this.config.model,
+      workspaceDir: this.config.runtime?.workspaceDir ?? null,
+      stateDir: this.runtimeRootDir,
+    });
     this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
 
@@ -614,17 +621,17 @@ export class AgentLoop extends AgentEventEmitter {
         const servers = JSON.parse(mcpServersRaw) as Record<string, MCPServerConfig>;
         const enabled = Object.values(servers).filter((s) => s.enabled);
         if (enabled.length > 0) {
-          this.mcpRegistry = new MCPRegistry({
+          const registry = new MCPRegistry({
             connection: mcpConnTimeout,
             call: mcpCallTimeout,
             maxOutputBytes: Number(process.env.QLING_MCP_MAX_OUTPUT_BYTES) || 20 * 1024,
           });
           for (const s of enabled) {
-            this.mcpRegistry.registerServer(s);
+            registry.registerServer(s);
           }
-          setMCPRegistry(this.mcpRegistry);
-          const results = await this.mcpRegistry.connectAll();
-          const mcpTools = mcpToolsToNativeDefinitions(this.mcpRegistry.getAllTools());
+          this.runtimeServices.setMcpRegistry(registry);
+          const results = await registry.connectAll();
+          const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools());
           if (mcpTools.length > 0) {
             const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
             this.config.tools = [
@@ -806,6 +813,7 @@ export class AgentLoop extends AgentEventEmitter {
       recoveryController: this.recoveryController,
       verifier: this.verifier,
       usageLedger: this.usageLedger,
+      dispatchTool: this.runtimeServices.dispatchTool,
       buildSystemPrompt: () => this.buildSystemPrompt(),
       chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
         this.chat(systemPrompt, overrides ?? {}),
@@ -1117,9 +1125,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (this.channel) {
       await this.channel.stop();
     }
-    if (this.mcpRegistry) {
-      await this.mcpRegistry.disconnectAll();
-    }
+    await this.runtimeServices.shutdown();
     if (this.dashboardServer) {
       this.dashboardServer.stop();
     }

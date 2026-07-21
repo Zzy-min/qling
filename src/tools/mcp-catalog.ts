@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { getMCPRegistry } from "./index.js";
+import type { MCPRegistry } from "../mcp/registry.js";
 import { toolError, toolSuccess } from "./error-utils.js";
 
 export const searchToolCatalogTool: ToolDefinition = {
@@ -36,8 +36,10 @@ export const useCatalogTool: ToolDefinition = {
 
 export const MCP_CATALOG_TOOLS = [searchToolCatalogTool, useCatalogTool];
 
-export async function runSearchToolCatalog(args: Record<string, unknown>): Promise<ToolResult> {
-  const registry = getMCPRegistry();
+export async function runSearchToolCatalog(
+  args: Record<string, unknown>,
+  registry: Pick<MCPRegistry, "searchTools"> | null = null
+): Promise<ToolResult> {
   if (!registry) return toolError("MCP_CATALOG_UNAVAILABLE", "MCP registry is not initialized");
   const query = String(args.query ?? "").trim();
   if (!query) return toolError("MCP_CATALOG_INVALID_QUERY", "query is required");
@@ -46,8 +48,10 @@ export async function runSearchToolCatalog(args: Record<string, unknown>): Promi
   return toolSuccess(JSON.stringify({ query, matches }, null, 2));
 }
 
-export async function runUseCatalogTool(args: Record<string, unknown>): Promise<ToolResult> {
-  const registry = getMCPRegistry();
+export async function runUseCatalogTool(
+  args: Record<string, unknown>,
+  registry: Pick<MCPRegistry, "getCatalogTool" | "callTool"> | null = null
+): Promise<ToolResult> {
   if (!registry) return toolError("MCP_CATALOG_UNAVAILABLE", "MCP registry is not initialized");
   const name = String(args.name ?? "").trim();
   const found = registry.getCatalogTool(name);

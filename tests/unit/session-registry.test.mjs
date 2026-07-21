@@ -58,3 +58,50 @@ test("session registry: save, list, load by name/sessionId, and resolve latest",
   assert.equal(latest?.name, "session-beta");
   assert.equal(latest?.sessionId, "session-beta");
 });
+
+test("session registry falls back to the last complete backup when the primary is corrupt", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-session-backup-"));
+  try {
+    const registry = new SessionRegistry({ stateDir });
+    const base = {
+      name: "recoverable",
+      sessionId: "session-recoverable",
+      workspaceDir: null,
+      createdAt: "2026-05-16T00:00:00.000Z",
+      messages: [{ role: "user", content: "safe" }],
+      sessionTokens: 1,
+      compactionCount: 0,
+    };
+    await registry.save({ ...base, updatedAt: "2026-05-16T00:01:00.000Z", turnCount: 1 });
+    await registry.save({ ...base, updatedAt: "2026-05-16T00:02:00.000Z", turnCount: 2 });
+    await fs.writeFile(path.join(stateDir, "sessions", "recoverable.json"), "{broken", "utf8");
+
+    const restored = await new SessionRegistry({ stateDir }).load("recoverable");
+    assert.equal(restored?.turnCount, 1);
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("session registry serializes 100 concurrent updates without truncated JSON", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-session-concurrent-"));
+  try {
+    const registry = new SessionRegistry({ stateDir });
+    await Promise.all(Array.from({ length: 100 }, (_, turnCount) => registry.save({
+      name: "same-session",
+      sessionId: "same-session",
+      workspaceDir: null,
+      createdAt: "2026-05-16T00:00:00.000Z",
+      updatedAt: new Date(1_000 + turnCount).toISOString(),
+      messages: [{ role: "user", content: String(turnCount) }],
+      turnCount,
+      sessionTokens: turnCount,
+      compactionCount: 0,
+    })));
+    const restored = await registry.load("same-session");
+    assert.equal(restored?.turnCount, 99);
+    assert.equal(restored?.messages[0].content, "99");
+  } finally {
+    await fs.rm(stateDir, { recursive: true, force: true });
+  }
+});

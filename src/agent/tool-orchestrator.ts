@@ -4,6 +4,7 @@
 // ============================================================
 
 import { dispatch } from "../tools/index.js";
+import type { ToolDispatcher } from "../tools/index.js";
 import type { ToolPipeline } from "../pipeline/hooks.js";
 import { checkToolConsistency } from "../pipeline/consistency-checker.js";
 import { ApprovalGate, ApprovalRequiredError } from "../guard/approval.js";
@@ -213,6 +214,7 @@ export interface ToolOrchestratorDeps {
   emit: (event: string, ...args: unknown[]) => void;
   reflectiveThink: (tc: ToolCall) => Promise<{ decision: ReflectionDecision; reason: string }>;
   usageLedger?: UsageLedger;
+  dispatchTool?: ToolDispatcher;
 }
 
 export interface ExecuteToolsContext {
@@ -234,6 +236,7 @@ export async function executePreparedTools(
   deps: ToolOrchestratorDeps,
   context: ExecuteToolsContext
 ): Promise<ExecuteToolsResult> {
+  const dispatchTool = deps.dispatchTool ?? dispatch;
   let turnToolCalls = 0;
   let turnToolFailures = 0;
   const { preparedCalls, messages, runId, attemptId } = context;
@@ -301,7 +304,7 @@ export async function executePreparedTools(
 
     if (!preflightResult) {
       try {
-        result = await deps.pipeline.execute(tc, (t) => dispatch(t));
+        result = await deps.pipeline.execute(tc, (t) => dispatchTool(t));
       } catch (err) {
         if (err instanceof ApprovalRequiredError) {
           if (!deps.channel) {
@@ -342,7 +345,7 @@ export async function executePreparedTools(
               } catch {
                 // grant 失败不阻断执行
               }
-              result = await dispatch(tc);
+              result = await dispatchTool(tc);
             } else {
               result = {
                 tool_call_id: tc.id,

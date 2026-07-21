@@ -89,17 +89,6 @@ export const ALL_TOOLS: ToolDefinition[] = [
   bgKillTool,
 ];
 
-// Runtime MCP registry reference
-let mcpRegistry: MCPRegistry | null = null;
-
-export function setMCPRegistry(registry: MCPRegistry): void {
-  mcpRegistry = registry;
-}
-
-export function getMCPRegistry(): MCPRegistry | null {
-  return mcpRegistry;
-}
-
 export interface ToolRegistryBuildOptions {
   staticEnabled?: Record<string, boolean>;
   runtimeInjected?: ToolDefinition[];
@@ -145,35 +134,62 @@ const handlers: Record<string, ToolHandler> = {
   patch_anchored: runPatchAnchored as ToolHandler,
 };
 
-export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {
-  // MCP tool routing
-  if (isMCPTool(toolCall.name) && mcpRegistry) {
-    const parsed = parseMCPToolName(toolCall.name);
-    if (parsed) {
-      const result = await mcpRegistry.callTool(parsed.serverName, parsed.toolName, toolCall.arguments);
+export type ToolDispatcher = (toolCall: ToolCall) => Promise<ToolResult>;
+
+export interface ToolDispatcherOptions {
+  mcpRegistry?: MCPRegistry | null | (() => MCPRegistry | null);
+}
+
+export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolDispatcher {
+  const resolveRegistry = () => typeof options.mcpRegistry === "function"
+    ? options.mcpRegistry()
+    : options.mcpRegistry ?? null;
+  return async (toolCall: ToolCall): Promise<ToolResult> => {
+    const registry = resolveRegistry();
+    // MCP tool routing is bound to this dispatcher instance.
+    if (isMCPTool(toolCall.name) && registry) {
+      const parsed = parseMCPToolName(toolCall.name);
+      if (parsed) {
+        const result = await registry.callTool(parsed.serverName, parsed.toolName, toolCall.arguments);
+        return { ...result, tool_call_id: toolCall.id };
+      }
+    }
+
+    if (toolCall.name === "search_tool") {
+      const result = await runSearchToolCatalog(toolCall.arguments, registry);
       return { ...result, tool_call_id: toolCall.id };
     }
-  }
+    if (toolCall.name === "use_tool") {
+      const result = await runUseCatalogTool(toolCall.arguments, registry);
+      return { ...result, tool_call_id: toolCall.id };
+    }
 
-  const handler = handlers[toolCall.name];
-  if (!handler) {
-    return { ...toolError("TOOL_NOT_FOUND", `unknown tool '${toolCall.name}'`), tool_call_id: toolCall.id };
-  }
-  try {
-    const result = await handler(toolCall.arguments);
-    return {
-      ...result,
-      tool_call_id: toolCall.id,
-    };
-  } catch (err: unknown) {
-    return {
-      ...toolError("TOOL_DISPATCH_FAILED", err instanceof Error ? err.message : String(err), {
-        retriable: false,
-        category: "runtime",
-      }),
-      tool_call_id: toolCall.id,
-    };
-  }
+    const handler = handlers[toolCall.name];
+    if (!handler) {
+      return { ...toolError("TOOL_NOT_FOUND", `unknown tool '${toolCall.name}'`), tool_call_id: toolCall.id };
+    }
+    try {
+      const result = await handler(toolCall.arguments);
+      return {
+        ...result,
+        tool_call_id: toolCall.id,
+      };
+    } catch (err: unknown) {
+      return {
+        ...toolError("TOOL_DISPATCH_FAILED", err instanceof Error ? err.message : String(err), {
+          retriable: false,
+          category: "runtime",
+        }),
+        tool_call_id: toolCall.id,
+      };
+    }
+  };
+}
+
+const defaultDispatcher = createToolDispatcher();
+
+export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {
+  return defaultDispatcher(toolCall);
 }
 
 export async function dispatchAll(toolCalls: ToolCall[]): Promise<ToolResult[]> {

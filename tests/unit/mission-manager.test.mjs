@@ -100,3 +100,31 @@ test("mission manager: exhausted is terminal and retryable", async () => {
     assert.equal(retry.status, "queued");
   });
 });
+
+test("mission manager recovers the previous complete snapshot from backup", async () => {
+  await withTempDir(async (stateDir) => {
+    const manager = new MissionManager(stateDir);
+    await manager.init();
+    const mission = await manager.createMission("Recover", "keep state", "session-test");
+    await manager.updateStatus(mission.id, "running");
+    await fs.writeFile(path.join(stateDir, "missions", `${mission.id}.json`), "{broken", "utf8");
+
+    const restored = new MissionManager(stateDir);
+    await restored.init();
+    assert.equal(restored.getMission(mission.id)?.status, "queued");
+  });
+});
+
+test("mission manager serializes 100 concurrent snapshot updates", async () => {
+  await withTempDir(async (stateDir) => {
+    const manager = new MissionManager(stateDir);
+    await manager.init();
+    const mission = await manager.createMission("Concurrent", "updates", "session-test");
+    await Promise.all(Array.from({ length: 100 }, (_, totalTurns) =>
+      manager.updateExecutionSnapshot(mission.id, { metrics: { totalTurns } })
+    ));
+    const reloaded = new MissionManager(stateDir);
+    await reloaded.init();
+    assert.equal(reloaded.getMission(mission.id)?.metrics.totalTurns, 99);
+  });
+});

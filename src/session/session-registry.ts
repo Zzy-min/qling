@@ -5,6 +5,7 @@ import * as path from "path";
 import type { Message } from "../types.js";
 import { deriveSessionTitle } from "./session-title.js";
 import type { RecoveryState } from "../execution/types.js";
+import { atomicWriteJson, readJsonWithBackup } from "../persistence/atomic-json.js";
 
 export interface SavedActiveRun {
   runId: string;
@@ -81,7 +82,7 @@ export class SessionRegistry {
     await fs.mkdir(this.sessionsDir, { recursive: true });
     const normalized = this.normalizeSnapshot(snapshot);
     const filePath = this.getSnapshotPath(normalized.name);
-    await fs.writeFile(filePath, JSON.stringify(normalized, null, 2), "utf-8");
+    await atomicWriteJson(filePath, normalized, { backup: true });
     return filePath;
   }
 
@@ -153,7 +154,7 @@ export class SessionRegistry {
       compactionCount: snapshot.compactionCount ?? 0,
       activeRun: snapshot.activeRun ? { ...snapshot.activeRun } : undefined,
       recoveryState: snapshot.recoveryState
-        ? { ...snapshot.recoveryState, attemptedStrategies: [...snapshot.recoveryState.attemptedStrategies] }
+        ? { ...snapshot.recoveryState, attemptedStrategies: [...(snapshot.recoveryState.attemptedStrategies ?? [])] }
         : undefined,
     };
   }
@@ -164,7 +165,15 @@ export class SessionRegistry {
     }
 
     try {
-      const raw = JSON.parse(await fs.readFile(filePath, "utf-8")) as Record<string, unknown>;
+      const read = await readJsonWithBackup<Record<string, unknown>>(filePath);
+      if (!read) {
+        console.error(`[SessionRegistry] primary and backup are unreadable: ${path.basename(filePath)}`);
+        return null;
+      }
+      if (read.source === "backup") {
+        console.warn(`[SessionRegistry] recovered ${path.basename(filePath)} from local backup`);
+      }
+      const raw = read.value;
       const name = this.normalizeName(path.basename(filePath));
       const savedAt = typeof raw.savedAt === "string" ? raw.savedAt : new Date(0).toISOString();
       const createdAt =
@@ -192,7 +201,12 @@ export class SessionRegistry {
           ? { ...(raw.activeRun as SavedActiveRun) }
           : undefined,
         recoveryState: raw.recoveryState && typeof raw.recoveryState === "object"
-          ? { ...(raw.recoveryState as RecoveryState) }
+          ? {
+              ...(raw.recoveryState as RecoveryState),
+              attemptedStrategies: Array.isArray((raw.recoveryState as RecoveryState).attemptedStrategies)
+                ? [...(raw.recoveryState as RecoveryState).attemptedStrategies]
+                : [],
+            }
           : undefined,
       };
     } catch {
