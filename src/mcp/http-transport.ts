@@ -50,6 +50,11 @@ export class HttpTransport {
         signal: controller.signal,
       });
 
+      if (!res.ok) {
+        const detail = await readLimitedErrorBody(res, 4 * 1024);
+        throw new Error(`MCP HTTP ${res.status}${detail ? `: ${sanitizeErrorDetail(detail)}` : ""}`);
+      }
+
       // Capture Mcp-Session-Id from initialize response
       const sid = res.headers.get("mcp-session-id");
       if (sid) this.sessionId = sid;
@@ -66,9 +71,6 @@ export class HttpTransport {
         }
       } else {
         // Empty response (e.g., 202 Accepted for notifications)
-        if (res.status >= 400) {
-          throw new Error(`MCP HTTP ${res.status}: ${await res.text()}`);
-        }
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
@@ -137,4 +139,38 @@ export class HttpTransport {
       reader.releaseLock();
     }
   }
+}
+
+async function readLimitedErrorBody(res: Response, maxBytes: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - total;
+      const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      chunks.push(chunk);
+      total += chunk.byteLength;
+      if (value.byteLength > remaining) break;
+    }
+    if (total >= maxBytes) await reader.cancel().catch(() => undefined);
+  } finally {
+    reader.releaseLock();
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+function sanitizeErrorDetail(value: string): string {
+  return value
+    .replace(/bearer\s+[a-z0-9._~+\/-]+/gi, "Bearer [REDACTED]")
+    .replace(/(["']?(?:api[_-]?key|token|secret)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, "$1[REDACTED]");
 }

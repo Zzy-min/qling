@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { daemonAuthHeaders } from "../../dist/daemon-security.js";
 
 const ENTRY = path.join(process.cwd(), "dist/index.js");
 const DAEMON_ENTRY = path.join(process.cwd(), "dist/daemon.js");
@@ -106,10 +107,11 @@ test("mission attach smoke: follows logs until mission reaches terminal state", 
 
   try {
     await waitForHealth(baseUrl);
+    const authHeaders = daemonAuthHeaders(stateDir);
 
     const create = await fetch(`${baseUrl}/missions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify({
         name: "Attach Mission",
         description: "follow this mission",

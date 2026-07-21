@@ -20,6 +20,7 @@ import {
   listLocalSessionTasks,
 } from "./session-task-report.js";
 import type { WorkflowRuntime } from "./workflow-runtime.js";
+import { daemonAuthHeaders } from "./daemon-security.js";
 
 export interface DashboardOptions {
   port: number;
@@ -470,6 +471,7 @@ export class DashboardServer {
     try {
       const response = await fetch(`${this.daemonUrl()}/missions/${encodeURIComponent(id)}/${action}`, {
         method: "POST",
+        headers: daemonAuthHeaders(this.getStateDir()),
         signal: AbortSignal.timeout(1_200),
       });
       if (!response.ok) {

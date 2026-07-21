@@ -11,6 +11,7 @@ import {
   VerificationVerdict,
   VerificationStep,
 } from "../types.js";
+import type { LlmHttpClient } from "../providers/llm-client.js";
 
 const VERIFICATION_PROMPT = `你是轻灵的验证 Agent，负责判断操作是否成功。
 
@@ -32,7 +33,7 @@ PARTIAL  // 部分成功，有警告
 /** @deprecated Prefer StagedVerifier for recovery-driving verification. */
 export class VerificationAgent {
   constructor(
-    private apiKey: string,
+    private client: Pick<LlmHttpClient, "chatCompletions">,
     private model: string = "deepseek-chat"
   ) {}
 
@@ -49,7 +50,7 @@ export class VerificationAgent {
     );
     // 如果 output 很短且显式开启 LLM 旁路，才调用模型
     const isSimple = actualOutput.length < 100 || actualOutput.includes("denied") || actualOutput.includes("not found") || actualOutput.includes("Error");
-    if (llmEnabled && isSimple && this.apiKey) {
+    if (llmEnabled && isSimple) {
       try {
         const llmResult = await this.verifyWithLLM(operation, actualOutput, ruleResult);
         return llmResult;
@@ -80,23 +81,17 @@ export class VerificationAgent {
   }
 
   private async callLLM(prompt: string): Promise<string> {
-    const resp = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [{ role: "user", content: prompt }],
+    const response = await this.client.chatCompletions({
+      model: this.model,
+      systemPrompt: VERIFICATION_PROMPT,
+      messages: [{ role: "user", content: prompt }],
+      tools: [],
+      overrides: {
         max_tokens: 150,
         temperature: 0,
-      }),
+      },
     });
-
-    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
-    const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
-    return data.choices?.[0]?.message?.content ?? "";
+    return response.content;
   }
 
   private parseResponse(response: string): VerificationResult {

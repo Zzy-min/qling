@@ -81,6 +81,7 @@ export interface QlingConfig {
     endpoint: string;
     api_key: string;
     request_timeout_ms: number;
+    max_retries?: number;
   };
   runtime: {
     workspace_dir: string | null;
@@ -246,6 +247,7 @@ export function buildDefaultConfig(): QlingConfig {
       endpoint: "https://api.deepseek.com",
       api_key: "",
       request_timeout_ms: 120000,
+      max_retries: 3,
     },
     runtime: {
       workspace_dir: process.cwd(),
@@ -490,6 +492,7 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_LLM_MODEL = config.llm.model;
   process.env.QLING_LLM_ENDPOINT = config.llm.endpoint;
   process.env.QLING_LLM_REQUEST_TIMEOUT_MS = String(config.llm.request_timeout_ms);
+  process.env.QLING_LLM_MAX_RETRIES = String(config.llm.max_retries ?? 3);
   if (config.llm.api_key) {
     process.env.QLING_LLM_API_KEY = config.llm.api_key;
   }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
-import { LlmHttpClient } from "../../dist/providers/llm-client.js";
+import { LlmHttpClient, ProviderHttpError } from "../../dist/providers/llm-client.js";
 
 function startFakeServer(handler) {
   const server = http.createServer(handler);
@@ -108,5 +108,48 @@ test("LlmHttpClient aborts an in-flight request without transport retries", asyn
     assert.equal(requests, 1);
   } finally {
     await fake.close();
+  }
+});
+
+test("LlmHttpClient preserves sanitized provider HTTP metadata without hidden retries", async () => {
+  for (const status of [504, 401]) {
+    let requests = 0;
+    const fake = await startFakeServer((_req, res) => {
+      requests++;
+      res.writeHead(status, {
+        "Content-Type": "application/json",
+        "Retry-After": "2",
+        "X-Request-Id": `request-${status}`,
+      });
+      res.end(JSON.stringify({ error: { code: `E${status}`, message: "Bearer top-secret-token" } }));
+    });
+    try {
+      const client = new LlmHttpClient({
+        endpoint: fake.base + "/v1",
+        apiKey: "x",
+        timeoutMs: 1000,
+        provider: "fake",
+      });
+      await assert.rejects(
+        client.chatCompletions({
+          model: "test-model",
+          systemPrompt: "sys",
+          messages: [{ role: "user", content: "hi" }],
+          tools: [],
+        }),
+        (error) => {
+          assert.ok(error instanceof ProviderHttpError);
+          assert.equal(error.status, status);
+          assert.equal(error.requestId, `request-${status}`);
+          assert.equal(error.retriable, status === 504);
+          assert.equal(error.retryAfterMs, 2000);
+          assert.doesNotMatch(error.message, /top-secret-token/);
+          return true;
+        }
+      );
+      assert.equal(requests, 1);
+    } finally {
+      await fake.close();
+    }
   }
 });

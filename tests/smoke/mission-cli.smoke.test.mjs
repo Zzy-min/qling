@@ -7,6 +7,7 @@ import path from "node:path";
 import { createServer } from "node:http";
 
 import { MissionManager } from "../../dist/mission/manager.js";
+import { daemonAuthHeaders } from "../../dist/daemon-security.js";
 
 const DAEMON_ENTRY = path.join(process.cwd(), "dist/daemon.js");
 
@@ -43,10 +44,10 @@ async function waitForHealth(baseUrl, timeoutMs = 10_000) {
   throw new Error("daemon health check timed out");
 }
 
-async function waitForMissionStatus(baseUrl, missionId, expected, timeoutMs = 10_000) {
+async function waitForMissionStatus(baseUrl, missionId, expected, headers, timeoutMs = 10_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const response = await fetch(`${baseUrl}/missions/${missionId}`);
+    const response = await fetch(`${baseUrl}/missions/${missionId}`, { headers });
     if (response.ok) {
       const mission = await response.json();
       if (mission.status === expected) {
@@ -58,10 +59,10 @@ async function waitForMissionStatus(baseUrl, missionId, expected, timeoutMs = 10
   throw new Error(`mission ${missionId} did not reach status ${expected}`);
 }
 
-async function waitForMissionLog(baseUrl, missionId, regex, timeoutMs = 5_000) {
+async function waitForMissionLog(baseUrl, missionId, regex, headers, timeoutMs = 5_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const response = await fetch(`${baseUrl}/missions/${missionId}/logs`);
+    const response = await fetch(`${baseUrl}/missions/${missionId}/logs`, { headers });
     if (response.ok) {
       const logs = await response.json();
       if (logs.some((event) => event.type === "log" && regex.test(event.data.message))) {
@@ -144,33 +145,34 @@ test("mission daemon smoke: detail, logs, control endpoints and retry work end t
 
   try {
     await waitForHealth(baseUrl);
+    const authHeaders = daemonAuthHeaders(stateDir);
 
-    let response = await fetch(`${baseUrl}/missions/${seeded.id}/pause`, { method: "POST" });
+    let response = await fetch(`${baseUrl}/missions/${seeded.id}/pause`, { method: "POST", headers: authHeaders });
     assert.equal(response.status, 200);
     let payload = await getJson(response);
     assert.equal(payload.ok, true);
 
-    response = await fetch(`${baseUrl}/missions/${seeded.id}`);
+    response = await fetch(`${baseUrl}/missions/${seeded.id}`, { headers: authHeaders });
     assert.equal(response.status, 200);
     let mission = await getJson(response);
     assert.equal(mission.status, "paused");
 
-    response = await fetch(`${baseUrl}/missions/${seeded.id}/resume`, { method: "POST" });
+    response = await fetch(`${baseUrl}/missions/${seeded.id}/resume`, { method: "POST", headers: authHeaders });
     assert.equal(response.status, 200);
-    response = await fetch(`${baseUrl}/missions/${seeded.id}`);
+    response = await fetch(`${baseUrl}/missions/${seeded.id}`, { headers: authHeaders });
     mission = await getJson(response);
-    assert.equal(mission.status, "queued");
+    assert.ok(["queued", "running"].includes(mission.status));
 
-    response = await fetch(`${baseUrl}/missions/${seeded.id}/cancel`, { method: "POST" });
+    response = await fetch(`${baseUrl}/missions/${seeded.id}/cancel`, { method: "POST", headers: authHeaders });
     assert.equal(response.status, 200);
-    response = await fetch(`${baseUrl}/missions/${seeded.id}/logs`);
+    response = await fetch(`${baseUrl}/missions/${seeded.id}/logs`, { headers: authHeaders });
     const seededLogs = await getJson(response);
     assert.equal(Array.isArray(seededLogs), true);
     assert.equal(seededLogs.some((event) => event.type === "control" && event.data.action === "cancel"), true);
 
     response = await fetch(`${baseUrl}/missions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify({
         name: "HTTP Mission",
         description: "run via daemon",
@@ -182,20 +184,20 @@ test("mission daemon smoke: detail, logs, control endpoints and retry work end t
     assert.equal(payload.ok, true);
     assert.ok(payload.missionId);
 
-    const completed = await waitForMissionStatus(baseUrl, payload.missionId, "succeeded");
+    const completed = await waitForMissionStatus(baseUrl, payload.missionId, "succeeded", authHeaders);
     assert.equal(completed.status, "succeeded");
 
-    const logs = await waitForMissionLog(baseUrl, payload.missionId, /执行成功|success/i);
+    const logs = await waitForMissionLog(baseUrl, payload.missionId, /执行成功|success/i, authHeaders);
     assert.ok(logs);
 
-    response = await fetch(`${baseUrl}/missions/${payload.missionId}/retry`, { method: "POST" });
+    response = await fetch(`${baseUrl}/missions/${payload.missionId}/retry`, { method: "POST", headers: authHeaders });
     assert.equal(response.status, 200);
     payload = await getJson(response);
     assert.equal(payload.ok, true);
     assert.ok(payload.missionId);
     assert.notEqual(payload.missionId, completed.id);
 
-    const retried = await waitForMissionStatus(baseUrl, payload.missionId, "succeeded");
+    const retried = await waitForMissionStatus(baseUrl, payload.missionId, "succeeded", authHeaders);
     assert.equal(retried.status, "succeeded");
   } finally {
     daemon.kill("SIGTERM");

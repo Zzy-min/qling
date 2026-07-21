@@ -16,6 +16,13 @@ import { SessionGoalController } from "./session/goal-controller.js";
 import { SessionGoalManager } from "./session/session-goal-manager.js";
 import { DurableSessionSupervisor } from "./agent/durable-session-supervisor.js";
 import { formatDaemonVersion } from "./package-version.js";
+import {
+  getOrCreateDaemonToken,
+  isDaemonRequestAuthorized,
+  readJsonBody,
+  resolveDaemonBinding,
+  resolveDaemonBodyLimit,
+} from "./daemon-security.js";
 
 const HOME_DIR = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME_DIR, ".qling");
@@ -43,6 +50,14 @@ function loadEnv() {
 async function main() {
   loadEnv();
 
+  // Load config before choosing state storage so daemon and local clients share one token path.
+  try {
+    const { config } = await loadQlingConfig({});
+    applyConfigToProcessEnv(config);
+  } catch (err) {
+    console.error(`[qlingd] Warning: Failed to load config: ${(err as Error).message}`);
+  }
+
   const stateDir = process.env.QLING_FILE_STATE_DIR || DEFAULT_STATE_DIR;
   const manager = new MissionManager(stateDir);
   await manager.init();
@@ -52,15 +67,14 @@ async function main() {
     log: (message) => console.log(`[qlingd] ${message}`),
   });
 
-  // 尝试预加载配置并应用到环境变量
-  try {
-    const { config } = await loadQlingConfig({});
-    applyConfigToProcessEnv(config);
-  } catch (err) {
-    console.error(`[qlingd] Warning: Failed to load config: ${(err as Error).message}`);
-  }
-
   const PORT = Number(process.env.QLING_DAEMON_PORT) || 9998;
+  const { host: HOST, authEnabled } = resolveDaemonBinding();
+  const bodyLimit = resolveDaemonBodyLimit();
+  const bearerToken = authEnabled ? await getOrCreateDaemonToken(stateDir) : "";
+  const activeMissionAgents = new Map<string, AgentLoop>();
+  if (!authEnabled) {
+    console.error("[qlingd] SECURITY WARNING: daemon authentication is disabled for loopback compatibility");
+  }
   supervisor.start();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${PORT}`);
@@ -68,6 +82,25 @@ async function main() {
     res.setHeader("Content-Type", "application/json");
 
     try {
+      // Health stays anonymous and deliberately excludes paths, credentials, and configuration.
+      if (url.pathname === "/health" && req.method === "GET") {
+        res.end(JSON.stringify({
+          status: "ok",
+          version: formatDaemonVersion(),
+          pid: process.pid,
+          uptimeMs: Date.now() - startedAt,
+          missions: manager.listMissions().length,
+          durableSupervisor: "running",
+        }));
+        return;
+      }
+
+      if (authEnabled && !isDaemonRequestAuthorized(req, bearerToken)) {
+        res.writeHead(401, { "WWW-Authenticate": "Bearer" });
+        res.end(JSON.stringify({ error: "Unauthorized", code: "DAEMON_UNAUTHORIZED" }));
+        return;
+      }
+
       // 1. 获取所有使命
       if (url.pathname === "/missions" && req.method === "GET") {
         const list = manager.listMissions();
@@ -77,12 +110,12 @@ async function main() {
 
       // 2. 提交新使命
       if (url.pathname === "/missions" && req.method === "POST") {
-        const data = await readJsonBody(req);
+        const data = await readJsonBody(req, bodyLimit);
         const mission = await manager.createMission(data.name, data.description, data.sessionId);
         await manager.appendLog(mission.id, "使命已提交到后台队列", { source: "daemon" });
 
         // 异步启动任务执行 (Detach) - 传入全量数据以支持状态恢复
-        executeMissionInBackground(mission.id, manager, stateDir, data);
+        executeMissionInBackground(mission.id, manager, stateDir, data, activeMissionAgents);
 
         res.end(JSON.stringify({ ok: true, missionId: mission.id }));
         return;
@@ -105,8 +138,21 @@ async function main() {
         }
 
         if (req.method === "POST") {
+          await readJsonBody(req, bodyLimit);
           if (action === "pause") {
-            const mission = await manager.pauseMission(id, "daemon_api");
+            let mission = await manager.pauseMission(id, "daemon_api");
+            const activeAgent = activeMissionAgents.get(id);
+            if (activeAgent?.pauseActiveRun()) {
+              await activeAgent.checkpointSession();
+              const stats = activeAgent.getSessionStats();
+              await manager.updateExecutionSnapshot(id, {
+                sessionId: activeAgent.getSessionId(),
+                workflowRunId: activeAgent.getActiveRun()?.runId,
+                lastContext: activeAgent.getMessagesSnapshot(),
+                metrics: { totalTurns: stats.turnCount, totalTokens: stats.tokens },
+              });
+              mission = manager.getMissionOrThrow(id);
+            }
             res.end(JSON.stringify({ ok: true, mission }));
             return;
           }
@@ -117,12 +163,13 @@ async function main() {
               description: mission.description,
               sessionId: mission.sessionId,
               resume: true,
-            });
+            }, activeMissionAgents);
             res.end(JSON.stringify({ ok: true, mission }));
             return;
           }
           if (action === "cancel") {
             const mission = await manager.cancelMission(id, "daemon_api");
+            activeMissionAgents.get(id)?.cancelActiveRun();
             res.end(JSON.stringify({ ok: true, mission }));
             return;
           }
@@ -136,7 +183,7 @@ async function main() {
               name: retried.name,
               description: retried.description,
               sessionId: retried.sessionId,
-            });
+            }, activeMissionAgents);
             res.end(JSON.stringify({ ok: true, missionId: retried.id }));
             return;
           }
@@ -162,7 +209,7 @@ async function main() {
           }
 
           if (!itemId && req.method === "POST") {
-            const data = await readJsonBody(req);
+            const data = await readJsonBody(req, bodyLimit);
             const task = await scheduler.createLoopTask({
               prompt: data.prompt,
               intervalMs: Number(data.intervalMs),
@@ -174,6 +221,7 @@ async function main() {
           }
 
           if (itemId && action === "cancel" && req.method === "POST") {
+            await readJsonBody(req, bodyLimit);
             const task = await scheduler.cancelTask(itemId);
             res.end(JSON.stringify(task));
             return;
@@ -194,7 +242,7 @@ async function main() {
           }
 
           if (!action && req.method === "POST") {
-            const data = await readJsonBody(req);
+            const data = await readJsonBody(req, bodyLimit);
             const goal = await controller.setGoal(
               data.condition,
               {
@@ -211,24 +259,12 @@ async function main() {
           }
 
           if (action === "clear" && req.method === "POST") {
+            await readJsonBody(req, bodyLimit);
             const goal = await controller.clearGoal("daemon_api_clear");
             res.end(JSON.stringify(goal));
             return;
           }
         }
-      }
-
-      // 4. 健康检查
-      if (url.pathname === "/health") {
-        res.end(JSON.stringify({
-          status: "ok",
-          version: formatDaemonVersion(),
-          pid: process.pid,
-          uptimeMs: Date.now() - startedAt,
-          missions: manager.listMissions().length,
-          durableSupervisor: "running",
-        }));
-        return;
       }
 
       res.writeHead(404);
@@ -241,12 +277,12 @@ async function main() {
     }
   });
 
-  server.listen(PORT, () => {
-    console.log(`[qlingd] 守护进程已启动，监听端口: ${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`[qlingd] 守护进程已启动，监听地址: ${HOST}:${PORT}`);
   });
 
   const shutdown = () => {
-    server.close(() => process.exit(0));
+    void supervisor.stop().finally(() => server.close(() => process.exit(0)));
     setTimeout(() => process.exit(0), 2_000).unref();
   };
 
@@ -255,7 +291,13 @@ async function main() {
 }
 
 /** 后台执行使命逻辑 */
-async function executeMissionInBackground(id: string, manager: MissionManager, stateDir: string, data: any) {
+async function executeMissionInBackground(
+  id: string,
+  manager: MissionManager,
+  stateDir: string,
+  data: any,
+  activeMissionAgents: Map<string, AgentLoop>
+) {
   const mission = manager.getMission(id);
   if (!mission) return;
   let agent: AgentLoop | null = null;
@@ -295,6 +337,7 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
 
     agent = new AgentLoop(agentConfig);
     await agent.waitForInit();
+    activeMissionAgents.set(id, agent);
 
     // v0.5 M3: 状态恢复 (High-fidelity Resume)
     if (data.resume) {
@@ -326,6 +369,12 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
         totalTokens: stats.tokens,
       },
     });
+
+    const controlledStatus = manager.getMission(id)?.status;
+    if (controlledStatus === "paused" || controlledStatus === "canceled") {
+      await manager.appendLog(id, `使命保持外部控制状态: ${controlledStatus}`, { source: "daemon" });
+      return;
+    }
 
     if (outcome.status === "succeeded") {
       await manager.appendLog(id, "使命执行成功", { source: "daemon", resultPreview: outcome.text.slice(0, 120) });
@@ -360,6 +409,7 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
     await manager.appendLog(id, `使命执行失败: ${(err as Error).message}`, { source: "daemon" });
     console.error(`[qlingd] 使命 ${id} 执行失败: ${(err as Error).message}`);
   } finally {
+    if (agent && activeMissionAgents.get(id) === agent) activeMissionAgents.delete(id);
     if (agent) await agent.shutdown().catch(() => undefined);
   }
 }
@@ -393,10 +443,7 @@ function matchSessionRoute(
   };
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<any> {
-  let body = "";
-  for await (const chunk of req) body += chunk;
-  return body ? JSON.parse(body) : {};
-}
-
-main().catch(console.error);
+main().catch((error) => {
+  console.error(`[qlingd] fatal: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+});

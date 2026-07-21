@@ -210,32 +210,37 @@ export class MCPClient {
     return new Promise((resolve, reject) => {
       const id = ++this.msgId;
       const msg: MCPMessage = { jsonrpc: "2.0", id, method, params };
-      this.pending.set(id, { resolve, reject });
+      const ms = timeout ?? (method === "initialize" ? this.connectionTimeout : this.callTimeout);
+      const timer = setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error("MCP request timeout: " + method));
+        }
+      }, ms);
+      const settle = <T extends unknown[]>(fn: (...args: T) => void) => (...args: T) => {
+        clearTimeout(timer);
+        fn(...args);
+      };
+      this.pending.set(id, { resolve: settle(resolve), reject: settle(reject) });
 
       try {
         const result = this.transport!.send(msg);
         // If transport.send returns a promise (HTTP), handle errors
         if (result && typeof (result as Promise<void>).catch === "function") {
           (result as Promise<void>).catch((err) => {
-            if (this.pending.has(id)) {
+            const pending = this.pending.get(id);
+            if (pending) {
               this.pending.delete(id);
-              reject(err);
+              pending.reject(err);
             }
           });
         }
       } catch (err) {
         this.pending.delete(id);
+        clearTimeout(timer);
         reject(err);
         return;
       }
-
-      const ms = timeout ?? (method === "initialize" ? this.connectionTimeout : this.callTimeout);
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error("MCP request timeout: " + method));
-        }
-      }, ms);
     });
   }
 

@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { MCPClient } from "../../dist/mcp/client.js";
+import { HttpTransport } from "../../dist/mcp/http-transport.js";
 
 function createFakeMCPHttpServer(handler) {
   const requestLog = [];
@@ -63,6 +64,36 @@ function createFakeMCPHttpServer(handler) {
 }
 
 describe("MCP HTTP Transport", () => {
+  it("rejects a JSON 401 before delivering it as an MCP message", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { tools: [{ name: "must-not-be-delivered" }] },
+        detail: "Bearer server-secret",
+      }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const transport = new HttpTransport(endpoint, undefined, 1000);
+      let delivered = false;
+      transport.onMessage(() => { delivered = true; });
+      await assert.rejects(
+        transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        (error) => {
+          assert.match(error.message, /MCP HTTP 401/);
+          assert.doesNotMatch(error.message, /server-secret/);
+          return true;
+        }
+      );
+      assert.equal(delivered, false);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it("should complete handshake: initialize → tools/list", async () => {
     const fake = await createFakeMCPHttpServer((msg, idx) => {
       if (msg.method === "initialize") {

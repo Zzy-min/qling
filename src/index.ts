@@ -70,6 +70,7 @@ import { buildLocalMcpReport, formatLocalMcpReport } from "./mcp-report.js";
 import { buildLocalHooksReport, formatLocalHooksReport } from "./hooks-report.js";
 import { buildLocalStatusReport, formatLocalStatusReport } from "./local-status-report.js";
 import { runAcpStdioServer } from "./cli/acp-server.js";
+import { daemonAuthHeaders } from "./daemon-security.js";
 
 const CURRENT_FILE = fileURLToPath(import.meta.url);
 const DIST_DIR = path.dirname(CURRENT_FILE);
@@ -329,6 +330,10 @@ async function createStandaloneMissionManager(stateDir: string): Promise<Mission
   return manager;
 }
 
+function daemonRequestOptions(stateDir: string, timeout = 2_000) {
+  return { timeout, headers: daemonAuthHeaders(stateDir) };
+}
+
 async function buildMissionReader(
   missionId: string,
   daemonUrl: string,
@@ -339,15 +344,15 @@ async function buildMissionReader(
   getLogs: () => Promise<MissionEvent[]>;
 }> {
   try {
-    await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+    await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, daemonRequestOptions(stateDir));
     return {
       source: "daemon",
       getMission: async () => {
-        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, daemonRequestOptions(stateDir));
         return resp.data as Mission;
       },
       getLogs: async () => {
-        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, daemonRequestOptions(stateDir));
         return resp.data as MissionEvent[];
       },
     };
@@ -873,7 +878,7 @@ async function main() {
     const manager = await getStandaloneMissionManager();
     const { value: missions, source } = await withMissionFallback(
       async () => {
-        const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+        const resp = await axios.get(`${daemonUrl}/missions`, daemonRequestOptions(stateDir));
         return resp.data as Mission[];
       },
       async () => manager.listMissions()
@@ -892,7 +897,7 @@ async function main() {
     const manager = await getStandaloneMissionManager();
     const { value: logs, source } = await withMissionFallback(
       async () => {
-        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+        const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, daemonRequestOptions(stateDir));
         return resp.data as MissionEvent[];
       },
       async () => manager.getMissionLogs(missionId)
@@ -921,7 +926,7 @@ async function main() {
             description: task,
             sessionId: "session-daemon-submit",
           },
-          { timeout: 2000 }
+          daemonRequestOptions(stateDir)
         );
         console.error(`🚀 使命已成功提交至 qlingd 守护进程: ${resp.data.missionId}`);
         console.error("提示: 您现在可以关闭此终端，任务将在后台继续。");
@@ -943,7 +948,7 @@ async function main() {
         const resp = await axios.post(
           `${daemonUrl}/missions/${encodeURIComponent(missionId)}/retry`,
           {},
-          { timeout: 2000 }
+          daemonRequestOptions(stateDir)
         );
         console.error(`🚀 已向 qlingd 提交重试使命: ${resp.data.missionId}`);
         return;
@@ -958,7 +963,7 @@ async function main() {
       if (sub === "list") {
         const { value: missions, source } = await withMissionFallback(
           async () => {
-            const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+            const resp = await axios.get(`${daemonUrl}/missions`, daemonRequestOptions(stateDir));
             return resp.data as Mission[];
           },
           async () => manager.listMissions()
@@ -978,7 +983,7 @@ async function main() {
         }
         const { value: mission, source } = await withMissionFallback(
           async () => {
-            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, daemonRequestOptions(stateDir));
             return resp.data as Mission;
           },
           async () => manager.getMissionOrThrow(missionId)
@@ -996,7 +1001,7 @@ async function main() {
         }
         const { value: logs, source } = await withMissionFallback(
           async () => {
-            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, daemonRequestOptions(stateDir));
             return resp.data as MissionEvent[];
           },
           async () => manager.getMissionLogs(missionId)
@@ -1029,7 +1034,7 @@ async function main() {
             const resp = await axios.post(
               `${daemonUrl}/missions/${encodeURIComponent(missionId)}/${sub}`,
               {},
-              { timeout: 2000 }
+              daemonRequestOptions(stateDir)
             );
             return resp.data.mission as Mission;
           },
@@ -1210,7 +1215,7 @@ async function main() {
             name: "CLI Mission",
             description: task,
             sessionId: agent.getSessionId(),
-          }, { timeout: 2000 });
+          }, daemonRequestOptions(stateDir));
           console.error(`🚀 使命已成功提交至 qlingd 守护进程: ${resp.data.missionId}`);
           console.error(`提示: 您现在可以关闭此终端，任务将在后台继续。`);
           return;
@@ -1226,7 +1231,7 @@ async function main() {
       if (sub === "list") {
         const { value: missions, source } = await withMissionFallback(
           async () => {
-            const resp = await axios.get(`${daemonUrl}/missions`, { timeout: 2000 });
+            const resp = await axios.get(`${daemonUrl}/missions`, daemonRequestOptions(stateDir));
             return resp.data as Mission[];
           },
           async () => manager.listMissions()
@@ -1246,7 +1251,7 @@ async function main() {
         }
         const { value: mission, source } = await withMissionFallback(
           async () => {
-            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, { timeout: 2000 });
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}`, daemonRequestOptions(stateDir));
             return resp.data as Mission;
           },
           async () => manager.getMissionOrThrow(missionId)
@@ -1264,7 +1269,7 @@ async function main() {
         }
         const { value: logs, source } = await withMissionFallback(
           async () => {
-            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, { timeout: 2000 });
+            const resp = await axios.get(`${daemonUrl}/missions/${encodeURIComponent(missionId)}/logs`, daemonRequestOptions(stateDir));
             return resp.data as MissionEvent[];
           },
           async () => manager.getMissionLogs(missionId)
@@ -1285,7 +1290,7 @@ async function main() {
             const resp = await axios.post(
               `${daemonUrl}/missions/${encodeURIComponent(missionId)}/${sub}`,
               {},
-              { timeout: 2000 }
+              daemonRequestOptions(stateDir)
             );
             return resp.data.mission as Mission;
           },
@@ -1310,7 +1315,7 @@ async function main() {
           const resp = await axios.post(
             `${daemonUrl}/missions/${encodeURIComponent(missionId)}/retry`,
             {},
-            { timeout: 2000 }
+            daemonRequestOptions(stateDir)
           );
           console.error(`🚀 已向 qlingd 提交重试使命: ${resp.data.missionId}`);
           return;

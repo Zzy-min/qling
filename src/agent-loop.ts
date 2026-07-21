@@ -362,6 +362,9 @@ export class AgentLoop extends AgentEventEmitter {
         parseRetries: config.runtime?.parseRetries ?? 2,
         toolRepeatLimit: config.runtime?.toolRepeatLimit ?? 6,
         timeoutMs: config.runtime?.timeoutMs ?? 300_000,
+        providerRetryLimit:
+          config.runtime?.providerRetryLimit ??
+          Math.max(0, Number(process.env.QLING_LLM_MAX_RETRIES ?? 3) || 0),
       },
       logging: this.loggingConfig,
     };
@@ -383,7 +386,6 @@ export class AgentLoop extends AgentEventEmitter {
     this.memoryStore = new MemoryStore(this.memoryDir, {
       workspaceDir: this.config.runtime?.workspaceDir || undefined,
     });
-    this.verifier = new VerificationAgent(apiKey, this.config.model);
     {
       const autoCfg = resolveAutoCompactConfig();
       this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model);
@@ -420,10 +422,8 @@ export class AgentLoop extends AgentEventEmitter {
       apiKey: this.config.apiKey,
       timeoutMs: this.resolveLlmRequestTimeout(),
       provider: this.config.provider,
-      onRetry: () => {
-        this.retryCountTotal++;
-      },
     });
+    this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
 
     // 初始化系统（存储 promise，在 run() 中 await）
@@ -742,6 +742,10 @@ export class AgentLoop extends AgentEventEmitter {
         },
         executeInner: () => this.executeRunInternal(),
         isCanceled: () => controller.signal.aborted,
+        providerRetryLimit: this.config.runtime?.providerRetryLimit,
+        onProviderRetry: () => {
+          this.retryCountTotal++;
+        },
       });
     } finally {
       if (this.runAbortController === controller) this.runAbortController = null;
@@ -751,6 +755,15 @@ export class AgentLoop extends AgentEventEmitter {
   cancelActiveRun(): boolean {
     const controller = this.runAbortController;
     if (!controller || controller.signal.aborted) return false;
+    controller.abort();
+    this.approvalGate.cancelAll();
+    return true;
+  }
+
+  pauseActiveRun(): boolean {
+    const controller = this.runAbortController;
+    if (!controller || controller.signal.aborted) return false;
+    this.recoveryController.pauseActiveRun();
     controller.abort();
     this.approvalGate.cancelAll();
     return true;
@@ -883,7 +896,6 @@ export class AgentLoop extends AgentEventEmitter {
           maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
         });
       }
-      this.verifier = new VerificationAgent(this.config.apiKey, this.config.model);
     }
     if (typeof patch.apiKey === "string") {
       const nextKey = resolveSessionApiKey(
@@ -910,10 +922,8 @@ export class AgentLoop extends AgentEventEmitter {
       apiKey: this.config.apiKey,
       timeoutMs: this.resolveLlmRequestTimeout(),
       provider: this.config.provider,
-      onRetry: () => {
-        this.retryCountTotal++;
-      },
     });
+    this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
 
     return {

@@ -445,6 +445,9 @@ export interface OuterLoopHost {
   ) => Promise<void>;
   executeInner: () => Promise<InnerLoopOutcome>;
   isCanceled?: () => boolean;
+  providerRetryLimit?: number;
+  sleep?: (delayMs: number) => Promise<void>;
+  onProviderRetry?: () => void;
   setActiveRun: (
     run: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null
   ) => void;
@@ -479,14 +482,23 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
   while (true) {
     try {
       const response = await host.executeInner();
+      if (response.status === "paused") {
+        return { status: "paused", runId, text: response.text, recovery: host.getRecoveryState() };
+      }
+      if (host.getRecoveryState()?.status === "paused") {
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        return {
+          status: "paused",
+          runId,
+          text: host.formatRecoveryPause("run paused by operator", "使用 /recover retry 继续"),
+          recovery: host.getRecoveryState(),
+        };
+      }
       if (host.isCanceled?.()) {
         host.executionEventBus.completeAttempt(runId, "canceled");
         host.executionEventBus.completeRun(runId, "canceled");
         host.setActiveRun(null);
         return { status: "canceled", runId, text: "Agent run canceled", reason: "user_canceled" };
-      }
-      if (response.status === "paused" || host.getRecoveryState()?.status === "paused") {
-        return { status: "paused", runId, text: response.text, recovery: host.getRecoveryState() };
       }
       if (response.status === "exhausted") {
         host.executionEventBus.completeAttempt(runId, "exhausted");
@@ -498,6 +510,15 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       host.setActiveRun(null);
       return { status: "succeeded", runId, text: response.text };
     } catch (error) {
+      if (host.getRecoveryState()?.status === "paused") {
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        return {
+          status: "paused",
+          runId,
+          text: host.formatRecoveryPause("run paused by operator", "使用 /recover retry 继续"),
+          recovery: host.getRecoveryState(),
+        };
+      }
       if (host.isCanceled?.()) {
         host.executionEventBus.completeAttempt(runId, "canceled");
         host.executionEventBus.completeRun(runId, "canceled");
@@ -506,10 +527,17 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       }
       host.executionEventBus.completeAttempt(runId, "failed");
       const failure = classifyFailure(error, { provider: true });
-      if (failure.category === "provider_transient" && transportAttempts < 3) {
+      const providerRetryLimit = Math.max(0, host.providerRetryLimit ?? 3);
+      if (failure.category === "provider_transient" && transportAttempts < providerRetryLimit) {
         transportAttempts++;
-        const delay =
-          Math.min(4_000, 250 * 2 ** (transportAttempts - 1)) + Math.floor(Math.random() * 100);
+        host.onProviderRetry?.();
+        const retryAfter = typeof error === "object" && error !== null && "retryAfterMs" in error
+          ? Number((error as { retryAfterMs?: unknown }).retryAfterMs)
+          : 0;
+        const delay = Math.max(
+          Number.isFinite(retryAfter) ? retryAfter : 0,
+          Math.min(4_000, 250 * 2 ** (transportAttempts - 1)) + Math.floor(Math.random() * 100)
+        );
         host.executionEventBus.emit({
           runId,
           sessionId: host.sessionId,
@@ -521,8 +549,13 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
           recoveryAction: "transport_retry",
         });
         host.emit("repair", failure.message, "provider transport retry", transportAttempts);
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await (host.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
         continue;
+      }
+      if (failure.category === "provider_transient") {
+        host.executionEventBus.completeRun(runId, "failed");
+        host.setActiveRun(null);
+        return { status: "failed", runId, text: failure.message, failure };
       }
       const decision = host.recoveryController.recordFailure(failure, {});
       const state = host.recoveryController.getRecoveryState();

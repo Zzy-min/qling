@@ -27,24 +27,80 @@ export interface LlmClientOptions {
   apiKey: string;
   timeoutMs: number;
   provider?: string;
-  /** Invoked once per transport retry attempt. */
+  /** @deprecated Provider retries are owned by AgentLoop; retained for source compatibility. */
   onRetry?: () => void;
+}
+
+export interface ProviderHttpErrorOptions {
+  provider: string;
+  status?: number;
+  code?: string;
+  retryAfterMs?: number;
+  requestId?: string;
+  retriable: boolean;
+  detail?: string;
+  cause?: unknown;
+}
+
+export class ProviderHttpError extends Error {
+  readonly provider: string;
+  readonly status?: number;
+  readonly code?: string;
+  readonly retryAfterMs?: number;
+  readonly requestId?: string;
+  readonly retriable: boolean;
+  override readonly cause?: unknown;
+
+  constructor(options: ProviderHttpErrorOptions) {
+    const statusText = options.status ? ` HTTP ${options.status}` : " transport";
+    super(`${options.provider}${statusText} error${options.detail ? `: ${options.detail}` : ""}`);
+    this.name = "ProviderHttpError";
+    this.provider = options.provider;
+    this.status = options.status;
+    this.code = options.code;
+    this.retryAfterMs = options.retryAfterMs;
+    this.requestId = options.requestId;
+    this.retriable = options.retriable;
+    Object.defineProperty(this, "cause", {
+      value: options.cause,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+}
+
+function sanitizeProviderDetail(value: unknown): string {
+  let detail: string;
+  try {
+    detail = typeof value === "string" ? value : JSON.stringify(value ?? {});
+  } catch {
+    detail = "provider returned an unreadable error body";
+  }
+  return detail
+    .slice(0, 4 * 1024)
+    .replace(/bearer\s+[a-z0-9._~+\/-]+/gi, "Bearer [REDACTED]")
+    .replace(/(["']?(?:api[_-]?key|token|secret)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, "$1[REDACTED]");
+}
+
+function parseRetryAfterMs(value: unknown): number | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
 export class LlmHttpClient {
   private client: AxiosInstance;
   private provider: string;
-  private onRetry?: () => void;
 
   constructor(options: LlmClientOptions) {
     this.provider = options.provider ?? "unknown";
-    this.onRetry = options.onRetry;
     this.client = this.buildClient(options);
   }
 
   reconfigure(options: LlmClientOptions): void {
     this.provider = options.provider ?? this.provider;
-    this.onRetry = options.onRetry ?? this.onRetry;
     this.client = this.buildClient(options);
   }
 
@@ -93,9 +149,23 @@ export class LlmHttpClient {
         canceled.name = "AgentRunCanceledError";
         throw canceled;
       }
-      const e = err as { response?: { data?: unknown } };
-      const detail = JSON.stringify(e.response?.data ?? {}).slice(0, 500);
-      throw new Error(`${this.provider} API error: ` + detail);
+      const e = err as {
+        code?: string;
+        response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
+      };
+      const status = e.response?.status;
+      const headers = e.response?.headers ?? {};
+      const body = e.response?.data as { error?: { code?: string } } | undefined;
+      throw new ProviderHttpError({
+        provider: this.provider,
+        status,
+        code: body?.error?.code ?? e.code,
+        retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
+        requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
+        retriable: status === undefined || status === 429 || status >= 500,
+        detail: sanitizeProviderDetail(e.response?.data ?? e.code ?? "request failed"),
+        cause: err,
+      });
     }
 
     const choice = resp.data.choices?.[0];
@@ -141,29 +211,6 @@ export class LlmHttpClient {
       },
       timeout: options.timeoutMs,
     });
-
-    client.interceptors.response.use(
-      (response) => response,
-      async (err) => {
-        const cfg = err.config;
-        if (!cfg) return Promise.reject(err);
-        const maxRetries = 3;
-        cfg.__retryCount = cfg.__retryCount ?? 0;
-        const status = err.response?.status;
-        const shouldRetry =
-          !cfg.signal?.aborted &&
-          (!err.response || status === 429 || (status >= 500 && status <= 503)) &&
-          cfg.__retryCount < maxRetries;
-        if (shouldRetry) {
-          cfg.__retryCount++;
-          this.onRetry?.();
-          const delay = Math.min(1000 * Math.pow(2, cfg.__retryCount - 1), 10_000);
-          await new Promise((r) => setTimeout(r, delay));
-          return client(cfg);
-        }
-        return Promise.reject(err);
-      }
-    );
 
     return client;
   }

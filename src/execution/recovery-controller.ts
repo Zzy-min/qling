@@ -94,6 +94,12 @@ export class RecoveryController {
       : undefined;
   }
 
+  pauseActiveRun(): RecoveryState {
+    if (!this.state) throw new Error("recovery run has not started");
+    this.state = { ...this.state, status: "paused" };
+    return this.getRecoveryState();
+  }
+
   applyAction(action: RecoveryAction): RecoveryState {
     if (!this.state) throw new Error("recovery run has not started");
     if (action === "cancel") {

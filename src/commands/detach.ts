@@ -1,5 +1,6 @@
 import { SlashCommand } from "./types.js";
 import axios from "axios";
+import { daemonAuthHeaders } from "../daemon-security.js";
 
 export const detachCommand: SlashCommand = {
   name: "/detach",
@@ -27,7 +28,10 @@ export const detachCommand: SlashCommand = {
         sessionId: (context.agentLoop as any).getSessionId(),
         checkpoint,
         stats,
-      }, { timeout: 3000 });
+      }, {
+        timeout: 3000,
+        headers: daemonAuthHeaders((context.agentLoop as any).getRuntimeRootDir?.()),
+      });
 
       context.writeLine("-----------------------------------------");
       context.writeLine("✅ 使命已成功移交至 qlingd 守护进程。");

@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from "axios";
 
 import type { SessionTask } from "./session-scheduler.js";
 import type { SessionGoalState } from "./session-goal-manager.js";
+import { daemonAuthHeaders } from "../daemon-security.js";
 
 export class DaemonSessionApi {
   private readonly client: AxiosInstance;
@@ -11,6 +12,7 @@ export class DaemonSessionApi {
     this.client = axios.create({
       baseURL: baseUrl ?? `http://127.0.0.1:${port}`,
       timeout: 3_000,
+      headers: daemonAuthHeaders(),
     });
   }
 

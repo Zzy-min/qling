@@ -71,6 +71,7 @@ export interface AgentConfig {
     parseRetries: number;
     toolRepeatLimit: number;
     timeoutMs: number;
+    providerRetryLimit?: number;
   };
   logging?: {
     level: "debug" | "info" | "warn" | "error";

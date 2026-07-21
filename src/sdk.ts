@@ -9,6 +9,7 @@
 
 export { AgentLoop, type LlmSessionPatch } from "./agent-loop.js";
 export type { RunOutcome } from "./execution/types.js";
+export { LlmHttpClient, ProviderHttpError } from "./providers/llm-client.js";
 export {
   loadQlingConfig,
   applyConfigToProcessEnv,

@@ -141,7 +141,7 @@ test("resumed run reuses its runId and registers it with a fresh event bus", asy
     executionEventBus: bus,
     recoveryController: recovery,
     emit: () => {},
-    getRecoveryState: () => recovery.getRecoveryState(),
+    getRecoveryState: () => { try { return recovery.getRecoveryState(); } catch { return null; } },
     formatRecoveryPause: () => "paused",
     applyRecoveryStrategy: async () => {},
     setActiveRun: (run) => { activeRun = run; },
@@ -159,4 +159,67 @@ test("resumed run reuses its runId and registers it with a fresh event bus", asy
       ["run_completed", "run-original", "succeeded"],
     ]
   );
+});
+
+test("provider retry budget is the only retry layer and honors Retry-After", async () => {
+  const bus = new ExecutionEventBus();
+  const recovery = new RecoveryController();
+  const sleeps = [];
+  let calls = 0;
+  let retries = 0;
+  let activeRun = null;
+  const outcome = await runOuterAgentLoop({
+    sessionId: "provider-session",
+    activeRun,
+    messages: [{ role: "user", content: "retry provider" }],
+    executionEventBus: bus,
+    recoveryController: recovery,
+    emit: () => {},
+    getRecoveryState: () => { try { return recovery.getRecoveryState(); } catch { return null; } },
+    formatRecoveryPause: () => "paused",
+    applyRecoveryStrategy: async () => {},
+    setActiveRun: (run) => { activeRun = run; },
+    executeInner: async () => {
+      calls++;
+      const error = new Error("gateway timeout");
+      error.status = 504;
+      error.retryAfterMs = 1500;
+      throw error;
+    },
+    providerRetryLimit: 2,
+    sleep: async (delay) => { sleeps.push(delay); },
+    onProviderRetry: () => { retries++; },
+  });
+  assert.equal(outcome.status, "failed");
+  assert.equal(calls, 3);
+  assert.equal(retries, 2);
+  assert.deepEqual(sleeps, [1500, 1500]);
+});
+
+test("operator pause keeps the active run resumable instead of reporting cancellation", async () => {
+  const bus = new ExecutionEventBus();
+  const recovery = new RecoveryController();
+  let activeRun = null;
+  const outcome = await runOuterAgentLoop({
+    sessionId: "pause-session",
+    activeRun,
+    messages: [{ role: "user", content: "pause this" }],
+    executionEventBus: bus,
+    recoveryController: recovery,
+    emit: () => {},
+    getRecoveryState: () => { try { return recovery.getRecoveryState(); } catch { return null; } },
+    formatRecoveryPause: () => "paused by operator",
+    applyRecoveryStrategy: async () => {},
+    setActiveRun: (run) => { activeRun = run; },
+    executeInner: async () => {
+      recovery.pauseActiveRun();
+      const error = new Error("request canceled");
+      error.name = "AgentRunCanceledError";
+      throw error;
+    },
+    isCanceled: () => true,
+  });
+  assert.equal(outcome.status, "paused");
+  assert.equal(outcome.runId, activeRun.runId);
+  assert.equal(recovery.getRecoveryState().status, "paused");
 });

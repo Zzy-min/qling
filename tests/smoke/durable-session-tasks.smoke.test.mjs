@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 
 import { SessionRegistry } from "../../dist/session/session-registry.js";
+import { daemonAuthHeaders } from "../../dist/daemon-security.js";
 
 const DAEMON_ENTRY = path.join(process.cwd(), "dist/daemon.js");
 
@@ -116,10 +117,11 @@ test("durable session tasks smoke: daemon executes durable loop and durable goal
       const resp = await fetch(`${baseUrl}/health`).catch(() => null);
       return resp?.ok ? true : false;
     }, 10_000, "daemon health check timed out");
+    const authHeaders = daemonAuthHeaders(stateDir);
 
     let response = await fetch(`${baseUrl}/sessions/${sessionId}/loop-tasks`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify({
         prompt: "检查构建结果",
         intervalMs: 1_000,
@@ -136,7 +138,7 @@ test("durable session tasks smoke: daemon executes durable loop and durable goal
 
     response = await fetch(`${baseUrl}/sessions/${sessionId}/goal`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify({
         condition: "所有测试通过",
       }),
@@ -144,7 +146,7 @@ test("durable session tasks smoke: daemon executes durable loop and durable goal
     assert.equal(response.status, 200);
 
     const goalPayload = await waitFor(async () => {
-      const resp = await fetch(`${baseUrl}/sessions/${sessionId}/goal`).catch(() => null);
+      const resp = await fetch(`${baseUrl}/sessions/${sessionId}/goal`, { headers: authHeaders }).catch(() => null);
       if (!resp?.ok) return null;
       const data = await resp.json();
       return data?.status === "achieved" ? data : null;
