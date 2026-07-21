@@ -105,6 +105,7 @@ export interface QlingConfig {
   };
   experimental: {
     anchored_edit: boolean;
+    streaming_chat: boolean;
   };
   hooks?: {
     enabled: boolean;
@@ -270,6 +271,7 @@ export function buildDefaultConfig(): QlingConfig {
     },
     experimental: {
       anchored_edit: false,
+      streaming_chat: false,
     },
     hooks: {
       enabled: false,
@@ -511,6 +513,7 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_COST_INPUT_USD_PER_MILLION = config.cost.input_usd_per_million;
   process.env.QLING_COST_OUTPUT_USD_PER_MILLION = config.cost.output_usd_per_million;
   process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT = String(config.experimental.anchored_edit);
+  process.env.QLING_EXPERIMENTAL_STREAMING_CHAT = String(config.experimental.streaming_chat);
   process.env.QLING_JSON_HOOKS_ENABLED = String(config.hooks?.enabled ?? false);
   process.env.QLING_JSON_HOOKS_MANIFEST = config.hooks?.manifest_path ?? path.join(config.runtime.file_state_dir, "hooks.json");
   process.env.QLING_JSON_HOOKS_TIMEOUT_MS = String(config.hooks?.timeout_ms ?? 5000);

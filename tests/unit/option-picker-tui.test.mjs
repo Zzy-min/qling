@@ -138,6 +138,29 @@ test("option picker open navigate confirm does not stack panels", async () => {
   });
 });
 
+test("option picker Esc restores prompt focus and the original draft", async () => {
+  await withCapturedStdout(async () => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+    });
+    ui.start();
+    try {
+      for (const char of "keep draft") ui.dispatchKey(char);
+      ui.showOptionPicker({
+        title: "选择",
+        items: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+        onPick: () => {},
+      });
+      ui.dispatchKey("\x1b");
+      assert.equal(ui.getOverlayKind(), null);
+      assert.equal(ui.getFocus(), "prompt");
+      assert.equal(ui.getInputDraft(), "keep draft");
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
 test("withDefaultWriters preserves openOptionPicker", () => {
   let called = false;
   const ctx = withDefaultWriters({

@@ -368,6 +368,9 @@ export class AgentLoop extends AgentEventEmitter {
           Math.max(0, Number(process.env.QLING_LLM_MAX_RETRIES ?? 3) || 0),
       },
       logging: this.loggingConfig,
+      experimental: {
+        streaming: config.experimental?.streaming ?? false,
+      },
     };
     if (EXPLICIT_ENABLE_VALUES.has(String(process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT ?? "").toLowerCase())) {
       this.config.tools = [...this.config.tools, ...ANCHORED_EDIT_TOOLS];
@@ -1338,6 +1341,13 @@ export class AgentLoop extends AgentEventEmitter {
       tools: this.config.tools,
       overrides,
       signal: this.runAbortController?.signal,
+      stream: Boolean(this.config.experimental?.streaming),
+      onTextDelta: (delta) => {
+        try { this.emit("response_delta", delta); } catch { /* TUI rendering is best-effort */ }
+      },
+      onStreamFallback: (reason) => {
+        try { this.emit("stream_fallback", reason); } catch { /* TUI rendering is best-effort */ }
+      },
     });
   }
 

@@ -20,6 +20,13 @@ export interface LlmChatResponse {
   content: string;
   tool_calls?: RawToolCall[];
   usage?: ChatUsage;
+  streamed?: boolean;
+}
+
+export interface LlmStreamCallbacks {
+  stream?: boolean;
+  onTextDelta?: (delta: string) => void;
+  onStreamFallback?: (reason: string) => void;
 }
 
 export interface LlmClientOptions {
@@ -117,7 +124,7 @@ export class LlmHttpClient {
     tools: ToolDefinition[];
     overrides?: LlmChatOverrides;
     signal?: AbortSignal;
-  }): Promise<LlmChatResponse> {
+  } & LlmStreamCallbacks): Promise<LlmChatResponse> {
     const systemMsg: Message = { role: "system", content: input.systemPrompt };
     const wireMessages = [systemMsg, ...input.messages].map((message) => ({
       role: message.role,
@@ -136,41 +143,148 @@ export class LlmHttpClient {
           parameters: t.parameters,
         },
       })),
-      stream: false,
       ...(input.overrides ?? {}),
     };
 
+    if (input.stream) {
+      return this.streamChatCompletions(payload, input);
+    }
+
+    return this.postNonStreaming(payload, input.signal);
+  }
+
+  private async postNonStreaming(
+    payload: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<LlmChatResponse> {
+
     let resp;
     try {
-      resp = await this.client.post("/chat/completions", payload, { signal: input.signal });
+      resp = await this.client.post("/chat/completions", { ...payload, stream: false }, { signal });
     } catch (err) {
-      if (input.signal?.aborted) {
-        const canceled = new Error("LLM request canceled");
-        canceled.name = "AgentRunCanceledError";
-        throw canceled;
+      throw this.normalizeRequestError(err, signal);
+    }
+
+    return this.parseChatResponse(resp.data, false);
+  }
+
+  private async streamChatCompletions(
+    payload: Record<string, unknown>,
+    input: { signal?: AbortSignal } & LlmStreamCallbacks
+  ): Promise<LlmChatResponse> {
+    let resp;
+    try {
+      resp = await this.client.post("/chat/completions", { ...payload, stream: true }, {
+        signal: input.signal,
+        responseType: "stream",
+        validateStatus: () => true,
+      });
+    } catch (err) {
+      throw this.normalizeRequestError(err, input.signal);
+    }
+
+    const status = Number(resp.status ?? 0);
+    if (status < 200 || status >= 300) {
+      const detail = await readResponseStream(resp.data, 4 * 1024);
+      const error = this.providerErrorFromResponse(status, resp.headers ?? {}, detail);
+      const unsupported = status === 415 || status === 501 ||
+        ([400, 404, 405, 422].includes(status) && /stream|sse|not\s+support|unsupported/i.test(detail));
+      if (unsupported) {
+        try { input.onStreamFallback?.(`HTTP ${status}`); } catch { /* UI feedback is best-effort */ }
+        return this.postNonStreaming(payload, input.signal);
       }
-      const e = err as {
-        code?: string;
-        response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
-      };
-      const status = e.response?.status;
-      const headers = e.response?.headers ?? {};
-      const body = e.response?.data as { error?: { code?: string } } | undefined;
+      throw error;
+    }
+
+    const contentType = String(resp.headers?.["content-type"] ?? "").toLowerCase();
+    if (!contentType.includes("text/event-stream")) {
+      const raw = await readResponseStream(resp.data, 8 * 1024 * 1024);
+      try {
+        return this.parseChatResponse(JSON.parse(raw), false);
+      } catch (error) {
+        throw new ProviderHttpError({
+          provider: this.provider,
+          status,
+          retriable: false,
+          detail: "stream endpoint returned neither SSE nor valid JSON",
+          cause: error,
+        });
+      }
+    }
+
+    const toolParts = new Map<number, { id: string; name: string; arguments: string }>();
+    let content = "";
+    let usage: ChatUsage | undefined;
+    let buffer = "";
+    const decoder = new TextDecoder();
+    try {
+      for await (const chunk of resp.data as AsyncIterable<Uint8Array>) {
+        if (input.signal?.aborted) throw canceledRequestError();
+        buffer = (buffer + decoder.decode(chunk, { stream: true })).replace(/\r\n/g, "\n");
+        let boundary: number;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const data = frame
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n");
+          if (!data || data === "[DONE]") continue;
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{
+              index?: number;
+              id?: string;
+              function?: { name?: string; arguments?: string };
+            }> } }>;
+            usage?: unknown;
+          };
+          const delta = parsed.choices?.[0]?.delta;
+          if (typeof delta?.content === "string" && delta.content) {
+            content += delta.content;
+            try { input.onTextDelta?.(delta.content); } catch { /* rendering must not fail the run */ }
+          }
+          for (const part of delta?.tool_calls ?? []) {
+            const index = Number.isInteger(part.index) ? Number(part.index) : 0;
+            const current = toolParts.get(index) ?? { id: "", name: "", arguments: "" };
+            current.id += part.id ?? "";
+            current.name += part.function?.name ?? "";
+            current.arguments += part.function?.arguments ?? "";
+            toolParts.set(index, current);
+          }
+          usage = extractProviderUsage(parsed.usage) ?? usage;
+        }
+      }
+    } catch (error) {
+      if (input.signal?.aborted) throw canceledRequestError();
       throw new ProviderHttpError({
         provider: this.provider,
         status,
-        code: body?.error?.code ?? e.code,
-        retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
-        requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
-        retriable: status === undefined || status === 429 || status >= 500,
-        detail: sanitizeProviderDetail(e.response?.data ?? e.code ?? "request failed"),
-        cause: err,
+        retriable: false,
+        detail: "stream ended before a valid completion",
+        cause: error,
       });
     }
 
-    const choice = resp.data.choices?.[0];
+    const tool_calls = [...toolParts.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, part], index) => ({
+        id: part.id || `stream-call-${index}`,
+        type: "function" as const,
+        function: { name: part.name, arguments: part.arguments },
+      }));
+    return {
+      content,
+      ...(tool_calls.length > 0 ? { tool_calls } : {}),
+      usage,
+      streamed: true,
+    };
+  }
+
+  private parseChatResponse(data: any, streamed: boolean): LlmChatResponse {
+    const choice = data.choices?.[0];
     if (!choice) {
-      throw new Error(`${this.provider} API error: ` + JSON.stringify(resp.data));
+      throw new Error(`${this.provider} API error: ` + JSON.stringify(data));
     }
 
     const msg = choice.message;
@@ -194,12 +308,56 @@ export class LlmHttpClient {
     }
 
     const usage =
-      extractProviderUsage(resp.data?.usage) ?? extractProviderUsage(resp.data);
+      extractProviderUsage(data?.usage) ?? extractProviderUsage(data);
     return {
       content: msg.content ?? "",
       tool_calls: rawToolCalls,
       usage,
+      streamed,
     };
+  }
+
+  private normalizeRequestError(err: unknown, signal?: AbortSignal): Error {
+    if (signal?.aborted) return canceledRequestError();
+    const e = err as {
+      code?: string;
+      response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
+    };
+    const status = e.response?.status;
+    const headers = e.response?.headers ?? {};
+    const body = e.response?.data as { error?: { code?: string } } | undefined;
+    return new ProviderHttpError({
+      provider: this.provider,
+      status,
+      code: body?.error?.code ?? e.code,
+      retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
+      requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
+      retriable: status === undefined || status === 429 || (status !== undefined && status >= 500),
+      detail: sanitizeProviderDetail(e.response?.data ?? e.code ?? "request failed"),
+      cause: err,
+    });
+  }
+
+  private providerErrorFromResponse(
+    status: number,
+    headers: Record<string, unknown>,
+    detail: string
+  ): ProviderHttpError {
+    let code: string | undefined;
+    try {
+      code = JSON.parse(detail)?.error?.code;
+    } catch {
+      // plain-text provider error
+    }
+    return new ProviderHttpError({
+      provider: this.provider,
+      status,
+      code,
+      retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
+      requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
+      retriable: status === 429 || status >= 500,
+      detail: sanitizeProviderDetail(detail),
+    });
   }
 
   private buildClient(options: LlmClientOptions): AxiosInstance {
@@ -214,4 +372,25 @@ export class LlmHttpClient {
 
     return client;
   }
+}
+
+function canceledRequestError(): Error {
+  const canceled = new Error("LLM request canceled");
+  canceled.name = "AgentRunCanceledError";
+  return canceled;
+}
+
+async function readResponseStream(stream: AsyncIterable<Uint8Array>, maxBytes: number): Promise<string> {
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let output = "";
+  for await (const chunk of stream) {
+    const remaining = maxBytes - bytes;
+    if (remaining <= 0) break;
+    const slice = chunk.byteLength > remaining ? chunk.slice(0, remaining) : chunk;
+    bytes += slice.byteLength;
+    output += decoder.decode(slice, { stream: true });
+  }
+  output += decoder.decode();
+  return output;
 }

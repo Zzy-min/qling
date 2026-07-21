@@ -23,15 +23,10 @@ function waitForExit(child, timeoutMs = 15_000) {
 }
 
 test("e2e: tool call chain with fake LLM server", async () => {
-  // Request order observed empirically:
-  //   req 0: agent chat round 1 (system, user) → needs tool_calls
-  //   req 1: verifier call (system, user) → filler
-  //   req 2: agent chat round 2 (system, user, assistant, tool) → FINAL ANSWER
-  //   req 3+: extra calls → filler
+  // Respond from request semantics instead of a brittle verifier request index.
   const FILLER = { content: "PASS ok", tool_calls: [] };
-  const fake = createFakeLLM([
-    // Response 0: agent chat round 1 → tool_calls
-    {
+  const fake = createFakeLLM((request, index) => {
+    if (index === 0) return {
       content: "",
       tool_calls: [{
         id: "tc-read-1",
@@ -41,19 +36,13 @@ test("e2e: tool call chain with fake LLM server", async () => {
           arguments: JSON.stringify({ path: "package.json" }),
         },
       }],
-    },
-    // Response 1: verifier filler
-    FILLER,
-    // Response 2: agent chat round 2 → FINAL ANSWER
-    {
+    };
+    if (request.messages?.some((message) => message.role === "tool")) return {
       content: "I have read the package.json file successfully.",
       tool_calls: [],
-    },
-    // Response 3+: safety net for extra calls
-    FILLER,
-    FILLER,
-    FILLER,
-  ]);
+    };
+    return FILLER;
+  });
 
   await fake.ready();
   const endpoint = fake.endpoint;

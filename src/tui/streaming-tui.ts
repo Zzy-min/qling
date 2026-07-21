@@ -233,6 +233,8 @@ export class StreamUI {
       } = null;
   /** slash 多行输出已擦掉输入框、正在追加中 */
   private slashOutputActive = false;
+  private assistantStreamOpen = false;
+  private assistantStreamText = "";
   private turnLog: Array<{ preview: string; fullText: string }> = [];
   /** 独立于终端原生历史的 managed scrollback 缓冲。 */
   private scrollbackViewport = new ScrollbackViewport({ maxTurns: 40 });
@@ -2610,7 +2612,12 @@ export class StreamUI {
         this.overlay.items,
         this.overlay.selected,
         width,
-        this.overlay.footerHint
+        this.overlay.footerHint,
+        {
+          terminalRows: Number(process.stdout.rows || 24),
+          inputRows: Math.max(1, this.lastInputContentLineCount + this.lastInputHintLineCount),
+          statusRows: this.statusLineEnabled && this.statusLine ? 1 : 0,
+        }
       );
       painted = paintOptionPickerPanel(plain);
     } else {
@@ -2813,6 +2820,40 @@ export class StreamUI {
     if (!raw) return;
     this.writeMarkdownBlock(raw, { roleHeader: true });
     this.scrollbackViewport.appendAssistant(raw);
+  }
+
+  appendAssistantDelta(delta: string): void {
+    const visibleDelta = sanitizeStreamingText(delta);
+    if (!visibleDelta) return;
+    this.ensureStreamMode();
+    this.stopProgress();
+    if (!this.assistantStreamOpen) {
+      this.assistantStreamOpen = true;
+      this.assistantStreamText = "";
+      process.stdout.write("\n" + S.p(BOLD(formatRoleHeader("assistant"))) + "  " + S.g(BOLD("流式")) + "\n");
+    }
+    this.assistantStreamText += visibleDelta;
+    process.stdout.write(visibleDelta);
+  }
+
+  completeAssistantStream(finalText?: string): boolean {
+    if (!this.assistantStreamOpen) return false;
+    const text = String(finalText ?? this.assistantStreamText);
+    const visibleText = sanitizeStreamingText(text);
+    if (visibleText.startsWith(this.assistantStreamText)) {
+      process.stdout.write(visibleText.slice(this.assistantStreamText.length));
+    }
+    process.stdout.write("\n");
+    this.scrollbackViewport.appendAssistant(text);
+    this.assistantStreamOpen = false;
+    this.assistantStreamText = "";
+    return true;
+  }
+
+  cancelAssistantStream(): void {
+    if (this.assistantStreamOpen) process.stdout.write("\n");
+    this.assistantStreamOpen = false;
+    this.assistantStreamText = "";
   }
 
   appendCogitated(durationMs: number): void {
@@ -3123,4 +3164,10 @@ export class StreamUI {
     process.stdout.write("\n  " + S.d("动作:") + " " + S.b(action));
     process.stdout.write("\n  " + S.d("retry:") + " " + S.y(String(retryCount)) + "\n");
   }
+}
+
+function sanitizeStreamingText(text: string): string {
+  return String(text ?? "")
+    .replace(/\x1b/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0d\x0e-\x1f\x7f]/g, "");
 }

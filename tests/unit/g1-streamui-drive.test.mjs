@@ -433,6 +433,32 @@ test("g1 stream mode does not repaint input on each validation during task", asy
   });
 });
 
+test("g1 assistant deltas render once and canceled streams do not enter managed scrollback", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = createUi();
+    ui.start();
+    try {
+      ui.appendUserInput("stream-one");
+      clear();
+      ui.appendAssistantDelta("Hel");
+      ui.appendAssistantDelta("lo");
+      assert.equal(ui.completeAssistantStream("Hello"), true);
+      const completed = stripAnsi(getOutput());
+      assert.equal((completed.match(/Hello/g) || []).length, 1);
+
+      ui.appendUserInput("stream-two");
+      clear();
+      ui.appendAssistantDelta("must-not-persist\r\x1b[2J");
+      assert.doesNotMatch(getOutput(), /\x1b\[2J|\r/);
+      ui.cancelAssistantStream();
+      const snapshot = ui.getViewportSnapshot(80, 20);
+      assert.doesNotMatch(snapshot.lines.join("\n"), /must-not-persist/);
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
 test("g1 session picker navigate emits in-place erase not append-only stack", async () => {
   await withCapturedStdout(async (getOutput, clear) => {
     const ui = createUi();

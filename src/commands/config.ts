@@ -21,6 +21,7 @@ export const configCommand: SlashCommand = {
     context.writeLine(`MCP expose : ${process.env.QLING_MCP_TOOL_EXPOSURE || "eager"}`);
     context.writeLine(`MCP output : ${process.env.QLING_MCP_MAX_OUTPUT_BYTES || "20480"} bytes`);
     context.writeLine(`Anchored   : ${process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT === "true" ? "实验开启" : "关闭"}`);
+    context.writeLine(`Streaming  : ${process.env.QLING_EXPERIMENTAL_STREAMING_CHAT === "true" ? "实验开启（仅 chat）" : "关闭"}`);
     context.writeLine(`JSON Hooks : ${process.env.QLING_JSON_HOOKS_ENABLED === "true" ? "开启" : "关闭"}`);
     context.writeLine("-----------------------------------------");
     context.writeLine("");

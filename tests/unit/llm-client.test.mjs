@@ -153,3 +153,127 @@ test("LlmHttpClient preserves sanitized provider HTTP metadata without hidden re
     }
   }
 });
+
+test("LlmHttpClient streams text deltas while accumulating complete tool JSON", async () => {
+  const fake = await startFakeServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      assert.equal(JSON.parse(body).stream, true);
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read","arguments":"{\\"pa"}}]}}]}\n\n');
+      res.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\\\":\\\"a.ts\\\"}"}}]}}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n');
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  try {
+    const deltas = [];
+    const client = new LlmHttpClient({ endpoint: fake.base + "/v1", apiKey: "k", timeoutMs: 5000, provider: "fake" });
+    const result = await client.chatCompletions({
+      model: "test-model",
+      systemPrompt: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      stream: true,
+      onTextDelta: (delta) => deltas.push(delta),
+    });
+    assert.deepEqual(deltas, ["Hel", "lo"]);
+    assert.equal(result.content, "Hello");
+    assert.equal(result.streamed, true);
+    assert.equal(result.tool_calls[0].function.name, "read");
+    assert.equal(result.tool_calls[0].function.arguments, '{"path":"a.ts"}');
+    assert.equal(result.usage.totalTokens, 5);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("LlmHttpClient falls back once before any delta when streaming is unsupported", async () => {
+  let requests = 0;
+  const fake = await startFakeServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      requests++;
+      const parsed = JSON.parse(body);
+      if (parsed.stream) {
+        res.writeHead(415, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "stream unsupported" } }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "fallback" } }] }));
+    });
+  });
+  try {
+    let fallbacks = 0;
+    const client = new LlmHttpClient({ endpoint: fake.base + "/v1", apiKey: "k", timeoutMs: 5000, provider: "fake" });
+    const result = await client.chatCompletions({
+      model: "test-model",
+      systemPrompt: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      stream: true,
+      onStreamFallback: () => fallbacks++,
+    });
+    assert.equal(result.content, "fallback");
+    assert.equal(result.streamed, false);
+    assert.equal(requests, 2);
+    assert.equal(fallbacks, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("LlmHttpClient aborts an active SSE stream immediately", async () => {
+  let requests = 0;
+  let markDelta;
+  const deltaSeen = new Promise((resolve) => { markDelta = resolve; });
+  const fake = await startFakeServer((_req, res) => {
+    requests++;
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
+  });
+  try {
+    const controller = new AbortController();
+    const client = new LlmHttpClient({ endpoint: fake.base + "/v1", apiKey: "k", timeoutMs: 5000, provider: "fake" });
+    const pending = client.chatCompletions({
+      model: "test-model",
+      systemPrompt: "sys",
+      messages: [{ role: "user", content: "wait" }],
+      tools: [],
+      stream: true,
+      signal: controller.signal,
+      onTextDelta: () => markDelta(),
+    });
+    await deltaSeen;
+    controller.abort();
+    await assert.rejects(pending, (error) => error?.name === "AgentRunCanceledError");
+    assert.equal(requests, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("LlmHttpClient does not retry a generic 400 as a stream capability fallback", async () => {
+  let requests = 0;
+  const fake = await startFakeServer((_req, res) => {
+    requests++;
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "invalid model" } }));
+  });
+  try {
+    const client = new LlmHttpClient({ endpoint: fake.base + "/v1", apiKey: "k", timeoutMs: 5000, provider: "fake" });
+    await assert.rejects(client.chatCompletions({
+      model: "bad-model",
+      systemPrompt: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      stream: true,
+    }), (error) => error instanceof ProviderHttpError && error.status === 400);
+    assert.equal(requests, 1);
+  } finally {
+    await fake.close();
+  }
+});

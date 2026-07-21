@@ -66,6 +66,12 @@ export interface OptionPickerSpec {
   shortcuts?: Record<string, string>;
 }
 
+export interface OptionPickerLayout {
+  terminalRows?: number;
+  inputRows?: number;
+  statusRows?: number;
+}
+
 function frameLines(title: string, body: string[], width: number, footer: string): string[] {
   const b = getBorderChars();
   const w = Math.max(40, Math.min(width, 100));
@@ -232,6 +238,28 @@ export function paintScrollbackViewportPanel(lines: string[]): string {
 
 const OPTION_PICKER_WINDOW = 12;
 
+function resolveOptionPickerWindow(
+  items: OptionPickerItem[],
+  layout?: OptionPickerLayout
+): { windowSize: number; padDescriptions: boolean } {
+  const padDescriptions = items.some((item) => Boolean(item.description));
+  if (!layout?.terminalRows) {
+    return { windowSize: Math.min(OPTION_PICKER_WINDOW, items.length), padDescriptions: false };
+  }
+  const inputRows = Math.max(1, layout.inputRows ?? 1);
+  const statusRows = Math.max(0, layout.statusRows ?? 0);
+  // Keep two rows of breathing room for the top chrome/cursor. frameLines itself uses 3 rows.
+  const panelRows = Math.max(6, layout.terminalRows - inputRows - statusRows - 2);
+  const bodyRows = Math.max(1, panelRows - 3);
+  const chromeRows = items.length > 1 ? 2 : 0;
+  const itemRows = padDescriptions ? 2 : 1;
+  const windowSize = Math.max(
+    1,
+    Math.min(OPTION_PICKER_WINDOW, items.length, Math.floor((bodyRows - chromeRows) / itemRows))
+  );
+  return { windowSize, padDescriptions };
+}
+
 /**
  * 通用选项切换器：滑动窗口 + 恒定高度（与会话切换器同构，避免叠层擦除错位）
  */
@@ -240,14 +268,15 @@ export function formatOptionPickerPanel(
   items: OptionPickerItem[],
   selected: number,
   width = 80,
-  footerHint?: string
+  footerHint?: string,
+  layout?: OptionPickerLayout
 ): string[] {
   const body: string[] = [];
   if (items.length === 0) {
     body.push("(无可选项)");
   } else {
     const n = items.length;
-    const win = Math.min(OPTION_PICKER_WINDOW, n);
+    const { windowSize: win, padDescriptions } = resolveOptionPickerWindow(items, layout);
     const start = Math.max(0, Math.min(selected - Math.floor(win / 2), n - win));
     const end = start + win;
     const needsChrome = n > win;
@@ -264,8 +293,8 @@ export function formatOptionPickerPanel(
       const mark = i === selected ? "▸" : " ";
       const active = item.active ? " ●" : "";
       body.push(truncateVisible(`${mark} ${item.label}${active}`, 70));
-      if (item.description) {
-        body.push(truncateVisible(`   ${item.description}`, 70));
+      if (item.description || padDescriptions) {
+        body.push(truncateVisible(`   ${item.description ?? ""}`, 70));
       }
     }
     if (needsChrome) {

@@ -1084,6 +1084,10 @@ async function main() {
       inspectRequest: loaded.config.logging.inspect_request,
       inspectDumpDir: loaded.config.logging.inspect_dump_dir,
     },
+    experimental: {
+      // Headless, Mission and ACP remain complete-response by default.
+      streaming: decision.mode === "chat" && loaded.config.experimental.streaming_chat,
+    },
   };
 
   if (decision.mode === "acp") {

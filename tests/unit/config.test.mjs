@@ -60,6 +60,7 @@ test("config precedence: CLI > ENV > config file > defaults", async () => {
 test("memory dream LLM is opt-in by default", async () => {
   const loaded = await loadQlingConfig({});
   assert.equal(loaded.config.memory.dream_llm_enabled, false);
+  assert.equal(loaded.config.experimental.streaming_chat, false);
 });
 
 test("config supports ${ENV_VAR} template expansion with warnings", async () => {
@@ -202,6 +203,7 @@ test("applyConfigToProcessEnv maps memory/mcp/metrics/channels and guard fields"
   applyConfigToProcessEnv(loaded.config);
 
   assert.equal(process.env.QLING_MEMORY_WAL_ENABLED, String(loaded.config.memory.wal_enabled));
+  assert.equal(process.env.QLING_EXPERIMENTAL_STREAMING_CHAT, "false");
   assert.equal(
     process.env.QLING_MEMORY_PROJECTION_INTERVAL_MS,
     String(loaded.config.memory.projection_interval_ms)

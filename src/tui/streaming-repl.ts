@@ -47,6 +47,7 @@ export class StreamingREPL {
   private lastExecutionStatus = "";
   private readonly handleSlashCommandOverride?: SlashCommandHandler;
   private bgEventHandler: ((event: BackgroundTaskEvent) => void) | null = null;
+  private streamedResponse = "";
 
   constructor(
     agent?: AgentLoop,
@@ -217,8 +218,19 @@ export class StreamingREPL {
         this.ui.appendThinking(String(content));
       }
     });
+    this.agent.on("response_delta", (delta: string) => {
+      this.streamedResponse += String(delta ?? "");
+      this.ui.appendAssistantDelta(String(delta ?? ""));
+    });
+    this.agent.on("stream_fallback", (reason: string) => {
+      this.ui.appendValidation("warn", `流式输出不可用，已单次回退完整响应 · ${reason}`);
+    });
 
     this.agent.on("tool_start", (name: string, args: Record<string, unknown>) => {
+      if (this.streamedResponse) {
+        this.ui.completeAssistantStream(this.streamedResponse);
+        this.streamedResponse = "";
+      }
       const cmd = this.argsToCommand(name, args);
       this.ui.appendToolStart(name, cmd);
     });
@@ -447,6 +459,7 @@ export class StreamingREPL {
         this.ui.appendState("idle", "thinking");
 
         try {
+          this.streamedResponse = "";
           this.agent.addUserMessage(currentPrompt);
           this.ui.appendState("thinking", "running");
           this.ui.startProgress("agent");
@@ -455,8 +468,11 @@ export class StreamingREPL {
           this.ui.appendState("running", "done");
 
           if (response && response.trim()) {
-            this.ui.appendFinal(response);
+            if (!this.ui.completeAssistantStream(response)) {
+              this.ui.appendFinal(response);
+            }
           }
+          this.streamedResponse = "";
 
           await this.agent.checkpointSession();
 
@@ -470,6 +486,8 @@ export class StreamingREPL {
 
         } catch (err) {
           this.ui.stopProgress();
+          this.ui.cancelAssistantStream();
+          this.streamedResponse = "";
           this.ui.appendError(err instanceof Error ? err.message : String(err));
           this.agent.reset();
           currentPrompt = null;

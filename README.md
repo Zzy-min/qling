@@ -276,15 +276,23 @@ qling 日志 <id>   # logs <id>
 | Key | Behavior |
 |---|---|
 | `Enter` | 发送当前输入。 |
-| `Ctrl+C` | 非空输入先清空草稿；空输入连续两次退出。 |
-| `Ctrl+Z` | 恢复被 `Ctrl+C` 清掉的草稿。 |
-| `Ctrl+D` | 仅在输入为空时退出。 |
-| `Ctrl+L` | 清屏并重绘。 |
-| `Ctrl+O` | 切换后续长工具输出展开。 |
-| `Ctrl+R` | 搜索本地输入历史。 |
-| `Ctrl+N` | 插入换行。 |
-| `Tab` | 空输入打开 `/agents`；slash 前缀补全选中命令。 |
-| `↑/↓` | slash 面板打开时移动选择；否则浏览输入历史。 |
+| `Tab` | 空输入且有轮次时进入 managed scrollback；无轮次时打开 `/agents`；slash 前缀补全；其他草稿保留并提示。 |
+| `Shift+Tab` | 循环 normal → plan → auto(Always-approve) → normal，并保留草稿。 |
+| `Ctrl+N` | 插入换行，继续编辑多行 prompt。 |
+| `Ctrl+R` | 搜索本会话内输入历史，未命中时保留草稿。 |
+| `Ctrl+A / Ctrl+E` | 移动到输入开头 / 结尾。 |
+| `Ctrl+U / Ctrl+K` | 删除光标前 / 后的输入内容。 |
+| `Ctrl+L` | 清空当前终端视图并重绘输入栏，不丢弃正在编辑的内容。 |
+| `Ctrl+C` | 非空输入时清空；空输入时再次 Ctrl+C 确认退出。 |
+| `Ctrl+Z` | 恢复最近一次被 Ctrl+C 清空的本地草稿。 |
+| `Ctrl+D` | 空输入时退出；非空输入时保留草稿并提示。 |
+| `Esc` | 关闭浮层并恢复焦点与草稿；不提交输入。 |
+| `↑ / ↓` | 浮层中导航；输入区切换历史并恢复未发送草稿。 |
+| `Ctrl+O` | 切换后续长工具输出的展开 / 折叠显示。 |
+| `Ctrl+\` | 打开 / 关闭会话切换器。 |
+| `PgUp / PgDn` | 在 managed scrollback 当前轮内翻页。 |
+
+实验性 token 流式输出默认关闭。可在配置中设置 `experimental.streaming_chat: true`（或环境变量 `QLING_EXPERIMENTAL_STREAMING_CHAT=true`）仅为 `qling chat` 开启；Headless、Mission 和 ACP 仍使用完整响应。
 
 ## 内置工具
 

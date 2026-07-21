@@ -82,6 +82,29 @@ test("option picker windows long lists with stable height and ▸", () => {
   assert.match(a.join("\n"), /共 20|浏览全部|条/);
 });
 
+test("option picker respects terminal row budget with multiline input", () => {
+  const many = Array.from({ length: 268 }, (_, i) => ({
+    id: `id-${i}`,
+    label: `opt-${i}`,
+    description: `description ${i}`,
+  }));
+  for (const [rows, columns] of [[24, 80], [30, 100], [50, 160]]) {
+    for (const selected of [0, 133, 267]) {
+      const lines = formatOptionPickerPanel(
+        "268 项切换器",
+        many,
+        selected,
+        columns,
+        undefined,
+        { terminalRows: rows, inputRows: 3, statusRows: 1 }
+      );
+      assert.ok(lines.length + 3 + 1 <= rows, `${rows}x${columns}: panel overlays input/status`);
+      assert.match(lines.join("\n"), new RegExp(`opt-${selected}`));
+      assert.match(lines.join("\n"), /268/);
+    }
+  }
+});
+
 test("session picker windows long lists with stable height", () => {
   const many = Array.from({ length: 20 }, (_, i) => ({
     sessionId: `id-${i}`,

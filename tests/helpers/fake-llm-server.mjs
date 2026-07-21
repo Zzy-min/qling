@@ -8,7 +8,8 @@ import { createServer } from "node:http";
 /**
  * 创建一个 fake OpenAI /chat/completions 服务器。
  *
- * @param {Array<Object>} responses - 预设的响应队列，每次请求消费一个。
+ * @param {Array<Object>|((request: Object, index: number) => Object)} responses
+ *   预设响应队列，或根据请求内容返回响应的确定性函数。
  *   每个响应格式：
  *   - `{ content: string, tool_calls?: Array }` — 对应 OpenAI choices[0].message
  *   - 如果队列耗尽，返回 `{ content: "[fake-llm] no more responses" }`
@@ -24,13 +25,18 @@ export function createFakeLLM(responses) {
       let body = "";
       req.on("data", (chunk) => { body += chunk; });
       req.on("end", () => {
+        let parsed;
         try {
-          requestLog.push(JSON.parse(body));
+          parsed = JSON.parse(body);
+          requestLog.push(parsed);
         } catch {
-          requestLog.push({ _raw: body });
+          parsed = { _raw: body };
+          requestLog.push(parsed);
         }
 
-        const canned = responses[responseIndex] ?? { content: "[fake-llm] no more responses" };
+        const canned = typeof responses === "function"
+          ? responses(parsed, responseIndex)
+          : responses[responseIndex] ?? { content: "[fake-llm] no more responses" };
         responseIndex++;
 
         const message = { role: "assistant", content: canned.content ?? "" };

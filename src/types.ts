@@ -80,6 +80,10 @@ export interface AgentConfig {
     inspectRequest: boolean;
     inspectDumpDir: string;
   };
+  experimental?: {
+    /** Experimental text-token streaming; enabled only by the interactive chat entrypoint. */
+    streaming: boolean;
+  };
 }
 
 export interface ToolParam {
