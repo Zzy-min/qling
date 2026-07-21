@@ -127,10 +127,11 @@ test("memory sources report maps local context stores without reading session bo
     const report = await buildLocalMemorySourcesReport(root);
     const output = formatLocalMemorySourcesReport(report).join("\n");
 
-    assert.equal(report.sources.length, 4);
+    assert.equal(report.sources.length, 5);
     assert.deepEqual(report.sources.map((item) => item.id), [
       "persisted_memory",
       "cognitive_index",
+      "legacy_flat_memory",
       "session_checkpoints",
       "goal_task_state",
     ]);
@@ -143,6 +144,21 @@ test("memory sources report maps local context stores without reading session bo
     assert.match(output, /只读/);
     assert.match(output, /不读取 session 正文/);
     assert.doesNotMatch(output, /SECRET_MEMORY_SOURCE_SESSION_BODY/);
+  });
+});
+
+test("workspace memory sources expose the legacy flat file without reading it", async () => {
+  await withTempDir(async (root) => {
+    const workspaceMemoryDir = path.join(root, "memory", "workspace", "abc123");
+    const legacyFile = path.join(root, "memory", "memory.json");
+    await fs.mkdir(workspaceMemoryDir, { recursive: true });
+    await fs.writeFile(legacyFile, "SECRET_LEGACY_BODY", "utf8");
+
+    const report = await buildLocalMemorySourcesReport(workspaceMemoryDir);
+    const legacy = report.sources.find((source) => source.id === "legacy_flat_memory");
+    assert.equal(legacy?.path, legacyFile);
+    assert.equal(legacy?.exists, true);
+    assert.doesNotMatch(JSON.stringify(report), /SECRET_LEGACY_BODY/);
   });
 });
 

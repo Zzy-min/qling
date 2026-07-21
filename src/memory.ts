@@ -14,6 +14,7 @@ import { CognitiveIndex } from "./memory/cognitive-index.js";
 import { EmbeddingClient } from "./memory/embedding.js";
 import * as crypto from "crypto";
 import type { MemoryOperation } from "./memory/consolidation.js";
+import { atomicWriteJson } from "./persistence/atomic-json.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -42,6 +43,75 @@ export function normalizeMemoryEntries(raw: unknown): PersistedEntry[] {
   return [];
 }
 
+function isPersistedEntry(value: unknown): value is PersistedEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<PersistedEntry>;
+  return typeof entry.id === "string"
+    && typeof entry.content === "string"
+    && typeof entry.source === "string"
+    && typeof entry.createdAt === "number"
+    && typeof entry.importance === "number";
+}
+
+async function readEntryArray(filePath: string): Promise<{ entries: PersistedEntry[]; mtimeMs: number } | null> {
+  try {
+    const [raw, stat] = await Promise.all([fs.readFile(filePath, "utf8"), fs.stat(filePath)]);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every(isPersistedEntry)) {
+      throw new Error(`invalid persisted memory array: ${filePath}`);
+    }
+    return { entries: parsed, mtimeMs: stat.mtimeMs };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function migrateMisplacedWorkspaceCheckpoint(memoryDir: string): Promise<boolean> {
+  const canonicalPath = path.join(memoryDir, "memory.json");
+  const misplacedPath = path.join(memoryDir, "wal", "memory.json");
+  const markerPath = path.join(memoryDir, "wal", "checkpoint-migration-v1.json");
+  const misplaced = await readEntryArray(misplacedPath);
+  if (!misplaced) return false;
+  const canonical = await readEntryArray(canonicalPath);
+  if (canonical) {
+    try {
+      const marker = JSON.parse(await fs.readFile(markerPath, "utf8")) as {
+        version?: number;
+        sourceMtimeMs?: number;
+      };
+      if (marker.version === 1 && marker.sourceMtimeMs === misplaced.mtimeMs) return false;
+    } catch {
+      // Missing or invalid marker: rerun the deterministic merge.
+    }
+  }
+
+  const ordered = canonical && canonical.mtimeMs >= misplaced.mtimeMs
+    ? [misplaced, canonical]
+    : [canonical, misplaced].filter((value): value is NonNullable<typeof value> => Boolean(value));
+  const merged = new Map<string, PersistedEntry>();
+  for (const source of ordered) {
+    for (const entry of source.entries) merged.set(entry.id, entry);
+  }
+
+  await atomicWriteJson(canonicalPath, Array.from(merged.values()), { backup: true });
+  try {
+    await fs.copyFile(misplacedPath, `${misplacedPath}.migrated-v1.bak`, 1);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST") throw error;
+  }
+  await atomicWriteJson(markerPath, {
+    version: 1,
+    migratedAt: new Date().toISOString(),
+    source: misplacedPath,
+    sourceMtimeMs: misplaced.mtimeMs,
+    target: canonicalPath,
+    entries: merged.size,
+  });
+  return true;
+}
+
 // --- PersistedMemory（长期存储，WAL 模式可选）---
 
 export class PersistedMemory {
@@ -49,6 +119,7 @@ export class PersistedMemory {
   private memoryDir: string;
   private wal: WriteAheadLog | null = null;
   private projectionWorker: ProjectionWorker | null = null;
+  private readOnlyReason: string | null = null;
 
   // v0.5 认知引擎
   private cognitiveIndex: CognitiveIndex | null = null;
@@ -176,8 +247,8 @@ export class PersistedMemory {
         }
       }
       score += matches * 0.15;
-      return { entry: e, score, source: "keyword" as const };
-    });
+      return { entry: e, score, matches, isCorrection, source: "keyword" as const };
+    }).filter((result) => result.matches > 0 || result.isCorrection);
 
     // 2. 向量检索 (v0.3+)
     let semanticResults: { entry: PersistedEntry, score: number, source: "vector" }[] = [];
@@ -309,24 +380,58 @@ export class PersistedMemory {
   }
 
   async saveToDisk(): Promise<void> {
+    if (this.readOnlyReason) {
+      throw new Error(`memory store is in read-only degraded mode: ${this.readOnlyReason}`);
+    }
     // 始终以数组落盘，避免单元素被外部工具写成对象
     this.entries = normalizeMemoryEntries(this.entries);
     if (this.wal) {
       await this.wal.append("compact", this.entries);
     } else {
       const file = path.join(this.memoryDir, "memory.json");
-      await fs.writeFile(file, JSON.stringify(this.entries, null, 2), "utf-8");
+      await atomicWriteJson(file, this.entries, { backup: true });
     }
   }
 
   async loadFromDisk(): Promise<void> {
+    const file = path.join(this.memoryDir, "memory.json");
     try {
-      const file = path.join(this.memoryDir, "memory.json");
       const data = await fs.readFile(file, "utf-8");
-      this.entries = normalizeMemoryEntries(JSON.parse(data));
-    } catch {
-      this.entries = [];
+      const parsed = JSON.parse(data) as unknown;
+      const normalized = normalizeMemoryEntries(parsed);
+      if (parsed != null && normalized.length === 0 && !(Array.isArray(parsed) && parsed.length === 0)) {
+        throw new Error("memory.json does not contain a valid entry array");
+      }
+      this.entries = normalized;
+      this.readOnlyReason = null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        this.entries = [];
+        this.readOnlyReason = null;
+        return;
+      }
+      const reason = error instanceof Error ? error.message : String(error);
+      try {
+        const backupData = await fs.readFile(`${file}.bak`, "utf8");
+        const parsedBackup = JSON.parse(backupData) as unknown;
+        const backupEntries = normalizeMemoryEntries(parsedBackup);
+        if (backupEntries.length === 0 && !(Array.isArray(parsedBackup) && parsedBackup.length === 0)) {
+          throw new Error("backup does not contain a valid entry array");
+        }
+        this.entries = backupEntries;
+        this.readOnlyReason = `canonical file unreadable; loaded backup (${reason})`;
+      } catch {
+        this.entries = [];
+        this.readOnlyReason = `canonical file unreadable and no valid backup exists (${reason})`;
+      }
+      console.error(`[Memory] ${this.readOnlyReason}`);
     }
+  }
+
+  getPersistenceStatus(): { readOnly: boolean; reason?: string } {
+    return this.readOnlyReason
+      ? { readOnly: true, reason: this.readOnlyReason }
+      : { readOnly: false };
   }
 
   merge(entries: PersistedEntry[]): void {
@@ -501,6 +606,7 @@ export class MemoryStore {
   }
 
   async init(): Promise<void> {
+    await migrateMisplacedWorkspaceCheckpoint(this.workspaceMemoryDir);
     await this.globalPersisted.init();
     await this.persisted.init();
   }
@@ -622,7 +728,12 @@ export class MemoryStore {
     });
 
     // Global memories get a weight multiplier of 0.7
+    let globalCorrectionCount = 0;
     globalHits.forEach((entry, idx) => {
+      const isCorrection = entry.source === "user-correction"
+        || entry.content.includes("[用户纠错")
+        || entry.content.includes("必须遵守");
+      if (isCorrection && globalCorrectionCount++ >= 3) return;
       const score = (limit - idx) * 0.7;
       const key = "global:" + entry.id;
       merged.set(key, { entry, score });
@@ -713,6 +824,11 @@ export class MemoryStore {
     this.persisted.merge(entries);
   }
 
+  importScopedPersisted(entries: PersistedEntry[], scope: "global" | "workspace"): void {
+    if (scope === "global") this.globalPersisted.merge(entries);
+    else this.persisted.merge(entries);
+  }
+
   compactPersisted(maxEntries: number): void {
     this.persisted.compact(maxEntries);
   }
@@ -723,6 +839,16 @@ export class MemoryStore {
 
   getGlobalMemoryDir(): string {
     return this.globalMemoryDir;
+  }
+
+  getPersistenceStatus(): {
+    workspace: { readOnly: boolean; reason?: string };
+    global: { readOnly: boolean; reason?: string };
+  } {
+    return {
+      workspace: this.persisted.getPersistenceStatus(),
+      global: this.globalPersisted.getPersistenceStatus(),
+    };
   }
 }
 
@@ -766,5 +892,3 @@ export async function extractDreamMemories(
 
   return Array.from(new Set(memories));
 }
-
-

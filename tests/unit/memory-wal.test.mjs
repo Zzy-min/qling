@@ -121,6 +121,22 @@ describe("WriteAheadLog", () => {
     await wal.close();
   });
 
+  it("writes checkpoints to an explicit canonical path before truncating the WAL", async () => {
+    const walDir = path.join(tmpDir, "explicit", "wal");
+    const checkpointPath = path.join(tmpDir, "explicit", "memory.json");
+    const wal = new WriteAheadLog({ walDir, checkpointPath });
+    await wal.init();
+    await wal.append("add", { id: "canonical" });
+
+    await wal.checkpoint([{ id: "canonical", content: "restored" }]);
+
+    const data = JSON.parse(await fs.readFile(checkpointPath, "utf-8"));
+    assert.equal(data[0].id, "canonical");
+    assert.equal((await wal.readEntries(0)).length, 0);
+    await assert.rejects(fs.access(path.join(walDir, "memory.json")));
+    await wal.close();
+  });
+
   it("should recover state after re-init", async () => {
     const dir = path.join(tmpDir, "f");
     const wal1 = new WriteAheadLog(dir);

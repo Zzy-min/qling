@@ -1,5 +1,7 @@
 import { homedir } from "os";
 import { join } from "path";
+import { readFile } from "fs/promises";
+import { normalizeMemoryEntries } from "../memory.js";
 import {
   buildLocalMemoryReport,
   buildLocalMemorySourcesReport,
@@ -59,6 +61,8 @@ function normalizeSubcommand(value: string | undefined): string {
     "update": "edit",
     "修改": "edit",
     "更新": "edit",
+    "migrate": "migrate",
+    "迁移": "migrate",
   };
   return aliases[normalized] ?? normalized;
 }
@@ -67,7 +71,7 @@ export const memoryCommand: SlashCommand = {
   name: "/memory",
   aliases: ["/记忆"],
   description: "查看本地持久化记忆索引",
-  usage: "/memory [list] [global|workspace] [count] | /memory add <fact> [--global] | /memory delete <id> | /memory edit <id> <new_content>",
+  usage: "/memory [list] [global|workspace] [count] | /memory add <fact> [--global] | /memory delete <id> | /memory edit <id> <new_content> | /memory migrate legacy --to <workspace|global> [--apply]",
   execute: async (args, context) => {
     const stateDir = resolveStateDir(context);
     const [rawSub, ...rest] = args;
@@ -77,6 +81,37 @@ export const memoryCommand: SlashCommand = {
     const memoryStore = agentLoop.getMemoryStore?.();
     const workspaceMemoryDir = memoryStore ? memoryStore.getWorkspaceMemoryDir() : join(stateDir, "memory");
     const globalMemoryDir = memoryStore ? memoryStore.getGlobalMemoryDir() : join(stateDir, "memory/global");
+
+    if (sub === "migrate") {
+      const source = rest[0];
+      const toIndex = rest.indexOf("--to");
+      const target = toIndex >= 0 ? rest[toIndex + 1] : undefined;
+      if (source !== "legacy" || (target !== "workspace" && target !== "global")) {
+        context.writeError("用法: /memory migrate legacy --to <workspace|global> [--apply]");
+        return;
+      }
+      if (!memoryStore) {
+        context.writeError("当前会话不支持内存存储。");
+        return;
+      }
+      const legacyFile = join(stateDir, "memory", "memory.json");
+      let entries;
+      try {
+        entries = normalizeMemoryEntries(JSON.parse(await readFile(legacyFile, "utf8")));
+      } catch (error) {
+        context.writeError(`无法读取旧版记忆: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+      const apply = rest.includes("--apply");
+      if (!apply) {
+        context.writeLine(`dry-run: 将从 ${legacyFile} 迁移 ${entries.length} 条到 ${target}；追加 --apply 才会写入。`);
+        return;
+      }
+      memoryStore.importScopedPersisted(entries, target);
+      await memoryStore.saveToDisk();
+      context.writeLine(`已迁移 ${entries.length} 条旧版记忆到 ${target}；源文件已保留。`);
+      return;
+    }
 
     if (sub === "add") {
       const isGlobal = args.includes("--global");

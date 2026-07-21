@@ -57,6 +57,11 @@ test("config precedence: CLI > ENV > config file > defaults", async () => {
   });
 });
 
+test("memory dream LLM is opt-in by default", async () => {
+  const loaded = await loadQlingConfig({});
+  assert.equal(loaded.config.memory.dream_llm_enabled, false);
+});
+
 test("config supports ${ENV_VAR} template expansion with warnings", async () => {
   await withTempDir(async (dir) => {
     const configPath = join(dir, "qling.config.yaml");

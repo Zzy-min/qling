@@ -303,7 +303,7 @@ export function buildDefaultConfig(): QlingConfig {
     memory: {
       wal_enabled: true,
       projection_interval_ms: 5000,
-      dream_llm_enabled: true,
+      dream_llm_enabled: false,
       dream_turn_threshold: 24,
       max_memories: 1000,
       semantic: {

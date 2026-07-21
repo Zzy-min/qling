@@ -406,6 +406,13 @@ export async function buildLocalMemorySourcesReport(stateDir: string): Promise<L
       boundary: "只用于向量、知识图谱和蒸馏实践索引；本报告不打开数据库。",
     },
     {
+      id: "legacy_flat_memory",
+      label: "Legacy flat memory",
+      path: join(runtimeRootDir, "memory", "memory.json"),
+      role: "legacy migration source",
+      boundary: "旧版扁平记忆不会自动跨项目迁移；本报告只检查文件存在性。",
+    },
+    {
       id: "session_checkpoints",
       label: "Session checkpoints",
       path: join(runtimeRootDir, "sessions"),

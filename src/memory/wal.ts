@@ -7,6 +7,7 @@ import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
+import { atomicWriteJson } from "../persistence/atomic-json.js";
 
 // --- WAL Entry ---
 
@@ -30,12 +31,18 @@ export interface WALState {
 export class WriteAheadLog {
   private walPath: string;
   private statePath: string;
+  private checkpointPath: string;
   private state: WALState = { lastSeq: 0, lastCheckpointSeq: 0 };
   private initialized = false;
 
-  constructor(walDir: string) {
+  constructor(input: string | { walDir: string; checkpointPath?: string }) {
+    const walDir = typeof input === "string" ? input : input.walDir;
     this.walPath = path.join(walDir, "wal.jsonl");
     this.statePath = path.join(walDir, "wal-state.json");
+    this.checkpointPath =
+      typeof input === "string"
+        ? path.join(walDir, "memory.json")
+        : input.checkpointPath ?? path.join(walDir, "memory.json");
   }
 
   async init(): Promise<WALState> {
@@ -87,8 +94,7 @@ export class WriteAheadLog {
 
   async checkpoint(checkpointData: unknown): Promise<void> {
     if (!this.initialized) throw new Error("WAL not initialized");
-    const checkpointPath = path.join(path.dirname(this.walPath), "memory.json");
-    await fs.writeFile(checkpointPath, JSON.stringify(checkpointData, null, 2), "utf-8");
+    await atomicWriteJson(this.checkpointPath, checkpointData, { backup: true });
     this.state.lastCheckpointSeq = this.state.lastSeq;
     await this.saveState();
     // truncate WAL: keep only entries after checkpoint
@@ -147,11 +153,7 @@ export class WriteAheadLog {
   }
 
   private async saveState(): Promise<void> {
-    await fs.writeFile(
-      this.statePath,
-      JSON.stringify(this.state, null, 2),
-      "utf-8"
-    );
+    await atomicWriteJson(this.statePath, this.state, { backup: true });
   }
 
   private async truncateBeforeCheckpoint(): Promise<void> {

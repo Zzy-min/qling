@@ -489,8 +489,12 @@ export class AgentLoop extends AgentEventEmitter {
 
     if (walEnabled) {
       try {
-        const walDir = path.join(this.memoryStore.getWorkspaceMemoryDir(), "wal");
-        this.wal = new WriteAheadLog(walDir);
+        const workspaceMemoryDir = this.memoryStore.getWorkspaceMemoryDir();
+        const walDir = path.join(workspaceMemoryDir, "wal");
+        this.wal = new WriteAheadLog({
+          walDir,
+          checkpointPath: path.join(workspaceMemoryDir, "memory.json"),
+        });
         await this.wal.init();
         this.memoryStore.setWAL(this.wal, { intervalMs: projectionInterval });
 

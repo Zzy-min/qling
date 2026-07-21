@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { MemoryStore } from "../../dist/memory.js";
+import { WriteAheadLog } from "../../dist/memory/wal.js";
 import { memoryCommand } from "../../dist/commands/memory.js";
 
 async function withTempDir(fn) {
@@ -90,6 +91,128 @@ test("MemoryStore weighted semantic retrieval merging", async () => {
   });
 });
 
+test("MemoryStore WAL checkpoint survives a cold restart at the canonical path", async () => {
+  await withTempDir(async (tempRoot) => {
+    const wsDir = path.join(tempRoot, "ws");
+    const memoryDir = path.join(tempRoot, "memory");
+    await fs.mkdir(wsDir);
+
+    const first = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await first.init();
+    const wal = new WriteAheadLog({
+      walDir: path.join(first.getWorkspaceMemoryDir(), "wal"),
+      checkpointPath: path.join(first.getWorkspaceMemoryDir(), "memory.json"),
+    });
+    await wal.init();
+    first.setWAL(wal);
+    first.add("checkpoint survives restart", "test", 0.9);
+    await first.saveToDisk();
+    await first.shutdown();
+
+    const second = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await second.init();
+    assert.equal(second.exportPersisted().length, 1);
+    assert.equal(second.exportPersisted()[0].content, "checkpoint survives restart");
+    await second.shutdown();
+  });
+});
+
+test("MemoryStore migrates the misplaced WAL checkpoint once without deleting it", async () => {
+  await withTempDir(async (tempRoot) => {
+    const wsDir = path.join(tempRoot, "ws");
+    const memoryDir = path.join(tempRoot, "memory");
+    await fs.mkdir(wsDir);
+    const probe = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    const workspaceMemoryDir = probe.getWorkspaceMemoryDir();
+    const misplaced = path.join(workspaceMemoryDir, "wal", "memory.json");
+    await fs.mkdir(path.dirname(misplaced), { recursive: true });
+    await fs.writeFile(misplaced, JSON.stringify([{
+      id: "legacy-wal",
+      content: "misplaced checkpoint",
+      source: "test",
+      createdAt: 1,
+      importance: 0.8,
+    }]), "utf8");
+
+    const first = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await first.init();
+    assert.equal(first.exportPersisted()[0]?.id, "legacy-wal");
+    const marker = path.join(workspaceMemoryDir, "wal", "checkpoint-migration-v1.json");
+    const firstMarker = await fs.readFile(marker, "utf8");
+    await first.shutdown();
+
+    const second = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await second.init();
+    assert.equal(second.exportPersisted().length, 1);
+    assert.equal(await fs.readFile(marker, "utf8"), firstMarker);
+    await fs.access(misplaced);
+    await second.shutdown();
+  });
+});
+
+test("MemoryStore excludes unrelated ordinary memories but keeps global corrections bounded", async () => {
+  await withTempDir(async (tempRoot) => {
+    const wsDir = path.join(tempRoot, "ws");
+    const store = new MemoryStore(path.join(tempRoot, "memory"), { workspaceDir: wsDir });
+    await fs.mkdir(wsDir);
+    await store.init();
+    store.add("Python dependency resolver notes", "test", 1, "workspace");
+    for (let i = 0; i < 5; i++) {
+      store.add(`[用户纠错·必须遵守] correction ${i}`, "user-correction", 0.99, "global");
+    }
+
+    const hits = await store.getRelevant("unrelated chess opening", 10);
+    assert.equal(hits.filter((entry) => entry.source === "test").length, 0);
+    assert.equal(hits.filter((entry) => entry.source === "user-correction").length, 3);
+    await store.shutdown();
+  });
+});
+
+test("MemoryStore refuses to overwrite a corrupt canonical memory file", async () => {
+  await withTempDir(async (tempRoot) => {
+    const wsDir = path.join(tempRoot, "ws");
+    const memoryDir = path.join(tempRoot, "memory");
+    await fs.mkdir(wsDir);
+    const probe = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    const canonical = path.join(probe.getWorkspaceMemoryDir(), "memory.json");
+    await fs.mkdir(path.dirname(canonical), { recursive: true });
+    await fs.writeFile(canonical, "{not-json", "utf8");
+
+    const store = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await store.init();
+    assert.equal(store.getPersistenceStatus().workspace.readOnly, true);
+    store.add("must not replace corrupt data", "test", 1);
+    await assert.rejects(store.saveToDisk(), /read-only degraded/i);
+    assert.equal(await fs.readFile(canonical, "utf8"), "{not-json");
+    await store.shutdown().catch(() => undefined);
+  });
+});
+
+test("MemoryStore loads a valid backup but remains read-only until repaired", async () => {
+  await withTempDir(async (tempRoot) => {
+    const wsDir = path.join(tempRoot, "ws");
+    const memoryDir = path.join(tempRoot, "memory");
+    await fs.mkdir(wsDir);
+    const probe = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    const canonical = path.join(probe.getWorkspaceMemoryDir(), "memory.json");
+    await fs.mkdir(path.dirname(canonical), { recursive: true });
+    await fs.writeFile(canonical, "[] trailing", "utf8");
+    await fs.writeFile(`${canonical}.bak`, JSON.stringify([{
+      id: "backup-entry",
+      content: "recovered from backup",
+      source: "test",
+      createdAt: 1,
+      importance: 0.5,
+    }]), "utf8");
+
+    const store = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await store.init();
+    assert.equal(store.exportPersisted()[0]?.id, "backup-entry");
+    assert.equal(store.getPersistenceStatus().workspace.readOnly, true);
+    await store.shutdown().catch(() => undefined);
+  });
+});
+
 test("MemoryStore CLI commands manually execute CRUD", async () => {
   await withTempDir(async (tempRoot) => {
     const wsDir = path.join(tempRoot, "ws");
@@ -123,6 +246,10 @@ test("MemoryStore CLI commands manually execute CRUD", async () => {
 
     const targetId = entries[0].id;
 
+    outputLines.length = 0;
+    await memoryCommand.execute(["workspace", "10"], mockCtx);
+    assert(outputLines.some(l => l.includes("Entries  : 1/1")), "workspace report should read the canonical directory");
+
     // 2. Edit command
     await memoryCommand.execute(["edit", targetId, "updated command fact"], mockCtx);
     assert.equal(store.exportPersisted()[0].content, "updated command fact");
@@ -131,6 +258,43 @@ test("MemoryStore CLI commands manually execute CRUD", async () => {
     await memoryCommand.execute(["delete", targetId], mockCtx);
     assert.equal(store.exportPersisted().length, 0);
 
+    await store.shutdown();
+  });
+});
+
+test("/memory migrate legacy is dry-run by default and requires an explicit target", async () => {
+  await withTempDir(async (tempRoot) => {
+    const wsDir = path.join(tempRoot, "ws");
+    const memoryDir = path.join(tempRoot, "memory");
+    await fs.mkdir(wsDir);
+    await fs.mkdir(memoryDir, { recursive: true });
+    await fs.writeFile(path.join(memoryDir, "memory.json"), JSON.stringify([{
+      id: "legacy-explicit",
+      content: "legacy explicit migration",
+      source: "legacy",
+      createdAt: 1,
+      importance: 0.7,
+    }]), "utf8");
+    const store = new MemoryStore(memoryDir, { workspaceDir: wsDir });
+    await store.init();
+    const outputLines = [];
+    const errorLines = [];
+    const ctx = {
+      writeLine(line) { outputLines.push(line); },
+      writeError(line) { errorLines.push(line); },
+      agentLoop: {
+        getRuntimeRootDir() { return tempRoot; },
+        getMemoryStore() { return store; },
+      },
+    };
+
+    await memoryCommand.execute(["migrate", "legacy", "--to", "workspace"], ctx);
+    assert.equal(store.exportPersisted().length, 0);
+    assert(outputLines.some((line) => line.includes("dry-run")));
+
+    await memoryCommand.execute(["migrate", "legacy", "--to", "workspace", "--apply"], ctx);
+    assert.equal(errorLines.length, 0);
+    assert.equal(store.exportPersisted()[0]?.id, "legacy-explicit");
     await store.shutdown();
   });
 });
