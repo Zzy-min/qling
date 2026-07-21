@@ -101,20 +101,48 @@ export class DashboardServer {
   async start(): Promise<void> {
     if (this.listening) return;
     this.server = http.createServer((req, res) => void this.handleRequest(req, res));
-    await new Promise<void>((resolve, reject) => {
-      const onError = (err: NodeJS.ErrnoException) => {
-        if (err.code === "EADDRINUSE") {
-          reject(new Error(`EADDRINUSE: 端口 ${this.options.port} 已被占用`));
-        } else reject(err);
-      };
-      this.server.once("error", onError);
-      this.server.listen(this.options.port, "127.0.0.1", () => {
-        this.server.off("error", onError);
-        this.listening = true;
-        console.error(`🚀 Dashboard 运行在: http://127.0.0.1:${this.options.port}`);
-        resolve();
-      });
-    });
+    const preferred = Number(this.options.port) || 9999;
+    const maxAttempts = 12;
+    let lastErr: Error | null = null;
+    for (let i = 0; i < maxAttempts; i++) {
+      const port = preferred + i;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (err: NodeJS.ErrnoException) => {
+            reject(err);
+          };
+          this.server.once("error", onError);
+          this.server.listen(port, "127.0.0.1", () => {
+            this.server.off("error", onError);
+            this.options.port = port;
+            this.listening = true;
+            if (i > 0) {
+              console.error(
+                `🚀 Dashboard 运行在: http://127.0.0.1:${port}（${preferred} 占用，已自动换端口）`
+              );
+            } else {
+              console.error(`🚀 Dashboard 运行在: http://127.0.0.1:${port}`);
+            }
+            resolve();
+          });
+        });
+        lastErr = null;
+        break;
+      } catch (err: any) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (err?.code !== "EADDRINUSE") throw lastErr;
+        // 端口占用：关掉半开 server 再试下一个
+        try {
+          this.server.close();
+        } catch {
+          // ignore
+        }
+        this.server = http.createServer((req, res) => void this.handleRequest(req, res));
+      }
+    }
+    if (!this.listening) {
+      throw lastErr ?? new Error(`EADDRINUSE: 端口 ${preferred}–${preferred + maxAttempts - 1} 均被占用`);
+    }
     void this.probeDaemon();
     this.daemonTimer = setInterval(() => void this.probeDaemon(), DAEMON_PROBE_MS);
     this.daemonTimer.unref?.();

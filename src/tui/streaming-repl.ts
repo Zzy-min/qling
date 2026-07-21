@@ -89,6 +89,9 @@ export class StreamingREPL {
     }
     await this.loadLocalInputHistory();
     await this.refreshStatusLine();
+    // Grok 对标：chat TUI 必须挂载审批通道，否则 ask/plan 无入口
+    const { TuiChannel } = await import("../channels/tui-channel.js");
+    this.agent.setChannel(new TuiChannel(this.ui));
     this.ui.onInput((cmd) => this.handleUserInput(cmd));
     // Shift+Tab：Grok 三态原位切换 + plan 时确保计划目录
     this.ui.setModeCycleHandler(async () => {
@@ -208,6 +211,13 @@ export class StreamingREPL {
         );
       });
     }
+    this.agent.on("thinking", (content: string) => {
+      // 中间轮次助手说明（含 Markdown 表格/列表）→ 终端渲染
+      if (content && String(content).trim()) {
+        this.ui.appendThinking(String(content));
+      }
+    });
+
     this.agent.on("tool_start", (name: string, args: Record<string, unknown>) => {
       const cmd = this.argsToCommand(name, args);
       this.ui.appendToolStart(name, cmd);
@@ -352,6 +362,7 @@ export class StreamingREPL {
       },
       openSessionPicker: () => this.ui.openSessionPicker(),
       openOptionPicker: (spec) => this.ui.openOptionPicker(spec),
+      requestPlanApproval: (opts) => this.ui.requestPlanApproval(opts),
       repaintChrome: () => this.ui.repaintChrome({ clearScreen: true }),
       applySessionChrome: (patch) => this.ui.applySessionChrome(patch),
       setImmediatePrompt: (prompt: string) => {
@@ -427,6 +438,8 @@ export class StreamingREPL {
   private async processPrompt(input: string): Promise<void> {
     let currentPrompt: string | null = input;
     this.scheduler.setBusy(true);
+    // 硬锁：整段 agent 任务期间禁止中途叠输入框
+    this.ui.setAgentBusy(true);
 
     try {
       while (currentPrompt && !this.closed) {
@@ -489,6 +502,7 @@ export class StreamingREPL {
         currentPrompt = null;
       }
     } finally {
+      this.ui.setAgentBusy(false);
       this.scheduler.setBusy(false);
       await this.scheduler.runDueTasksOnce();
     }

@@ -14,7 +14,11 @@ import {
   ClassifierResult,
   ToolDefinition,
 } from "../types.js";
-import { PermissionMatrix, type PermissionResult } from "../guard/permissions.js";
+import {
+  PermissionMatrix,
+  buildSafeAutoAllowRules,
+  type PermissionResult,
+} from "../guard/permissions.js";
 import { RateLimiter, type RateLimitResult } from "../guard/rate-limit.js";
 import { appendGuardAudit } from "../guard.js";
 import type { GuardConfig } from "../config.js";
@@ -283,8 +287,13 @@ export class HookManager {
   private mergePermissionRules(
     baseRules: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string }> = []
   ) {
-    // plan 规则优先（放前面）
-    return this.planMode ? [...this.planModeRules(), ...baseRules] : baseRules;
+    // 顺序：plan 硬拒绝 → 用户规则 → 内置安全工具 allow → 默认 mode(ask/allow/deny)
+    // 与 Grok「只读工具默认不弹审批」一致：todo/read/search 等不打断 normal 模式
+    const safeAllows = buildSafeAutoAllowRules();
+    if (this.planMode) {
+      return [...this.planModeRules(), ...baseRules, ...safeAllows];
+    }
+    return [...baseRules, ...safeAllows];
   }
 
   private rebuildPermissionMatrix(): void {

@@ -79,7 +79,7 @@ export const PERMISSION_PIPELINE_STAGES = [
   {
     id: "rules",
     title: "Permission rules",
-    detail: "QLING_GUARD 规则矩阵 + 默认 mode（allow|ask|deny）",
+    detail: "QLING_GUARD 规则矩阵 + 默认 mode（allow|ask|deny）+ 内置安全工具 allow（todo/read/search…）",
   },
   {
     id: "grant",
@@ -104,7 +104,7 @@ export const PERMISSION_PIPELINE_STAGES = [
   {
     id: "mode",
     title: "Session mode",
-    detail: "normal=默认 ask · auto=默认 allow · plan 覆盖写能力",
+    detail: "normal=默认 ask（只读/todo 内置放行）· auto=默认 allow · plan 覆盖写能力",
   },
 ] as const;
 

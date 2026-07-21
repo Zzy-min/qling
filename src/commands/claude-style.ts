@@ -344,8 +344,10 @@ export const planCommand: SlashCommand = {
         return;
       }
       loop.setPlanMode!(true);
-      await ensureDefaultPlanDir(workspace);
+      const planDir = await ensureDefaultPlanDir(workspace);
       paintMode("plan");
+      context.writeLine(`Plan Mode：只读规划。请把计划写入 ${planDir}，勿直接改业务代码。`);
+      context.writeLine("完成后告知用户使用 /plan approve 审批实施。");
       return;
     }
 
@@ -364,8 +366,66 @@ export const planCommand: SlashCommand = {
         context.writeError("Plan mode unavailable");
         return;
       }
-      loop.setPlanMode!(false);
       const latest = await readLatestPlanFile(workspace);
+      // Grok 对标：先打开审批面，再决定实施 / 继续改 / 退出
+      let decision: "approve" | "revise" | "quit" = "approve";
+      if (typeof context.requestPlanApproval === "function") {
+        decision = await context.requestPlanApproval({
+          planPath: latest?.path ?? null,
+          planPreview: latest?.content?.slice(0, 400) ?? null,
+        });
+      } else if (typeof context.openOptionPicker === "function") {
+        decision = await new Promise<"approve" | "revise" | "quit">((resolve) => {
+          let settled = false;
+          const settle = (v: "approve" | "revise" | "quit") => {
+            if (settled) return;
+            settled = true;
+            resolve(v);
+          };
+          context.openOptionPicker!({
+            title: "计划审批 · Plan",
+            selectedId: "approve",
+            footerHint: "↑/↓ 选择 · Enter 确认 · Esc 退出规划",
+            items: [
+              {
+                id: "approve",
+                label: "批准并实施",
+                description: latest?.path ?? "(no plan file)",
+              },
+              {
+                id: "revise",
+                label: "继续修改计划",
+                description: "保持 plan mode",
+              },
+              {
+                id: "quit",
+                label: "退出规划不实施",
+                description: "关闭 plan，不注入实施任务",
+              },
+            ],
+            onPick: (item) => {
+              if (item.id === "approve") settle("approve");
+              else if (item.id === "revise") settle("revise");
+              else settle("quit");
+            },
+            onDismiss: () => settle("quit"),
+          });
+        });
+      }
+
+      if (decision === "revise") {
+        paintMode("plan");
+        context.writeLine("继续 plan mode — 修改计划后再次 /plan approve");
+        return;
+      }
+      if (decision === "quit") {
+        loop.setPlanMode!(false);
+        paintMode("agent");
+        context.writeLine("已退出 plan mode（未实施）");
+        return;
+      }
+
+      loop.setPlanMode!(false);
       if (context.setImmediatePrompt) {
         context.setImmediatePrompt(
           latest
@@ -374,6 +434,7 @@ export const planCommand: SlashCommand = {
         );
       }
       paintMode("agent");
+      context.writeLine("计划已批准 — 开始实施");
       return;
     }
 
@@ -382,8 +443,11 @@ export const planCommand: SlashCommand = {
     if (hasPlanApi) loop.setPlanMode!(true);
     const planDir = await ensureDefaultPlanDir(workspace);
     const prompt = [
-      `Plan mode. Read/search only; write plan markdown under ${planDir}/ only.`,
-      `Task: ${description}`,
+      "【Plan Mode】禁止直接执行业务改动或 bash。",
+      "只读探索代码，必须把完整计划写入下列目录下的 .md 文件（write 工具）：",
+      planDir,
+      "计划写完后停止，提示用户 /plan approve。禁止只口头说方案而不落盘。",
+      `任务：${description}`,
     ].join("\n");
     if (context.setImmediatePrompt) {
       context.setImmediatePrompt(prompt);

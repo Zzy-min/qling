@@ -71,6 +71,14 @@ export interface SlashCommandContext {
   openSessionPicker?: () => void;
   /** 通用选项切换器（model/theme/sandbox/mode…）；无则命令降级文本列表 */
   openOptionPicker?: (spec: import("./tui/overlay-panel.js").OptionPickerSpec) => void;
+  /**
+   * Plan 审批出口（对标 Grok exit_plan_mode）。
+   * approve=实施 · revise=留在 plan · quit=退出不实施。
+   */
+  requestPlanApproval?: (opts?: {
+    planPath?: string | null;
+    planPreview?: string | null;
+  }) => Promise<"approve" | "revise" | "quit">;
   /** 主题等变更后清屏重画顶栏+输入框（append-only 下唯一可靠方式） */
   repaintChrome?: () => void;
   /** 原位更新 Mode/Perm 外观（不重打输入框） */
@@ -104,6 +112,7 @@ export function withDefaultWriters(
     // 必须透传：否则 /resume、/sessions、/model 等会丢 TUI 切换器，降级成文本列表
     openSessionPicker: context.openSessionPicker,
     openOptionPicker: context.openOptionPicker,
+    requestPlanApproval: context.requestPlanApproval,
     repaintChrome: context.repaintChrome,
     applySessionChrome: context.applySessionChrome,
     setImmediatePrompt: context.setImmediatePrompt,

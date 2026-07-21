@@ -273,7 +273,10 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
     const { content, tool_calls, usage } = await host.chat(systemPrompt);
     host.counters = applyProviderUsage(host.counters, usage, host.usageLedger);
     host.messages.push({ role: "assistant", content, tool_calls });
-    host.emit("thinking", content || "正在思考...");
+    // 有工具调用时：中间推理/说明走 thinking（Markdown 渲染）；无工具时只由 appendFinal 展示，避免双份
+    if (tool_calls && tool_calls.length > 0 && content?.trim()) {
+      host.emit("thinking", content);
+    }
 
     if (!tool_calls || tool_calls.length === 0) {
       host.knowledgeAdapter.onAssistantMessage(content);

@@ -135,8 +135,9 @@ test("/plan on and off toggle AgentLoop plan mode", async () => {
 
   await planCommand.execute(["on"], context);
   assert.equal(plan, true);
-  // TUI 路径：只改 chrome，不写提示行
-  assert.equal(lines.filter(Boolean).length, 0);
+  // 进入 plan 时给出简短边界提示（必须写计划、禁止直接执行）
+  assert.ok(lines.filter(Boolean).length >= 1);
+  assert.match(lines.join("\n"), /Plan Mode|计划/);
   assert.deepEqual(chrome.at(-1), { sessionMode: "plan", permissionMode: "ask" });
 
   await planCommand.execute(["off"], context);

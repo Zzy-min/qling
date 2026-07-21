@@ -668,6 +668,36 @@ export class AgentLoop extends AgentEventEmitter {
   addUserMessage(content: string): void {
     this.messages.push({ role: "user", content });
     this.knowledgeAdapter.onUserMessage(content);
+    // 用户纠错 → 高优先级持久记忆（异步落盘，不阻塞本轮）
+    void this.captureUserCorrectionIfAny(content);
+  }
+
+  /**
+   * 检测用户纠错话术，写入 global memory，强制后续轮次检索到。
+   * 例：「这个数据是错的」「你记不住还犯错」「净值不是 6.2980」
+   */
+  private async captureUserCorrectionIfAny(content: string): Promise<void> {
+    const text = String(content ?? "").trim();
+    if (text.length < 4) return;
+    const looksLikeCorrection =
+      /(错了|不对|记错|是错的|数据错|纠正|更正|记不住|还犯错|不是\s*[\d.]+|你搞错|错误数据|别再用|不要再用)/.test(
+        text
+      );
+    if (!looksLikeCorrection) return;
+    try {
+      const remember = (this.memoryStore as { rememberUserCorrection?: (c: string) => Promise<string | null> })
+        .rememberUserCorrection;
+      if (typeof remember === "function") {
+        await remember.call(this.memoryStore, text);
+      } else {
+        this.memoryStore.add(`[用户纠错·必须遵守] ${text.slice(0, 800)}`, "user-correction", 0.99, "global");
+        if (typeof (this.memoryStore as any).saveToDisk === "function") {
+          await (this.memoryStore as any).saveToDisk();
+        }
+      }
+    } catch {
+      // 纠错落盘失败不阻断对话
+    }
   }
 
   async run(): Promise<string> {

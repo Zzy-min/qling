@@ -58,7 +58,7 @@ test("mode UI labels placeholders prefixes and footers differ", () => {
   assert.ok(paintModeSegment("plan").includes("Mode:plan"));
   assert.notEqual(modePromptPrefix("plan"), modePromptPrefix("normal"));
   assert.notEqual(modePromptPrefix("auto"), modePromptPrefix("normal"));
-  assert.match(modeCapabilityFooter("plan"), /bash|计划/);
+  assert.match(modeCapabilityFooter("plan"), /规划|计划|approve/);
   assert.match(modeCapabilityFooter("auto"), /allow|免确认|危险/);
   assert.match(modeCapabilityFooter("normal"), /ask|确认|Shift/);
 });

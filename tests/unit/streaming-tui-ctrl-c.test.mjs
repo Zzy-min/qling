@@ -542,7 +542,7 @@ test("stream ui shows slash completion hints while typing slash prefix", async (
     const output = getOutput();
     const plain = stripAnsi(output);
     assert.match(output, /› \/sk/);
-    assert.match(plain, /工具默认 ask · Shift\+Tab 切模式/);
+    assert.match(plain, /工具需确认时弹审批 · Shift\+Tab 切模式/);
     assert.match(plain, /[╰└]/);
   });
 });
@@ -943,9 +943,9 @@ test("stream ui bracketed paste inserts multiline text without submitting", asyn
       assert.equal(ui.input.cursorPos, "first line\nsecond line".length);
       assert.deepEqual(submitted, []);
       const output = stripAnsi(getOutput());
-      assert.match(output, /\[Pasted: 2 lines\]/);
-      assert.doesNotMatch(output, /│ › first line/);
-      assert.doesNotMatch(output, /│   second line/);
+      assert.doesNotMatch(output, /\[Pasted:/);
+      assert.match(output, /│ › first line/);
+      assert.match(output, /│   second line/);
 
       ui.running = false;
     });
@@ -975,7 +975,7 @@ test("stream ui bracketed paste submits only after explicit enter", async () => 
   });
 });
 
-test("stream ui compact pasted draft keeps cursor inside input row", async () => {
+test("stream ui short pasted draft expands and keeps cursor inside input frame", async () => {
   await withCapturedStdout(async (getOutput) => {
     await withCapturedStdinDataHandler(async (getDataHandler) => {
       const { ui } = createUi();
@@ -988,9 +988,11 @@ test("stream ui compact pasted draft keeps cursor inside input row", async () =>
       dataHandler("\x1b[200~alpha\nbeta\ncharlie\x1b[201~");
 
       const output = getOutput();
-      assert.match(stripAnsi(output), /\[Pasted: 3 lines\]/);
-      assert.match(output, /\x1b\[2A\x1b\[\d+G/);
-      assert.doesNotMatch(output, /\x1b\[3A\x1b\[\d+G/);
+      const plain = stripAnsi(output);
+      assert.doesNotMatch(plain, /\[Pasted:/);
+      assert.match(plain, /│ › alpha/);
+      assert.match(plain, /│   beta/);
+      assert.match(plain, /│   charlie/);
 
       ui.running = false;
     });
@@ -1097,15 +1099,16 @@ test("stream ui non-bracketed paste of multiline text does not submit and handle
       assert.equal(ui.input.value, "line 1\nline 2\nline 3");
       assert.deepEqual(submitted, []);
       const output = stripAnsi(getOutput());
-      assert.match(output, /\[Pasted: 3 lines\]/);
-      assert.doesNotMatch(output, /│ › line 1/);
-      assert.doesNotMatch(output, /│   line 2/);
+      assert.doesNotMatch(output, /\[Pasted:/);
+      assert.match(output, /│ › line 1/);
+      assert.match(output, /│   line 2/);
+      assert.match(output, /│   line 3/);
       ui.running = false;
     });
   });
 });
 
-test("stream ui compact draft summarizes manual multiline input without losing submitted content", async () => {
+test("stream ui manual multiline draft expands without losing submitted content", async () => {
   await withCapturedStdout(async (getOutput) => {
     const { ui, submitted } = createUi();
     const longText = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7";
@@ -1118,10 +1121,11 @@ test("stream ui compact draft summarizes manual multiline input without losing s
     ui.writeInputValue();
     const output = getOutput();
 
-    assert.match(stripAnsi(output), /\[Draft: 7 lines, \d+ B\]/);
+    assert.doesNotMatch(stripAnsi(output), /\[Draft:/);
     assert.doesNotMatch(stripAnsi(output), /▼ 更多内容/);
-    assert.doesNotMatch(stripAnsi(output), /│ › line 1/);
-    assert.doesNotMatch(stripAnsi(output), /│   line 5/);
+    assert.match(stripAnsi(output), /│ › line 1/);
+    assert.match(stripAnsi(output), /│   line 5/);
+    assert.match(stripAnsi(output), /│   line 7/);
 
     ui.input.moveEnd();
     ui.handleEnter();
@@ -1162,7 +1166,10 @@ test("stream ui ctrl+z restores compact draft metadata", async () => {
       ui.handleCtrlZ();
 
       assert.equal(ui.input.value, "alpha\nbeta");
-      assert.match(stripAnsi(getOutput()), /\[Pasted: 2 lines\]/);
+      const output = stripAnsi(getOutput());
+      assert.doesNotMatch(output, /\[Pasted:/);
+      assert.match(output, /│ › alpha/);
+      assert.match(output, /│   beta/);
 
       ui.running = false;
     });

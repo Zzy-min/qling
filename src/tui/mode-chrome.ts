@@ -90,11 +90,11 @@ export function modePromptPrefix(mode: GrokUiMode): string {
 export function modeCapabilityFooter(mode: GrokUiMode): string {
   switch (mode) {
     case "plan":
-      return "禁 bash · 仅写计划目录";
+      return "只读规划 · 必须写 .qling/plans · 禁直接执行 · /plan approve 实施";
     case "auto":
-      return "工具默认 allow · 危险仍可拦";
+      return "工具默认 allow · 危险仍可拦 · Ctrl+N 换行";
     default:
-      return "工具默认 ask · Shift+Tab 切模式";
+      return "工具需确认时弹审批 · Shift+Tab 切模式 · Ctrl+N 换行";
   }
 }
 

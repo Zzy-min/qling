@@ -262,13 +262,36 @@ export function renderTable(table: ParsedTable, width: number): string[] {
 
 function renderInline(text: string): string {
   let res = text;
-  // 替换加粗 **bold** -> BOLD(bold)
-  res = res.replace(/\*\*(.*?)\*\*/g, (_, p1) => BOLD(p1));
-  // 替换内联代码 `code` -> S.s(code)
-  res = res.replace(/`(.*?)`/g, (_, p1) => S.s(p1));
-  // 简单链接 [text](url) -> text (url dim)
+  // 加粗 **bold** / __bold__
+  res = res.replace(/\*\*(.+?)\*\*/g, (_, p1) => BOLD(p1));
+  res = res.replace(/__(.+?)__/g, (_, p1) => BOLD(p1));
+  // 删除线 ~~strike~~
+  res = res.replace(/~~(.+?)~~/g, (_, p1) => DIM(p1));
+  // 斜体 *italic* / _italic_（避开已处理的 ** / __）
+  res = res.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, (_, p1) => `\x1b[3m${p1}\x1b[0m`);
+  res = res.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, (_, p1) => `\x1b[3m${p1}\x1b[0m`);
+  // 内联代码 `code`
+  res = res.replace(/`([^`]+)`/g, (_, p1) => S.s(p1));
+  // 链接 [text](url)
   res = res.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, p1, p2) => `${p1} ${S.d("(" + p2 + ")")}`);
   return res;
+}
+
+/** 是否像 Markdown（决定工具输出是否走渲染，避免 JSON 被误伤） */
+export function looksLikeMarkdown(text: string): boolean {
+  const t = String(text ?? "");
+  if (!t.trim()) return false;
+  if (/```/.test(t)) return true;
+  if (/^#{1,6}\s+\S/m.test(t)) return true;
+  if (/\|\s*.+\s*\|/.test(t) && /\|?\s*:?-{3,}/.test(t)) return true;
+  if (/\*\*[^*]+\*\*/.test(t)) return true;
+  if (/^\s*[-*+]\s+\S/m.test(t)) return true;
+  if (/^\s*\d+\.\s+\S/m.test(t)) return true;
+  if (/^\s*>\s+\S/m.test(t)) return true;
+  if (/^\s*[-*+]\s+\[[ xX]\]\s+/m.test(t)) return true;
+  if (/^\s*[-*_]{3,}\s*$/m.test(t)) return true;
+  if (/\[[^\]]+\]\([^)]+\)/.test(t)) return true;
+  return false;
 }
 
 export function formatMarkdownForTerminal(text: string, options: { width: number }): string[] {
@@ -360,7 +383,20 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       continue;
     }
 
-    // 5. 无序列表
+    // 5. 任务列表 - [ ] / - [x]（须在无序列表之前）
+    const taskMatch = line.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/);
+    if (taskMatch) {
+      const indent = taskMatch[1] || "";
+      const checked = taskMatch[2].trim().toLowerCase() === "x" ? "☑" : "☐";
+      const content = taskMatch[3] || "";
+      const firstPrefix = indent + `  ${checked} `;
+      const restPrefix = indent + "    ";
+      resultLines.push(...wrapVisibleText(content, width, firstPrefix, restPrefix).map(renderInline));
+      i++;
+      continue;
+    }
+
+    // 6. 无序列表
     const ulMatch = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (ulMatch) {
       const indent = ulMatch[1] || "";
@@ -372,7 +408,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       continue;
     }
 
-    // 6. 有序列表
+    // 7. 有序列表
     const olMatch = line.match(/^(\s*)(\d+\.)\s+(.*)$/);
     if (olMatch) {
       const indent = olMatch[1] || "";
@@ -385,26 +421,13 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       continue;
     }
 
-    // 7. 引用块 >
+    // 8. 引用块 >
     const quoteMatch = line.match(/^(\s*)>\s?(.*)$/);
     if (quoteMatch) {
       const indent = quoteMatch[1] || "";
       const content = quoteMatch[2] || "";
       const prefix = indent + "  > ";
       resultLines.push(...wrapVisibleText(content, width, prefix, prefix).map((l) => S.s(renderInline(l))));
-      i++;
-      continue;
-    }
-
-    // 8. 任务列表 - [ ] / - [x]
-    const taskMatch = line.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/);
-    if (taskMatch) {
-      const indent = taskMatch[1] || "";
-      const checked = taskMatch[2].trim().toLowerCase() === "x" ? "☑" : "☐";
-      const content = taskMatch[3] || "";
-      const firstPrefix = indent + `  ${checked} `;
-      const restPrefix = indent + "    ";
-      resultLines.push(...wrapVisibleText(content, width, firstPrefix, restPrefix).map(renderInline));
       i++;
       continue;
     }

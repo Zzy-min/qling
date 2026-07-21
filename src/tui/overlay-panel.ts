@@ -54,6 +54,16 @@ export interface OptionPickerSpec {
    */
   filterable?: boolean;
   onPick: (item: OptionPickerItem) => void | Promise<void>;
+  /**
+   * Esc / Ctrl+C / Ctrl+D 取消浮层时调用（确认选择不会触发）。
+   * 用于审批面板将取消映射为 deny。
+   */
+  onDismiss?: () => void;
+  /**
+   * 非 filterable 时：可打印键 → 条目 id（如 a→allow_once）。
+   * 命中后等价于选中该条目并确认。
+   */
+  shortcuts?: Record<string, string>;
 }
 
 function frameLines(title: string, body: string[], width: number, footer: string): string[] {

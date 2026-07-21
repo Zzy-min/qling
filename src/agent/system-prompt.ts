@@ -130,7 +130,19 @@ export async function assembleSystemPrompt(options: {
     }
   }
 
-  buildSystemPrompt(options.sectionRegistry, { memory: memoryStr || undefined });
+  // 强制加载 user-rules / AGENTS.md 等（硬约束，非可选检索记忆）
+  const { loadMandatoryRuleFiles, formatMandatoryRulesBlock } = await import("./rule-files.js");
+  const ruleFiles = await loadMandatoryRuleFiles({
+    workspaceDir: options.workspaceDir,
+    stateDir: path.join(os.homedir(), ".qling"),
+    homeDir: os.homedir(),
+  });
+  const rulesBlock = formatMandatoryRulesBlock(ruleFiles);
+
+  buildSystemPrompt(options.sectionRegistry, {
+    memory: memoryStr || undefined,
+    rules: rulesBlock,
+  });
   const staticSections = options.sectionRegistry
     .getAll()
     .filter((section) => !section.dynamic && !DYNAMIC_SECTION_IDS.has(section.id))
@@ -155,15 +167,25 @@ export async function assembleSystemPrompt(options: {
     }),
     "session-runtime-v1"
   );
-  if (dynamicSections.trim()) {
-    upsertSyntheticMessage(
-      options.messages,
-      "dynamic_context",
-      `<dynamic_context>\n${dynamicSections}\n</dynamic_context>`
-    );
-  }
+  // 硬规则 + 动态节写入合成消息（每轮刷新），提高约束可见度
+  const contextPayload = [
+    `<mandatory_rules priority="critical">\n${rulesBlock}\n</mandatory_rules>`,
+    dynamicSections.trim()
+      ? `<dynamic_context>\n${dynamicSections}\n</dynamic_context>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  upsertSyntheticMessage(
+    options.messages,
+    "dynamic_context",
+    contextPayload,
+    "mandatory-rules-v1"
+  );
+  // system 主干：base + 硬规则（再钉一次）+ 静态节（含 RULES section）
   const parts = [
     options.baseSystemPrompt.trim(),
+    rulesBlock,
     staticSections,
   ].filter((p) => p && p.trim().length > 0);
   return parts.join("\n\n");

@@ -22,6 +22,26 @@ const DEFAULT_CONFIG = {
   semanticEnabled: false,
 };
 
+/**
+ * 规范化 memory.json：PowerShell ConvertTo-Json 在仅 1 条时会写成对象而非数组，
+ * 导致 runtime 里 this.entries.map is not a function。
+ */
+export function normalizeMemoryEntries(raw: unknown): PersistedEntry[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.filter(
+      (e): e is PersistedEntry =>
+        !!e &&
+        typeof e === "object" &&
+        typeof (e as PersistedEntry).content === "string"
+    );
+  }
+  if (typeof raw === "object" && typeof (raw as PersistedEntry).content === "string") {
+    return [raw as PersistedEntry];
+  }
+  return [];
+}
+
 // --- PersistedMemory（长期存储，WAL 模式可选）---
 
 export class PersistedMemory {
@@ -129,15 +149,33 @@ export class PersistedMemory {
   async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
     const now = Date.now();
 
-    // 1. 关键词检索
+    // 1. 关键词检索（支持中文：无空格时按整句/子串匹配；用户纠错加权）
     const keywordResults = this.entries.map((e) => {
       let score = e.importance;
+      // 用户纠错几乎不衰减，避免「记不住还犯错」
+      const isCorrection =
+        e.source === "user-correction" ||
+        e.content.includes("[用户纠错") ||
+        e.content.includes("必须遵守");
       const ageHours = (now - e.createdAt) / (1000 * 60 * 60);
-      score *= Math.pow(0.9, ageHours / 24);
-      const keywords = query.toLowerCase().split(/\s+/);
+      score *= isCorrection ? Math.pow(0.98, ageHours / 24) : Math.pow(0.9, ageHours / 24);
+      if (isCorrection) score += 0.5;
+
       const content = e.content.toLowerCase();
-      const matches = keywords.filter((k) => content.includes(k)).length;
-      score += matches * 0.1;
+      const q = query.toLowerCase().trim();
+      const keywords = q.split(/[\s,，、;；]+/).filter((k) => k.length >= 1);
+      let matches = keywords.filter((k) => k.length >= 2 && content.includes(k)).length;
+      // 中文无空格：query 本身作为关键词；另取 2–4 字滑动窗
+      if (q && content.includes(q)) matches += 3;
+      if (/[\u4e00-\u9fff]/.test(q)) {
+        for (let n = 2; n <= 4; n++) {
+          for (let i = 0; i + n <= Math.min(q.length, 24); i++) {
+            const gram = q.slice(i, i + n);
+            if (content.includes(gram)) matches += 0.35;
+          }
+        }
+      }
+      score += matches * 0.15;
       return { entry: e, score, source: "keyword" as const };
     });
 
@@ -271,6 +309,8 @@ export class PersistedMemory {
   }
 
   async saveToDisk(): Promise<void> {
+    // 始终以数组落盘，避免单元素被外部工具写成对象
+    this.entries = normalizeMemoryEntries(this.entries);
     if (this.wal) {
       await this.wal.append("compact", this.entries);
     } else {
@@ -283,7 +323,7 @@ export class PersistedMemory {
     try {
       const file = path.join(this.memoryDir, "memory.json");
       const data = await fs.readFile(file, "utf-8");
-      this.entries = JSON.parse(data);
+      this.entries = normalizeMemoryEntries(JSON.parse(data));
     } catch {
       this.entries = [];
     }
@@ -508,6 +548,29 @@ export class MemoryStore {
     } else {
       this.persisted.add(content, source, importance);
     }
+  }
+
+  /**
+   * 用户纠错：高优先级写入 global 记忆并立即落盘，避免会话结束丢失。
+   */
+  async rememberUserCorrection(content: string): Promise<string | null> {
+    const text = String(content ?? "").trim();
+    if (text.length < 4) return null;
+    const fact = text.length > 800 ? text.slice(0, 800) + "…" : text;
+    const payload = `[用户纠错·必须遵守] ${fact}`;
+    // 去重：相同纠错不重复堆
+    const existing = this.globalPersisted
+      .getAll()
+      .find((e) => e.source === "user-correction" && e.content.includes(fact.slice(0, 80)));
+    if (existing) {
+      this.globalPersisted.update(existing.id, { importance: 0.99, content: payload });
+      await this.globalPersisted.saveToDisk();
+      return existing.id;
+    }
+    this.globalPersisted.add(payload, "user-correction", 0.99);
+    await this.globalPersisted.saveToDisk();
+    const all = this.globalPersisted.getAll();
+    return all[0]?.id ?? null;
   }
 
   remove(id: string, scope: "global" | "workspace" = "workspace"): boolean {

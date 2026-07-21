@@ -10,6 +10,8 @@ import { getPackageVersion } from "../package-version.js";
 // --- 默认 Section IDs ---
 export const SECTION_IDS = {
   INTRO: "intro",
+  /** 强制用户/项目规则（AGENTS.md、user-rules.md）— 高优先级 */
+  RULES: "rules",
   TOOLS: "tools",
   WORKFLOW: "workflow",
   RESTRICTIONS: "restrictions",
@@ -118,6 +120,10 @@ export function buildRestrictionsSection(): PromptSection {
 - 成功：总结「正确流程」（步骤 + 关键命令 + 结果）
 - 失败或未准确执行：明确承认，引用真实输出/错误码，不编造完成结论
 - 禁止用「可能已经…」「应该成功了」替代验证证据
+- **用户纠错优先于一切旧记忆与旧结论**：用户指出错误后，必须立刻采用纠正，并在后续同类任务中遵守，禁止重复同一错误
+
+【Plan Mode 提醒】
+- 若系统附加了 Plan Mode 约束：只写计划、禁止直接执行；交付物是计划目录下的 .md，不是代码改动
 
 【网页 / 社交平台数据（opencli）】
 - 抖音、小红书、微博、B站、TikTok、推特/X 等：先 skill name="opencli"，再用 bash 执行 opencli <站点> … -f json
@@ -168,12 +174,28 @@ export function buildSessionSection(): PromptSection {
   };
 }
 
+export function buildRulesSection(content?: string): PromptSection {
+  return {
+    id: SECTION_IDS.RULES,
+    title: "强制规则",
+    content:
+      content?.trim() ||
+      `【强制用户规则 / MANDATORY RULES】
+规则文件尚未加载。须遵守诚实与验证义务。`,
+    cacheable: false,
+    // 非 dynamic：进入 staticSections，始终在 system 主干，避免被 dynamic 旁路
+    dynamic: false,
+    cached: false,
+  };
+}
+
 export function buildMemorySection(): PromptSection {
   return {
     id: SECTION_IDS.MEMORY,
     title: "记忆",
-    content: `【长期记忆】（从 ~/.qling/memory/ 加载）
-如无记忆则忽略此节。`,
+    content: `【检索记忆】（语义/关键词命中，辅助上下文）
+有命中则必须参考；无命中可忽略本节。
+注意：user-rules / AGENTS 等硬规则不在本节，而在【强制规则】。`,
     cacheable: false,
     dynamic: true,
     cached: false,
@@ -296,6 +318,7 @@ export function buildDefaultRegistry(tools: AgentConfig["tools"]): PromptSection
   const registry = new PromptSectionRegistry();
 
   registry.register(buildIntroSection("轻灵", getPackageVersion()));
+  registry.register(buildRulesSection());
   registry.register(buildToolsSection(tools));
   registry.register(buildWorkflowSection());
   registry.register(buildRestrictionsSection());
@@ -311,9 +334,14 @@ export function buildDefaultRegistry(tools: AgentConfig["tools"]): PromptSection
 
 export function buildSystemPrompt(
   registry: PromptSectionRegistry,
-  dynamicSections?: { memory?: string; session?: string }
+  dynamicSections?: { memory?: string; session?: string; rules?: string }
 ): string {
   // 更新动态 section
+  const rulesSec = registry.get(SECTION_IDS.RULES);
+  if (rulesSec && dynamicSections?.rules) {
+    rulesSec.content = dynamicSections.rules;
+  }
+
   const sessionSec = registry.get(SECTION_IDS.SESSION);
   if (sessionSec && dynamicSections?.session) {
     sessionSec.content = `【会话上下文】\n${dynamicSections.session}`;
@@ -321,9 +349,11 @@ export function buildSystemPrompt(
 
   const memorySec = registry.get(SECTION_IDS.MEMORY);
   if (memorySec && dynamicSections?.memory) {
-    memorySec.content = `【长期记忆】（从 ~/.qling/memory/ 加载）\n${dynamicSections.memory}`;
+    memorySec.content =
+      `【检索记忆】（辅助上下文；不得覆盖【强制规则】）\n${dynamicSections.memory}`;
   } else if (memorySec) {
-    memorySec.content = `【长期记忆】（从 ~/.qling/memory/ 加载）\n如无记忆则忽略此节。`;
+    memorySec.content =
+      `【检索记忆】（辅助上下文）\n本轮无检索命中。硬规则见【强制规则】节。`;
   }
 
   // 按顺序拼装

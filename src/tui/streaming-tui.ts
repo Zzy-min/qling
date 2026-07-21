@@ -45,7 +45,7 @@ import {
   type TurnBrowseItem,
 } from "./overlay-panel.js";
 import { sortSessionFleet } from "./session-fleet.js";
-import { formatMarkdownForTerminal } from "./markdown.js";
+import { formatMarkdownForTerminal, looksLikeMarkdown } from "./markdown.js";
 import { getPackageVersion } from "../package-version.js";
 import type { RecoveryState } from "../execution/types.js";
 import {
@@ -176,6 +176,14 @@ export class StreamUI {
    */
   private streamActive = false;
   /**
+   * true = processPrompt / agent.run 进行中（比 streamActive 更硬）。
+   * streamActive 会被 showPrompt/closeOverlay 等多处清掉，导致中途叠出空输入框；
+   * agentBusy 仅由 REPL 在任务起止时切换，期间禁止任何输入 chrome 绘制。
+   */
+  private agentBusy = false;
+  /** slash 多行输出缓冲：收齐后再 Markdown 渲染，避免表格被拆行 */
+  private slashMdBuffer: string[] = [];
+  /**
    * true = 顶栏与输入框仍紧挨（其间无对话流）。
    * 此时 Shift+Tab 可用相对上移擦除「顶栏+输入」整块再重画，避免 Windows 清屏失败叠双顶栏。
    * 一旦 ensureStreamMode / 对话输出，置 false，模式切换只原位改输入框。
@@ -218,6 +226,8 @@ export class StreamUI {
         selected: number;
         footerHint?: string;
         onPick: (item: OptionPickerItem) => void | Promise<void>;
+        onDismiss?: () => void;
+        shortcuts?: Record<string, string>;
         lineCount: number;
         blockLines: number;
       } = null;
@@ -390,6 +400,8 @@ export class StreamUI {
     const items = [...(spec.items ?? [])];
     if (items.length === 0) return;
 
+    // 审批/切换器打开时必须停 spinner，否则 \r 刷新会叠出第二份输入框
+    this.stopProgress();
     // 从 slash 提交态恢复为可交互 chrome（会话切换器同理不挡 streamActive）
     this.streamActive = false;
 
@@ -419,6 +431,8 @@ export class StreamUI {
       selected,
       footerHint: spec.footerHint,
       onPick: spec.onPick,
+      onDismiss: spec.onDismiss,
+      shortcuts: spec.shortcuts,
       lineCount: 0,
       blockLines: 0,
     };
@@ -432,6 +446,146 @@ export class StreamUI {
 
   openOptionPicker(spec: OptionPickerSpec): void {
     this.showOptionPicker(spec);
+  }
+
+  /**
+   * 工具审批入口（Grok interactive permission 对标）。
+   * 返回 allow/deny；Esc/Ctrl+C/Ctrl+D 与「拒绝」均为 deny。
+   * allow_always 时写入会话 grant 后返回 allow。
+   */
+  requestToolApproval(request: {
+    id: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    reason: string;
+    timestamp: number;
+  }): Promise<{ requestId: string; decision: "allow" | "deny"; timestamp: number }> {
+    const argsPreview = truncateVisible(
+      JSON.stringify(request.arguments ?? {}).replace(/\s+/g, " "),
+      72
+    );
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = (decision: "allow" | "deny") => {
+        if (settled) return;
+        settled = true;
+        resolve({
+          requestId: request.id,
+          decision,
+          timestamp: Date.now(),
+        });
+      };
+
+      if (!this.running) {
+        settle("deny");
+        return;
+      }
+
+      this.showOptionPicker({
+        title: `审批 · ${request.toolName}`,
+        selectedId: "allow_once",
+        footerHint: "↑/↓ 选择 · Enter 确认 · Esc 取消",
+        items: [
+          {
+            id: "allow_once",
+            label: "允许一次",
+            description: request.reason || "执行本次工具调用",
+          },
+          {
+            id: "allow_always",
+            label: "本会话始终允许",
+            description: `记住 ${request.toolName}，本会话不再询问`,
+          },
+          {
+            id: "deny",
+            label: "拒绝",
+            description: argsPreview ? `args: ${argsPreview}` : "阻止本次工具调用",
+          },
+        ],
+        // 仅切换器：不绑定字母快捷键
+        onPick: async (item) => {
+          if (item.id === "allow_always") {
+            try {
+              const { getPermissionGrantStore } = await import("../guard/permission-grants.js");
+              getPermissionGrantStore().remember(request.toolName, {
+                reason: "tui allow_always",
+              });
+            } catch {
+              // grant 失败不阻断 allow
+            }
+            settle("allow");
+            return;
+          }
+          if (item.id === "allow_once") {
+            settle("allow");
+            return;
+          }
+          settle("deny");
+        },
+        onDismiss: () => settle("deny"),
+      });
+    });
+  }
+
+  /**
+   * Plan 模式审批出口（Grok exit_plan_mode a/s/q 对标）。
+   * approve → 实施；revise → 留在 plan；quit → 退出 plan 不实施。
+   */
+  requestPlanApproval(options: {
+    planPath?: string | null;
+    planPreview?: string | null;
+  } = {}): Promise<"approve" | "revise" | "quit"> {
+    const pathHint = options.planPath
+      ? truncateVisible(options.planPath, 64)
+      : "(no plan file)";
+    const preview = truncateVisible(
+      String(options.planPreview ?? "")
+        .split("\n")
+        .filter((l) => l.trim())
+        .slice(0, 2)
+        .join(" · ") || "确认后将退出 plan 并开始实施",
+      72
+    );
+    return new Promise((resolve) => {
+      let settled = false;
+      const settle = (v: "approve" | "revise" | "quit") => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+      };
+      if (!this.running) {
+        settle("quit");
+        return;
+      }
+      this.showOptionPicker({
+        title: "计划审批 · Plan",
+        selectedId: "approve",
+        footerHint: "↑/↓ 选择 · Enter 确认 · Esc 退出规划",
+        items: [
+          {
+            id: "approve",
+            label: "批准并实施",
+            description: pathHint,
+          },
+          {
+            id: "revise",
+            label: "继续修改计划",
+            description: preview,
+          },
+          {
+            id: "quit",
+            label: "退出规划不实施",
+            description: "关闭 plan mode，不注入实施任务",
+          },
+        ],
+        onPick: (item) => {
+          if (item.id === "approve") settle("approve");
+          else if (item.id === "revise") settle("revise");
+          else settle("quit");
+        },
+        onDismiss: () => settle("quit"),
+      });
+    });
   }
 
   isOverlayOpen(): boolean {
@@ -641,6 +795,27 @@ export class StreamUI {
     this.inputCallback = cb;
   }
 
+  /**
+   * 任务忙锁：agent 执行整段过程中禁止叠输入框。
+   * 审批浮层（overlay）除外，仍允许 paintOverlay 画审批板。
+   */
+  setAgentBusy(busy: boolean): void {
+    this.agentBusy = Boolean(busy);
+    if (this.agentBusy) {
+      this.streamActive = true;
+      // 不在这里 promptLive=false：submitSlashDraft 已处理；避免误清审批态
+    }
+  }
+
+  isAgentBusy(): boolean {
+    return this.agentBusy;
+  }
+
+  /** 任务进行中且无审批浮层时，禁止绘制输入 chrome */
+  private shouldSuppressInputChrome(): boolean {
+    return this.agentBusy && !this.overlay;
+  }
+
   setStatusLine(line: string | null): void {
     this.statusLine = line;
   }
@@ -717,13 +892,17 @@ export class StreamUI {
 
   startProgress(label: string = "agent", intervalMs: number = 80): void {
     this.stopProgress();
+    // 审批/选项浮层期间禁止 spinner：\r 会打穿浮层下输入框，叠出重复 chrome
+    if (this.overlay) return;
     // 绝不在活动输入框内容行上 \r，否则会画出「框里转圈」的错乱画面
     this.ensureStreamMode();
+    if (this.overlay) return;
     this.progressLabel = label.trim() || "agent";
     this.progressStartedAt = Date.now();
     // 独占一行：后续 \r 只刷新这一行
     process.stdout.write("\n");
     const paint = () => {
+      if (this.overlay) return;
       const elapsedMs = Date.now() - this.progressStartedAt;
       process.stdout.write(
         "\r\x1b[K" + formatProgressPulse(this.progressLabel, elapsedMs)
@@ -851,8 +1030,14 @@ export class StreamUI {
   }
 
   private redrawInput(): void {
-    // 仅任务流式期禁止；测试/未 start 时仍允许首绘输入框
-    if (this.streamActive) return;
+    // 任务忙锁 / 流式期：禁止；审批浮层可重绘整块
+    if (this.shouldSuppressInputChrome()) return;
+    if (this.streamActive && !this.overlay) return;
+    // 浮层打开时只重绘「面板+单份输入」，禁止再 append 第二份输入框
+    if (this.overlay) {
+      this.paintOverlay(true);
+      return;
+    }
     if (this.promptLive) {
       this.moveToInputContentStart();
       process.stdout.write("\r\x1b[J");
@@ -867,7 +1052,16 @@ export class StreamUI {
    * 任务流式态：只追加一行，绝不重画输入框。
    */
   private appendFeedbackAndRedraw(message: string, usePlaceholder = false): void {
-    if (this.streamActive || !this.promptLive) {
+    // 审批面板打开时：擦掉整块 → 写消息 → 再画回单份面板+输入（避免叠框）
+    if (this.overlay) {
+      this.stopProgress();
+      this.eraseOverlayBlock();
+      process.stdout.write(message + "\n");
+      this.paintOverlay(false);
+      return;
+    }
+    // 任务进行中：只追加状态行，绝不画输入框（即使 streamActive 被误清）
+    if (this.agentBusy || this.streamActive || !this.promptLive) {
       this.clearProgressLine();
       // 必须换行结束，避免进度条 \r 与下一条输出粘在同一行
       process.stdout.write("\n" + message + "\n");
@@ -882,6 +1076,11 @@ export class StreamUI {
 
   /** 离开活动输入框，进入只追加的流式输出区（提交任务 / 工具输出前调用） */
   private ensureStreamMode(): void {
+    // 浮层期间不允许 ensureStreamMode 拆掉输入 chrome（会残留双框）
+    if (this.overlay) {
+      this.stopProgress();
+      return;
+    }
     if (this.promptLive) {
       this.moveAfterInputFrame();
       process.stdout.write("\n");
@@ -952,8 +1151,23 @@ export class StreamUI {
     return value.split("\n").length;
   }
 
+  /**
+   * 仅超长粘贴折叠为 chip；手打多行向下扩展输入框（像正常编辑器）。
+   */
   private shouldUseCompactDraft(value: string, wrappedLineCount: number, isPlaceholder: boolean): boolean {
-    return !isPlaceholder && Boolean(value) && (value.includes("\n") || wrappedLineCount > 1);
+    if (isPlaceholder || !value) return false;
+    // 手打多行：不折叠
+    if (this.draftDisplaySource !== "pasted") return false;
+    // 粘贴：超过阈值阈值才折叠，避免大段 paste 撑爆屏幕
+    const lines = this.countInputLines(value);
+    return lines > 16 || wrappedLineCount > 20;
+  }
+
+  /** 输入框可见行数上限：随终端高度向下扩展 */
+  private maxVisibleInputLines(): number {
+    const rows = Number(process.stdout.rows || 24);
+    // 顶栏+底栏+历史留白；最少 3 行，最多 24 行
+    return Math.max(3, Math.min(24, rows - 8));
   }
 
   private formatDraftChip(value: string): string {
@@ -998,12 +1212,31 @@ export class StreamUI {
   }
 
   private syncCursor(): void {
+    const uiMode = resolveGrokUiMode(
+      this.chromeStatus.sessionMode,
+      this.chromeStatus.permissionMode
+    );
+    const prefix = modePromptPrefix(uiMode);
+    const prefixW = Math.max(1, sw(prefix));
     const contentWidth = this.inputFrameContentWidth();
-    const wrapWidth = contentWidth - 2;
+    const wrapWidth = Math.max(4, contentWidth - prefixW);
+    // 空闲时强制把逻辑光标钉在文本末尾，避免 redraw 后仍停在「字中间」
+    if (
+      this.focus === "prompt" &&
+      !this.overlay &&
+      this.input.cursorPos > this.input.value.length
+    ) {
+      this.input.cursorPos = this.input.value.length;
+    }
     const wrapped = this.wrapInputVisualLines(this.input.value, wrapWidth, this.input.cursorPos);
     const compactDraft = this.shouldUseCompactDraft(this.input.value, wrapped.lines.length, false);
     const cursor = compactDraft
-      ? { lineIndex: 2, columnText: " ".repeat(Math.min(contentWidth - 1, 2 + sw(this.formatDraftChip(this.input.value)))) }
+      ? {
+          lineIndex: 2,
+          columnText: " ".repeat(
+            Math.min(contentWidth - 1, prefixW + sw(this.formatDraftChip(this.input.value)))
+          ),
+        }
       : this.inputCursorPosition(wrapped);
 
     if (this.inputCursorAnchor === "bottom") {
@@ -1019,7 +1252,14 @@ export class StreamUI {
         process.stdout.write("\x1b[" + Math.abs(rowDelta) + "A");
       }
     }
-    const col = 5 + cursor.columnText.length;
+    // 1-based 屏列：│ + 空格 + 模式前缀 + 文本显示宽度
+    // 旧实现写死 +5，宽前缀(⚡)与 CJK 宽字符时会偏到字中间
+    const b = getBorderChars();
+    const leftChrome = sw(b.v) + 1 + (compactDraft ? prefixW : prefixW);
+    const textCols = compactDraft
+      ? sw(this.formatDraftChip(this.input.value))
+      : wrapped.cursorCol;
+    const col = Math.max(1, 1 + leftChrome + textCols);
     process.stdout.write("\x1b[" + col + "G");
     this.lastInputCursorLineIndex = cursor.lineIndex;
     this.inputCursorAnchor = "current";
@@ -1075,6 +1315,8 @@ export class StreamUI {
   }
 
   private writeInputValue(usePlaceholder = false): void {
+    // 硬门闩：agent 跑工具时禁止任何输入框（审批 overlay 走 paintOverlay 例外）
+    if (this.shouldSuppressInputChrome()) return;
     const contentWidth = this.inputFrameContentWidth();
     const uiMode = resolveGrokUiMode(
       this.chromeStatus.sessionMode,
@@ -1084,20 +1326,34 @@ export class StreamUI {
       this.input.value || (usePlaceholder ? modePlaceholder(uiMode) : "");
     const isPlaceholder = !this.input.value && usePlaceholder;
 
-    const wrapWidth = contentWidth - 2;
-    const wrapped = this.wrapInputVisualLines(valueToWrap, wrapWidth, isPlaceholder ? 0 : this.input.cursorPos);
+    const prefixW = Math.max(1, sw(modePromptPrefix(uiMode)));
+    const wrapWidth = Math.max(4, contentWidth - prefixW);
+    // 每次重绘前：若光标越界则收回末尾（paste/历史还原后常见）
+    if (!isPlaceholder && this.input.cursorPos > this.input.value.length) {
+      this.input.cursorPos = this.input.value.length;
+    }
+    const wrapped = this.wrapInputVisualLines(
+      valueToWrap,
+      wrapWidth,
+      isPlaceholder ? 0 : this.input.cursorPos
+    );
     const compactDraft = this.shouldUseCompactDraft(this.input.value, wrapped.lines.length, isPlaceholder);
+    const maxVis = this.maxVisibleInputLines();
 
-    const visibleCount = compactDraft ? 1 : Math.min(5, wrapped.lines.length);
+    // 向下扩展：可见行数 = min(内容行, 终端可容纳)
+    const visibleCount = compactDraft ? 1 : Math.min(maxVis, Math.max(1, wrapped.lines.length));
     if (wrapped.cursorRow < this.inputStartRow) {
       this.inputStartRow = wrapped.cursorRow;
-    } else if (wrapped.cursorRow >= this.inputStartRow + 5) {
-      this.inputStartRow = wrapped.cursorRow - 4;
+    } else if (wrapped.cursorRow >= this.inputStartRow + visibleCount) {
+      this.inputStartRow = wrapped.cursorRow - visibleCount + 1;
     }
     if (compactDraft) {
       this.inputStartRow = 0;
     } else {
-      this.inputStartRow = Math.max(0, Math.min(this.inputStartRow, wrapped.lines.length - visibleCount));
+      this.inputStartRow = Math.max(
+        0,
+        Math.min(this.inputStartRow, Math.max(0, wrapped.lines.length - visibleCount))
+      );
     }
 
     const visibleLines = compactDraft
@@ -1378,6 +1634,13 @@ export class StreamUI {
 
   showPrompt(): void {
     if (!this.running) return;
+    // 任务未结束禁止 showPrompt（中途叠空输入框的主因之一）
+    if (this.agentBusy && !this.overlay) return;
+    // slash 缓冲先整块 Markdown 渲染再恢复输入框
+    if (this.slashMdBuffer.length > 0) {
+      this.flushSlashMarkdown();
+      this.slashOutputActive = false;
+    }
     // 浮层（切换器）占用输入槽时禁止再叠一份输入框
     if (this.overlay) {
       this.streamActive = false;
@@ -1427,8 +1690,8 @@ export class StreamUI {
     process.stdin.setEncoding("utf8");
 
     this.resizeHandler = () => {
-      // 任务流式期禁止；输入态才重绘
-      if (this.running && !this.streamActive) {
+      // 任务忙/流式期禁止；输入态才重绘
+      if (this.running && !this.agentBusy && !this.streamActive) {
         this.redrawInput();
       }
     };
@@ -1669,6 +1932,7 @@ export class StreamUI {
           this.focusPromptFromScrollback("输入焦点");
         } else if (ch >= " " || ch === "\t") {
           partial = "";
+          // 审批等选项面：取消字母快捷键，仅 ↑/↓ + Enter；可打印键一律吞掉
           // 斜杠切换器可键入过滤；其它浮层吞掉可打印键
           if (this.overlay && !(this.overlay.kind === "options" && this.overlay.filterable)) {
             return;
@@ -2384,6 +2648,8 @@ export class StreamUI {
   private closeOverlay(hint?: string, restoreJump = true): void {
     if (!this.overlay) return;
     const wasOptions = this.overlay.kind === "options";
+    const onDismiss =
+      wasOptions && this.overlay.kind === "options" ? this.overlay.onDismiss : undefined;
     if (this.overlay.blockLines > 0) {
       this.eraseOverlayBlock();
     } else {
@@ -2403,6 +2669,14 @@ export class StreamUI {
     if (wasOptions && restoreJump) {
       if (this.input.value === "/" || this.input.value.trim() === "") {
         this.input.clear();
+      }
+      // 取消路径：通知审批等 Promise 调用方（确认路径 restoreJump=false，不触发）
+      if (onDismiss) {
+        try {
+          onDismiss();
+        } catch {
+          // ignore dismiss handler errors
+        }
       }
     }
 
@@ -2428,6 +2702,16 @@ export class StreamUI {
     if (output.trim()) {
       this.lastToolOutputBlob = output;
     }
+    // 工具输出若像 Markdown（表格/标题/列表），走终端渲染
+    if (looksLikeMarkdown(output) && output.split("\n").length <= 80) {
+      const width = process.stdout.columns || 100;
+      const mdWidth = Math.max(36, width - 6);
+      const mdLines = formatMarkdownForTerminal(output, { width: mdWidth });
+      for (const line of mdLines) {
+        process.stdout.write("  " + line + "\n");
+      }
+      return;
+    }
     const card = formatToolOutputCard(output, {
       expand: this.expandLongToolOutput,
       maxTop: 8,
@@ -2444,6 +2728,36 @@ export class StreamUI {
     if (chunks.length > 0) {
       process.stdout.write(chunks.join(""));
     }
+  }
+
+  /**
+   * 统一 Markdown → 终端行输出（thinking / slash / output / final 共用）。
+   */
+  private writeMarkdownBlock(
+    text: string,
+    options: { roleHeader?: boolean; dimEmpty?: boolean } = {}
+  ): void {
+    const raw = String(text ?? "");
+    if (!raw.trim()) {
+      if (options.dimEmpty) process.stdout.write(DIM("(空)") + "\n");
+      return;
+    }
+    const width = process.stdout.columns || 100;
+    const mdWidth = Math.max(40, width - 4);
+    if (options.roleHeader) {
+      process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
+    }
+    const mdLines = formatMarkdownForTerminal(raw, { width: mdWidth });
+    for (const line of mdLines) {
+      process.stdout.write(line + "\n");
+    }
+  }
+
+  private flushSlashMarkdown(): void {
+    if (this.slashMdBuffer.length === 0) return;
+    const text = this.slashMdBuffer.join("\n");
+    this.slashMdBuffer = [];
+    this.writeMarkdownBlock(text);
   }
 
   // ── 事件输出（全部 append，不清屏） ────────────────
@@ -2495,14 +2809,10 @@ export class StreamUI {
   appendThinking(text: string): void {
     this.ensureStreamMode();
     this.clearProgressLine();
-    const lines = text.split("\n").filter((l) => l.trim());
-    if (lines.length === 0) return;
-    process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
-    process.stdout.write(lines[0]);
-    for (let i = 1; i < lines.length; i++) {
-      process.stdout.write("\n" + lines[i]);
-    }
-    this.scrollbackViewport.appendAssistant(lines.join("\n"));
+    const raw = String(text ?? "").trim();
+    if (!raw) return;
+    this.writeMarkdownBlock(raw, { roleHeader: true });
+    this.scrollbackViewport.appendAssistant(raw);
   }
 
   appendCogitated(durationMs: number): void {
@@ -2522,15 +2832,25 @@ export class StreamUI {
 
   appendOutput(text: string): void {
     this.ensureStreamMode();
-    const lines = text.split("\n");
-    for (const line of lines) {
-      process.stdout.write(line.trim() ? "\n" + S.b("› ") + line : "\n");
+    const raw = String(text ?? "");
+    if (!raw.trim()) {
+      process.stdout.write("\n");
+      return;
     }
-    this.scrollbackViewport.appendAssistant(text);
+    // 短状态行不走完整 MD；多行/Markdown 统一渲染
+    if (!looksLikeMarkdown(raw) && raw.split("\n").length <= 2) {
+      for (const line of raw.split("\n")) {
+        process.stdout.write(line.trim() ? "\n" + S.b("› ") + line : "\n");
+      }
+    } else {
+      process.stdout.write("\n");
+      this.writeMarkdownBlock(raw);
+    }
+    this.scrollbackViewport.appendAssistant(raw);
   }
 
   /**
-   * Slash 多行输出：先擦掉输入框（避免「空框还在 + 正文 + 新框」），再只追加文本。
+   * Slash 多行输出：先擦掉输入框，缓冲行；showPrompt 时整块 Markdown 渲染。
    */
   appendSlashLine(text: string = ""): void {
     if (!this.running) return;
@@ -2545,13 +2865,14 @@ export class StreamUI {
         this.eraseSubmittedInputBlock();
       }
       this.slashOutputActive = true;
+      this.slashMdBuffer = [];
     }
     this.streamActive = true;
     this.promptLive = false;
     if (this.input.value === "/" || this.input.value.trim() === "/") {
       this.input.clear();
     }
-    process.stdout.write(String(text ?? "") + "\n");
+    this.slashMdBuffer.push(String(text ?? ""));
   }
 
   /**
@@ -2561,8 +2882,8 @@ export class StreamUI {
     if (!this.running) return;
     const msg = String(text ?? "").trim();
     if (!msg) return;
-    // 已在 slash 流式输出中：只追加一行
-    if (this.streamActive && !this.promptLive) {
+    // 任务忙 / 流式中：只追加一行
+    if (this.agentBusy || (this.streamActive && !this.promptLive)) {
       process.stdout.write(S.d(msg) + "\n");
       return;
     }
@@ -2737,9 +3058,8 @@ export class StreamUI {
     const hasTable =
       /\|.+\|/.test(text) ||
       mdLines.some((line) => /[┌┬┐├┼┤└┴┘]/.test(line.replace(/\x1b\[[0-9;]*m/g, "")));
-    const maxLines = hasTable ? 100 : 48;
+    const maxLines = hasTable ? 120 : 64;
     for (const line of this.clipReplayLines(mdLines, maxLines)) {
-      // Markdown 渲染已带色；勿再包一层 S.b 以免表格边框/对齐观感变差
       process.stdout.write(line + "\n");
     }
   }
@@ -2747,9 +3067,14 @@ export class StreamUI {
   appendFinal(text: string): void {
     this.ensureStreamMode();
     this.clearProgressLine();
+    // 若仍有 slash 缓冲，先冲刷
+    if (this.slashMdBuffer.length > 0) {
+      this.flushSlashMarkdown();
+      this.slashOutputActive = false;
+    }
     const width = process.stdout.columns || 100;
     const mdWidth = Math.max(40, width - 4);
-    const mdLines = formatMarkdownForTerminal(text, { width: mdWidth });
+    const mdLines = formatMarkdownForTerminal(String(text ?? ""), { width: mdWidth });
     process.stdout.write("\n" + S.p(BOLD(formatRoleHeader("assistant"))) + "  " + S.g(BOLD("结果")) + "\n");
     const box = formatResultHighlight({
       header: "结果",
@@ -2768,6 +3093,7 @@ export class StreamUI {
         process.stdout.write(S.g(line) + "\n");
       }
     }
+    this.scrollbackViewport.appendAssistant(String(text ?? ""));
   }
 
   appendError(text: string): void {

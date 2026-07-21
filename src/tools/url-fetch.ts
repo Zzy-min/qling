@@ -12,14 +12,15 @@ export const urlFetchTool: ToolDefinition = {
   longDescription: `结构化网络请求工具，受 Guard 策略约束。
 
 **主要能力**:
-- 仅允许命中的 URL 前缀
+- 仅允许命中的 URL 前缀（默认 https://）
 - 可拦截私网/本地 IP
-- 可禁用自动重定向
+- 默认跟随重定向（可用 follow_redirects=false 关闭）
 - 输出内容自动脱敏
 
 **注意**:
-- 默认仅允许 https:// 前缀
-- 非 2xx 响应会返回带错误码的失败结果`,
+- 不限定具体业务接口；由任务与用户指定 URL
+- 展示数据时写明来源与时间字段；多源冲突时说明差异，勿编造
+- 非 2xx 可换 URL 重试；HTML 大页优先找更干净的数据接口（若存在）`,
   parameters: {
     type: "object",
     properties: {
@@ -30,7 +31,7 @@ export const urlFetchTool: ToolDefinition = {
       timeout_seconds: { type: "number", description: "Request timeout in seconds (default: 30)" },
       follow_redirects: {
         type: "boolean",
-        description: "Override redirect policy (when guard allows)",
+        description: "Follow HTTP redirects (default true when guard allows)",
       },
     },
     required: ["url"],
@@ -64,13 +65,13 @@ export const urlFetchTool: ToolDefinition = {
     },
     follow_redirects: {
       type: "boolean",
-      description: "是否允许跟随重定向（若 guard 禁止则不可覆盖）",
-      default: false,
+      description: "是否跟随重定向（默认 true；仅当 guard 允许时生效）",
+      default: true,
     },
   },
   examples: [
     'url_fetch url="https://example.com"',
-    'url_fetch url="https://api.example.com/v1" method="POST" body="{\\"x\\":1}"',
+    'url_fetch url="https://api.example.com/v1/data"',
   ],
   scenes: ["web", "data"],
   seeAlso: ["search", "read"],
@@ -125,10 +126,21 @@ export async function runUrlFetch(args: {
   }
 
   const timeoutSeconds = Math.max(1, Math.min(120, Number(args.timeout_seconds ?? 30)));
-  const followRedirects =
-    args.follow_redirects !== undefined
-      ? Boolean(args.follow_redirects) && guard.network.url_fetch.follow_redirects
-      : guard.network.url_fetch.follow_redirects;
+  // guard 开启跟随时：默认跟随。仅当调用方显式 false 且未触发自动重试时才 manual。
+  const guardAllowsFollow = Boolean(guard.network.url_fetch.follow_redirects);
+  let followRedirects =
+    args.follow_redirects === undefined
+      ? guardAllowsFollow
+      : Boolean(args.follow_redirects) && guardAllowsFollow;
+  // 模型常误传 follow_redirects=false；GET 无 body 时若 guard 允许则强制跟随（金融站点 302 常见）
+  if (
+    !followRedirects &&
+    guardAllowsFollow &&
+    method === "GET" &&
+    args.body === undefined
+  ) {
+    followRedirects = true;
+  }
 
   const headers = sanitizeHeaders(args.headers ?? {});
   const body = args.body !== undefined ? String(args.body) : undefined;
@@ -154,19 +166,61 @@ export async function runUrlFetch(args: {
     return toolError("URL_FETCH_REQUEST_FAILED", message);
   }
 
+  // 仍 manual 且遇到 302：若 guard 允许，自动再跟一次（带 Location 策略校验）
   if (!followRedirects && isRedirect(response.status)) {
-    await appendGuardAudit(guard, {
-      tool: "url_fetch",
-      action: "deny",
-      category: "network",
-      target: target.toString(),
-      status: response.status,
-      reason: "redirect blocked by policy",
-    });
-    return toolError(
-      "URL_FETCH_REDIRECT_BLOCKED",
-      `redirect blocked by policy (status=${response.status}, location=${response.headers.get("location") ?? ""})`
-    );
+    const location = response.headers.get("location") ?? "";
+    if (guardAllowsFollow && location) {
+      try {
+        const next = new URL(location, target);
+        const nextDecision = await checkUrlFetchPolicy(next, guard);
+        if (nextDecision.allowed) {
+          response = await fetch(next.toString(), {
+            method,
+            headers,
+            redirect: "follow",
+            signal: AbortSignal.timeout(timeoutSeconds * 1000),
+          });
+          await appendGuardAudit(guard, {
+            tool: "url_fetch",
+            action: "allow",
+            category: "network",
+            target: target.toString(),
+            status: response.status,
+            reason: `auto-followed redirect → ${next.toString()}`,
+          });
+        } else {
+          await appendGuardAudit(guard, {
+            tool: "url_fetch",
+            action: "deny",
+            category: "network",
+            target: target.toString(),
+            status: response.status,
+            reason: `redirect blocked: ${nextDecision.reason}`,
+          });
+          return toolError(
+            "URL_FETCH_REDIRECT_BLOCKED",
+            `redirect blocked by policy (status=${response.status}, location=${location}, reason=${nextDecision.reason})`
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return toolError("URL_FETCH_REDIRECT_FOLLOW_FAILED", message);
+      }
+    } else {
+      await appendGuardAudit(guard, {
+        tool: "url_fetch",
+        action: "deny",
+        category: "network",
+        target: target.toString(),
+        status: response.status,
+        reason: "redirect blocked by policy",
+      });
+      return toolError(
+        "URL_FETCH_REDIRECT_BLOCKED",
+        `redirect blocked by policy (status=${response.status}, location=${location}). ` +
+          `Tip: use follow_redirects=true, or fetch the final Location URL directly`
+      );
+    }
   }
 
   const contentType = response.headers.get("content-type") ?? "";

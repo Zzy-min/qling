@@ -304,42 +304,60 @@ export async function executePreparedTools(
       try {
         result = await deps.pipeline.execute(tc, (t) => dispatch(t));
       } catch (err) {
-        if (err instanceof ApprovalRequiredError && deps.channel) {
-          if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
-            await deps.workflowRuntime.awaitApproval();
-          }
-          const approvalResponse = await deps.approvalGate.requestApproval(
-            {
-              id: err.toolCallId,
-              toolName: err.toolName,
-              arguments: tc.arguments as Record<string, unknown>,
-              reason: err.reasons.join("; "),
-              timestamp: Date.now(),
-            },
-            deps.channel
-          );
-          if (approvalResponse.decision === "allow") {
-            try {
-              const { getPermissionGrantStore } = await import("../guard/permission-grants.js");
-              getPermissionGrantStore().remember(tc.name, {
-                reason: "user approval",
-              });
-            } catch {
-              // grant 失败不阻断执行
-            }
-            result = await dispatch(tc);
-          } else {
+        if (err instanceof ApprovalRequiredError) {
+          if (!deps.channel) {
             result = {
               tool_call_id: tc.id,
-              output: "[Approval Denied] " + err.reasons.join("; "),
+              output:
+                "[Approval Channel Missing] 需要确认工具 " +
+                err.toolName +
+                "，但当前运行模式未挂载审批通道（chat 应使用 TuiChannel；run 应使用 Console/Telegram/Slack）。原因: " +
+                err.reasons.join("; "),
               is_error: true,
               error: {
-                code: "APPROVAL_DENIED",
-                message: "User denied tool execution",
+                code: "APPROVAL_CHANNEL_MISSING",
+                message: "No approval channel configured for ask decision",
                 category: "permission",
               },
             };
             turnToolFailures++;
+          } else {
+            if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
+              await deps.workflowRuntime.awaitApproval();
+            }
+            const approvalResponse = await deps.approvalGate.requestApproval(
+              {
+                id: err.toolCallId,
+                toolName: err.toolName,
+                arguments: tc.arguments as Record<string, unknown>,
+                reason: err.reasons.join("; "),
+                timestamp: Date.now(),
+              },
+              deps.channel
+            );
+            if (approvalResponse.decision === "allow") {
+              try {
+                const { getPermissionGrantStore } = await import("../guard/permission-grants.js");
+                getPermissionGrantStore().remember(tc.name, {
+                  reason: "user approval",
+                });
+              } catch {
+                // grant 失败不阻断执行
+              }
+              result = await dispatch(tc);
+            } else {
+              result = {
+                tool_call_id: tc.id,
+                output: "[Approval Denied] " + err.reasons.join("; "),
+                is_error: true,
+                error: {
+                  code: "APPROVAL_DENIED",
+                  message: "User denied tool execution",
+                  category: "permission",
+                },
+              };
+              turnToolFailures++;
+            }
           }
         } else {
           result = {

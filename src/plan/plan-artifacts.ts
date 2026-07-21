@@ -116,9 +116,37 @@ export async function readLatestPlanFile(
   return { path: top.path, content };
 }
 
-/** 注入 system 的短约束（权限仍由 Hook 强制；此处不灌长文案） */
+/**
+ * Plan Mode 系统附加约束（与 Hook 权限双保险）。
+ * 目标：模型必须先写计划文件，禁止在 plan 内直接实施/改业务代码。
+ */
 export function buildPlanModeSystemAddon(): string {
-  return "Plan mode: no bash/subtask/browser; write/patch only under .qling/plans/ or docs/superpowers/plans/.";
+  return `【Plan Mode — 强制规划，禁止直接执行】
+
+你当前处于 **Plan Mode（只读规划）**，不是 Agent 实施模式。
+
+## 必须做
+1. **只产出计划**：阅读/搜索代码与资料，形成可执行方案。
+2. **必须落盘计划文件**：用 write 写入以下之一（相对工作区）：
+   - \`.qling/plans/<时间戳-标题>.md\`
+   - \`docs/superpowers/plans/<时间戳-标题>.md\`
+3. 计划内容至少包含：目标与边界、推荐方案、关键文件路径、步骤拆解、验证方式、风险。
+4. 写完计划后 **停止**，用简短中文告知用户：计划路径 +「请用 /plan approve 审批后实施」。
+5. 若信息不足：先用 read/search 补齐，再写计划；仍不足则在计划中列出待确认问题。
+
+## 禁止做
+1. **禁止直接实施**：不得改业务代码、不得跑构建/测试/安装、不得 bash/subtask/browser。
+2. **禁止口头计划代替落盘**：最终交付物必须是计划目录下的 .md 文件。
+3. **禁止「先改一点试试」**：任何业务写操作会被拒绝；被拒绝后应回头写计划，而不是反复尝试执行类工具。
+4. write/patch **只能**写计划目录；写其它路径会被拒绝。
+
+## 权限内可用工具
+- 允许：read、search、todo、code_symbols、lsp、write/patch（仅计划目录）、skill（只读知识）
+- 禁止：bash、subtask、browser_fetch、browser_act、bg_kill、业务目录的 write/patch
+
+## 退出
+- 用户执行 \`/plan approve\` 后才会退出 Plan Mode 并进入实施。
+- 在此之前你的唯一交付是：**计划文件 + 简要说明**。`;
 }
 
 export function buildImplementPromptFromPlan(planPath: string, planBody: string): string {

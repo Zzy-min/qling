@@ -347,7 +347,8 @@ export function buildDefaultConfig(): QlingConfig {
         url_fetch: {
           allowed_url_prefixes: ["https://"],
           deny_private_ips: true,
-          follow_redirects: false,
+          // 默认跟随跳转：金融/门户站点 HTML 常 302；仍受前缀白名单与私网拦截约束
+          follow_redirects: true,
         },
       },
       redaction: {

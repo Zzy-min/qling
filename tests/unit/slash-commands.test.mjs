@@ -159,7 +159,7 @@ test("slash plan queues a normal planning prompt through immediate prompt path",
   assert.equal(await handleSlashCommand("/plan 修复认证失败", ctx), true);
   assert.equal(planMode, true);
   assert.match(prompt, /修复认证失败/);
-  assert.match(prompt, /Plan mode|分步实施计划/);
+  assert.match(prompt, /Plan Mode|完整计划/);
   assert.match(lines.join("\n"), /Mode:\s*plan/);
 });
 

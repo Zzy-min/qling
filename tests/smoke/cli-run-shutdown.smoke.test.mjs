@@ -210,9 +210,9 @@ test("cli run smoke: --json auto-denies console approval without corrupting stdo
               role: "assistant",
               content: "",
               tool_calls: [{
-                id: "tc-headless-read",
+                id: "tc-headless-bash",
                 type: "function",
-                function: { name: "read", arguments: JSON.stringify({ path: "package.json" }) },
+                function: { name: "bash", arguments: JSON.stringify({ command: "echo approval-check" }) },
               }],
             }
           : { role: "assistant", content: "approval-handled", tool_calls: [] };
@@ -241,7 +241,7 @@ test("cli run smoke: --json auto-denies console approval without corrupting stdo
     [
       ENTRY,
       "run",
-      "read package.json",
+      "run a command that requires approval",
       "--json",
       "--endpoint",
       `http://127.0.0.1:${address.port}`,

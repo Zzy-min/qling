@@ -4,9 +4,31 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { PermissionMatrix } from "../../dist/guard/permissions.js";
+import {
+  PermissionMatrix,
+  buildSafeAutoAllowRules,
+} from "../../dist/guard/permissions.js";
 
 describe("PermissionMatrix", () => {
+  it("safe auto-allow rules keep todo/read under default ask", () => {
+    const matrix = new PermissionMatrix("ask", buildSafeAutoAllowRules());
+    assert.equal(matrix.evaluate("todo").decision, "allow");
+    assert.equal(matrix.evaluate("read").decision, "allow");
+    assert.equal(matrix.evaluate("search").decision, "allow");
+    assert.equal(matrix.evaluate("bash").decision, "ask");
+    assert.equal(matrix.evaluate("write").decision, "ask");
+    assert.equal(matrix.evaluate("url_fetch").decision, "ask");
+  });
+
+  it("user deny beats safe auto-allow when listed first", () => {
+    const matrix = new PermissionMatrix("ask", [
+      { tool_pattern: "todo", decision: "deny", reason: "user ban" },
+      ...buildSafeAutoAllowRules(),
+    ]);
+    assert.equal(matrix.evaluate("todo").decision, "deny");
+    assert.equal(matrix.evaluate("read").decision, "allow");
+  });
+
   it("should return default allow when no rules", () => {
     const matrix = new PermissionMatrix("allow", []);
     const result = matrix.evaluate("bash");

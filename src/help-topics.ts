@@ -49,7 +49,7 @@ const TOPICS: HelpTopic[] = [
   {
     id: "plan",
     title: "Plan 模式（Grok 三态之一）",
-    summary: "只读规划；write 仅限计划目录；/plan approve 后回 normal 并实施。",
+    summary: "只读规划；write 仅限计划目录；/plan approve 打开审批面（a 实施 / s 改 / q 退出）。",
     aliases: ["plan", "/plan"],
     slashUsage: "/plan [on|off|status|list|approve|description]",
     cliUsage: "仅 slash：在当前交互会话中使用",

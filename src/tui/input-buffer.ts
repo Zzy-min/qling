@@ -21,8 +21,12 @@ export class InputBuffer {
   }
 
   insertChar(ch: string): void {
+    // 钳制：防止异常 cursorPos 导致插入到「字中间」且显示偏移
+    if (this.cursorPos < 0) this.cursorPos = 0;
+    if (this.cursorPos > this.value.length) this.cursorPos = this.value.length;
     this.value = this.value.slice(0, this.cursorPos) + ch + this.value.slice(this.cursorPos);
     this.cursorPos += ch.length;
+    if (this.cursorPos > this.value.length) this.cursorPos = this.value.length;
   }
 
   insertNewline(): void {
