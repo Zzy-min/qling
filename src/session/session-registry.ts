@@ -79,7 +79,6 @@ export class SessionRegistry {
   }
 
   async save(snapshot: Omit<SavedSessionSnapshot, "version">): Promise<string> {
-    await fs.mkdir(this.sessionsDir, { recursive: true });
     const normalized = this.normalizeSnapshot(snapshot);
     const filePath = this.getSnapshotPath(normalized.name);
     await atomicWriteJson(filePath, normalized, { backup: true });
