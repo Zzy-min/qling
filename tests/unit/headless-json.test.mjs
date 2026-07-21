@@ -84,3 +84,25 @@ test("headless json v1 adds optional cost completeness fields", () => {
   assert.equal(event.usage.costIsPartial, false);
   assert.equal(event.usage.usageIsIncomplete, false);
 });
+
+test("headless json marks paused and exhausted outcomes as incomplete", () => {
+  const stats = {
+    sessionId: "s",
+    turnCount: 2,
+    tokens: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    tokenSource: "unknown",
+  };
+  for (const status of ["paused", "exhausted"]) {
+    const event = JSON.parse(formatHeadlessResult({
+      status,
+      runId: "run-1",
+      text: `${status} text`,
+      ...(status === "exhausted" ? { iterations: 2 } : { recovery: null }),
+    }, stats));
+    assert.equal(event.schemaVersion, 1);
+    assert.equal(event.ok, false);
+    assert.equal(event.outcome, status);
+  }
+});

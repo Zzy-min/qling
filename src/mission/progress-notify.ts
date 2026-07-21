@@ -70,6 +70,7 @@ const STATUS_EMOJI: Record<MissionStatus, string> = {
   running: "🚀",
   blocked: "🛑",
   paused: "⏸️",
+  exhausted: "⚠️",
   succeeded: "✅",
   failed: "❌",
   canceled: "🚫",

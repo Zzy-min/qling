@@ -52,3 +52,30 @@ test("applySessionSnapshot resets token counters and returns summary", () => {
 test("defaultSessionSaveName is stable prefix", () => {
   assert.match(defaultSessionSaveName(new Date("2026-07-14T12:00:00.000Z")), /^session-2026-07-14T/);
 });
+
+test("session snapshots preserve paused run and recovery identity", () => {
+  const recoveryState = {
+    runId: "run-paused",
+    sessionId: "sid-paused",
+    originalTask: "fix",
+    status: "paused",
+    strategyAttempts: 1,
+    remainingStrategyAttempts: 3,
+    attemptedStrategies: ["retry_once"],
+  };
+  const snapshot = buildSessionSnapshot("paused", {
+    sessionId: "sid-paused",
+    sessionCreatedAt: "2026-01-01T00:00:00.000Z",
+    messages: [],
+    turnCount: 1,
+    sessionTokens: 2,
+    compactionCount: 0,
+    workspaceDir: null,
+    activeRun: { runId: "run-paused", sessionId: "sid-paused", originalTask: "fix", startedAt: 1 },
+    recoveryState,
+  });
+  const patch = applySessionSnapshot({ version: 1, ...snapshot });
+  assert.equal(patch.activeRun?.runId, "run-paused");
+  assert.equal(patch.recoveryState?.status, "paused");
+  assert.deepEqual(patch.recoveryState?.attemptedStrategies, ["retry_once"]);
+});

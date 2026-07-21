@@ -1,5 +1,6 @@
 import type { ExecutionEvent } from "../execution/types.js";
 import type { TokenUsageSource } from "../token-usage.js";
+import type { RunOutcome } from "../execution/types.js";
 
 export const HEADLESS_JSON_SCHEMA_VERSION = 1;
 
@@ -27,14 +28,27 @@ export function formatHeadlessExecutionEvent(event: ExecutionEvent): string {
   });
 }
 
-export function formatHeadlessResult(result: string, stats: HeadlessSessionStats): string {
+export function formatHeadlessResult(result: string | RunOutcome, stats: HeadlessSessionStats): string {
+  const outcome = typeof result === "string"
+    ? { status: "succeeded" as const, text: result }
+    : result;
   return JSON.stringify({
     schemaVersion: HEADLESS_JSON_SCHEMA_VERSION,
     type: "result",
     timestamp: timestamp(),
-    ok: true,
+    ok: outcome.status === "succeeded",
     mode: "run",
-    result,
+    outcome: outcome.status,
+    result: outcome.text,
+    ...(outcome.status === "paused" && outcome.recovery
+      ? {
+          recovery: {
+            status: outcome.recovery.status,
+            remainingStrategyAttempts: outcome.recovery.remainingStrategyAttempts,
+            currentStrategy: outcome.recovery.currentStrategy,
+          },
+        }
+      : {}),
     session: {
       id: stats.sessionId,
       turnCount: stats.turnCount,

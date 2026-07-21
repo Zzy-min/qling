@@ -129,6 +129,13 @@ export async function runAdvisoryVerification(options: {
 
   try {
     const lastResult = JSON.parse(toolMsgs[toolMsgs.length - 1].content!);
+    if (lastResult?.is_error === true) {
+      const details = String(lastResult.error?.message ?? lastResult.output ?? "tool execution failed");
+      console.error("❌ 旁路验证(非恢复驱动): FAIL");
+      console.error("   详情: " + details);
+      options.emit("verification", "FAIL", details);
+      return;
+    }
     const vr = await options.verifier.verify(
       "文件操作/Bash执行",
       "操作成功完成",

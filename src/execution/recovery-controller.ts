@@ -82,6 +82,18 @@ export class RecoveryController {
     };
   }
 
+  restoreState(state: RecoveryState | null | undefined): void {
+    this.fingerprintCounts.clear();
+    this.state = state
+      ? {
+          ...state,
+          attemptedStrategies: [...state.attemptedStrategies],
+          lastFailure: state.lastFailure ? { ...state.lastFailure } : undefined,
+          lastProgress: state.lastProgress ? { ...state.lastProgress } : undefined,
+        }
+      : undefined;
+  }
+
   applyAction(action: RecoveryAction): RecoveryState {
     if (!this.state) throw new Error("recovery run has not started");
     if (action === "cancel") {

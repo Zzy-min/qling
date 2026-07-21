@@ -55,6 +55,7 @@ function summaryFor(tasks: DashboardTask[]): DashboardSnapshot["summary"] {
     running: 0,
     blocked: 0,
     paused: 0,
+    exhausted: 0,
     succeeded: 0,
     failed: 0,
     canceled: 0,

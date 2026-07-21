@@ -64,7 +64,7 @@ import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
-import type { ExecutionEvent, RecoveryState } from "./execution/types.js";
+import type { ExecutionEvent, RecoveryState, RunOutcome } from "./execution/types.js";
 import { UsageLedger } from "./usage-ledger.js";
 import type { UsageLedgerSnapshot } from "./usage-ledger.js";
 import { installJsonHooks, type JsonHookRunner } from "./hooks/json-hooks.js";
@@ -87,6 +87,7 @@ import {
 import {
   runInnerIterationLoop,
   runOuterAgentLoop,
+  type InnerLoopOutcome,
   type TokenCounters,
 } from "./agent/main-loop.js";
 
@@ -705,6 +706,22 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   async run(): Promise<string> {
+    const outcome = await this.runDetailed();
+    if (outcome.status === "failed" || outcome.status === "canceled") {
+      const error = new Error(outcome.text) as Error & { code?: string };
+      if (outcome.status === "canceled") {
+        error.name = "AgentRunCanceledError";
+        error.code = "RUN_CANCELED";
+      } else {
+        error.name = "AgentRunFailedError";
+        error.code = "RUN_FAILED";
+      }
+      throw error;
+    }
+    return outcome.text;
+  }
+
+  async runDetailed(): Promise<RunOutcome> {
     await this.initPromise;
     if (this.runAbortController) throw new Error("agent run already in progress");
     const controller = new AbortController();
@@ -739,7 +756,7 @@ export class AgentLoop extends AgentEventEmitter {
     return true;
   }
 
-  private async executeRunInternal(): Promise<string> {
+  private async executeRunInternal(): Promise<InnerLoopOutcome> {
     await this.initPromise;
     const counters: TokenCounters = {
       sessionTokens: this.sessionTokens,
@@ -1225,6 +1242,8 @@ export class AgentLoop extends AgentEventEmitter {
       sessionTokens: this.sessionTokens,
       compactionCount: this.compactionCount,
       workspaceDir: this.getWorkspaceDir(),
+      activeRun: this.getActiveRun(),
+      recoveryState: this.getRecoveryState(),
     });
   }
 
@@ -1237,6 +1256,8 @@ export class AgentLoop extends AgentEventEmitter {
     this.sessionCompletionTokens = patch.sessionCompletionTokens;
     this.tokenUsageSource = patch.tokenUsageSource;
     this.compactionCount = patch.compactionCount;
+    this.activeRun = patch.activeRun;
+    this.recoveryController.restoreState(patch.recoveryState);
     this.sessionId = patch.sessionId;
     this.sessionCreatedAt = patch.sessionCreatedAt;
     this.pipeline.setSessionId(this.sessionId);

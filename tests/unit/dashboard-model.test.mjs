@@ -80,3 +80,7 @@ test("mission actions fail closed for retry without daemon", () => {
   assert.deepEqual(getMissionActions("paused", false), ["resume", "cancel"]);
   assert.deepEqual(getMissionActions("running", false), ["pause", "cancel"]);
 });
+
+test("dashboard exposes exhausted missions as retryable incomplete work", () => {
+  assert.deepEqual(getMissionActions("exhausted", true), ["retry"]);
+});

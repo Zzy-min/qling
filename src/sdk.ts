@@ -8,6 +8,7 @@
 // ============================================================
 
 export { AgentLoop, type LlmSessionPatch } from "./agent-loop.js";
+export type { RunOutcome } from "./execution/types.js";
 export {
   loadQlingConfig,
   applyConfigToProcessEnv,

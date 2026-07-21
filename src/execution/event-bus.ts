@@ -34,7 +34,7 @@ export class ExecutionEventBus {
     });
   }
 
-  completeRun(runId: string, status: Extract<ExecutionRunStatus, "succeeded" | "failed" | "canceled">): ExecutionEvent | undefined {
+  completeRun(runId: string, status: Extract<ExecutionRunStatus, "succeeded" | "exhausted" | "failed" | "canceled">): ExecutionEvent | undefined {
     if (!this.startedRuns.has(runId) || this.terminalRuns.has(runId)) return undefined;
     this.terminalRuns.add(runId);
     return this.emit({ runId, sessionId: this.runSessions.get(runId), type: "run_completed", status });
@@ -45,7 +45,7 @@ export class ExecutionEventBus {
     return this.emit({ ...input, type: "attempt_started", status: "running" });
   }
 
-  completeAttempt(runId: string, status: Extract<ExecutionRunStatus, "succeeded" | "failed" | "canceled" | "recovering">): ExecutionEvent | undefined {
+  completeAttempt(runId: string, status: Extract<ExecutionRunStatus, "succeeded" | "exhausted" | "failed" | "canceled" | "recovering">): ExecutionEvent | undefined {
     const attemptId = this.activeAttemptByRun.get(runId);
     if (!attemptId || this.terminalAttempts.has(attemptId)) return undefined;
     this.terminalAttempts.add(attemptId);

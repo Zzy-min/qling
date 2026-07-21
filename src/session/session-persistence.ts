@@ -4,7 +4,8 @@
 // ============================================================
 
 import type { Message } from "../types.js";
-import type { SavedSessionSnapshot, SavedSessionSummary } from "./session-registry.js";
+import type { SavedActiveRun, SavedSessionSnapshot, SavedSessionSummary } from "./session-registry.js";
+import type { RecoveryState } from "../execution/types.js";
 import { deriveSessionTitle } from "./session-title.js";
 
 export interface SessionLiveFields {
@@ -15,6 +16,8 @@ export interface SessionLiveFields {
   sessionTokens: number;
   compactionCount: number;
   workspaceDir: string | null;
+  activeRun?: SavedActiveRun | null;
+  recoveryState?: RecoveryState | null;
 }
 
 /** Fields AgentLoop should write back after restore. */
@@ -30,6 +33,8 @@ export interface SessionRestorePatch {
   sessionCreatedAt: string;
   workspaceDir: string | null;
   summary: SavedSessionSummary;
+  activeRun: SavedActiveRun | null;
+  recoveryState: RecoveryState | null;
 }
 
 export function buildSessionSnapshot(
@@ -46,6 +51,10 @@ export function buildSessionSnapshot(
     turnCount: fields.turnCount,
     sessionTokens: fields.sessionTokens,
     compactionCount: fields.compactionCount,
+    activeRun: fields.activeRun ? { ...fields.activeRun } : undefined,
+    recoveryState: fields.recoveryState
+      ? { ...fields.recoveryState, attemptedStrategies: [...fields.recoveryState.attemptedStrategies] }
+      : undefined,
   };
 }
 
@@ -61,6 +70,10 @@ export function applySessionSnapshot(snapshot: SavedSessionSnapshot): SessionRes
     sessionId: snapshot.sessionId,
     sessionCreatedAt: snapshot.createdAt,
     workspaceDir: snapshot.workspaceDir,
+    activeRun: snapshot.activeRun ? { ...snapshot.activeRun } : null,
+    recoveryState: snapshot.recoveryState
+      ? { ...snapshot.recoveryState, attemptedStrategies: [...snapshot.recoveryState.attemptedStrategies] }
+      : null,
     summary: {
       name: snapshot.name,
       title: deriveSessionTitle(snapshot.messages) || snapshot.name,

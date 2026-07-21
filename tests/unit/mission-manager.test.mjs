@@ -88,3 +88,15 @@ test("mission manager: retry clones a terminal mission into a new queued mission
     assert.equal(retriedLogs[0].data.to, "queued");
   });
 });
+
+test("mission manager: exhausted is terminal and retryable", async () => {
+  await withTempDir(async (stateDir) => {
+    const manager = new MissionManager(stateDir);
+    await manager.init();
+    const mission = await manager.createMission("Exhausted", "never finished", "session-test");
+    await manager.updateStatus(mission.id, "exhausted");
+    assert.ok(manager.getMission(mission.id).metrics.endTime);
+    const retry = await manager.retryMission(mission.id);
+    assert.equal(retry.status, "queued");
+  });
+});

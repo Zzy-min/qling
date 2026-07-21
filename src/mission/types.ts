@@ -11,6 +11,7 @@ export type MissionStatus =
   | "running"
   | "blocked"
   | "paused"
+  | "exhausted"
   | "succeeded"
   | "failed"
   | "canceled";

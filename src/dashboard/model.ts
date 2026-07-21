@@ -12,6 +12,7 @@ const ACTIVE_RANK: Record<DashboardTaskStatus, number> = {
   blocked: 1,
   queued: 2,
   paused: 3,
+  exhausted: 9,
   failed: 10,
   canceled: 11,
   succeeded: 12,
@@ -30,7 +31,7 @@ export function getMissionActions(
     return ["pause", "cancel"];
   }
   if (status === "paused") return ["resume", "cancel"];
-  if (daemonHealthy && ["succeeded", "failed", "canceled"].includes(status)) {
+  if (daemonHealthy && ["succeeded", "exhausted", "failed", "canceled"].includes(status)) {
     return ["retry"];
   }
   return [];

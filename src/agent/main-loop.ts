@@ -19,7 +19,7 @@ import type { ContextCompactor } from "../context-compactor.js";
 import type { VerificationAgent } from "../pipeline/verification.js";
 import type { ExecutionEventBus } from "../execution/event-bus.js";
 import type { RecoveryController } from "../execution/recovery-controller.js";
-import type { FailureClassification, RecoveryState } from "../execution/types.js";
+import type { FailureClassification, RecoveryState, RunOutcome } from "../execution/types.js";
 import { classifyFailure } from "../execution/failure-classifier.js";
 import {
   executePreparedTools,
@@ -205,7 +205,12 @@ export interface InnerLoopHost {
  * Inner maxIterations loop: compact → prompt → chat → tools → verify.
  * Mutates host.messages / counters / turnCount in place.
  */
-export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string> {
+export type InnerLoopOutcome =
+  | { status: "succeeded"; text: string }
+  | { status: "paused"; text: string }
+  | { status: "exhausted"; text: string; iterations: number };
+
+export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerLoopOutcome> {
   const toolSignatureCounts = new Map<string, number>();
   let autoCompactSuppressed = false;
 
@@ -295,7 +300,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
       host.toolCallTotal = totals.toolCallTotal;
       host.toolFailureTotal = totals.toolFailureTotal;
       host.executionEventBus.completeAttempt(runId, "succeeded");
-      return content;
+      return { status: "succeeded", text: content };
     }
 
     console.error("\n🔧 执行 " + tool_calls.length + " 个工具...\n");
@@ -336,12 +341,12 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
         limit: loop.loopDetected.limit,
         signature: loop.loopDetected.signature,
       });
-      return formatRecoveryPause({
+      return { status: "paused", text: formatRecoveryPause({
         reason: decision.reason,
         next: "检查失败上下文后使用 /recover retry|edit|cancel",
         state: host.getRecoveryState(),
         verificationStagesSummary: "未执行（重复调用守卫先行暂停）",
-      });
+      }) };
     }
     const { turnToolCalls, turnToolFailures } = await executePreparedTools(
       {
@@ -379,7 +384,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
       runId,
     });
     if (verifyOutcome.kind === "pause") {
-      return verifyOutcome.text;
+      return { status: "paused", text: verifyOutcome.text };
     }
     if (verifyOutcome.kind === "recover") {
       host.messages.push({ role: "user", content: verifyOutcome.userMessage });
@@ -418,7 +423,11 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<string
     host.executionEventBus.completeAttempt(runId, "succeeded");
   }
 
-  return "⚠️ 达到最大迭代次数，任务未完成。";
+  return {
+    status: "exhausted",
+    text: "⚠️ 达到最大迭代次数，任务未完成。",
+    iterations: host.maxIterations,
+  };
 }
 
 export interface OuterLoopHost {
@@ -434,7 +443,7 @@ export interface OuterLoopHost {
     failure: FailureClassification,
     strategy?: string
   ) => Promise<void>;
-  executeInner: () => Promise<string>;
+  executeInner: () => Promise<InnerLoopOutcome>;
   isCanceled?: () => boolean;
   setActiveRun: (
     run: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null
@@ -444,7 +453,7 @@ export interface OuterLoopHost {
 /**
  * Outer loop: start run, handle provider transport retries + recovery strategy.
  */
-export async function runOuterAgentLoop(host: OuterLoopHost): Promise<string> {
+export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome> {
   const recoveryState = host.getRecoveryState();
   const resumable = host.activeRun && recoveryState?.status === "recovering";
   const originalTask = resumable
@@ -462,8 +471,9 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<string> {
       startedAt: Date.now(),
     });
     host.recoveryController.startRun({ runId, sessionId: host.sessionId, originalTask });
-    host.executionEventBus.startRun({ runId, sessionId: host.sessionId });
   }
+  // Idempotent in-process, and re-establishes event-bus ownership after daemon restart.
+  host.executionEventBus.startRun({ runId, sessionId: host.sessionId });
 
   let transportAttempts = 0;
   while (true) {
@@ -473,22 +483,26 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<string> {
         host.executionEventBus.completeAttempt(runId, "canceled");
         host.executionEventBus.completeRun(runId, "canceled");
         host.setActiveRun(null);
-        const canceled = new Error("Agent run canceled");
-        canceled.name = "AgentRunCanceledError";
-        throw canceled;
+        return { status: "canceled", runId, text: "Agent run canceled", reason: "user_canceled" };
       }
-      if (host.getRecoveryState()?.status === "paused") return response;
+      if (response.status === "paused" || host.getRecoveryState()?.status === "paused") {
+        return { status: "paused", runId, text: response.text, recovery: host.getRecoveryState() };
+      }
+      if (response.status === "exhausted") {
+        host.executionEventBus.completeAttempt(runId, "exhausted");
+        host.executionEventBus.completeRun(runId, "exhausted");
+        host.setActiveRun(null);
+        return { ...response, runId };
+      }
       host.executionEventBus.completeRun(runId, "succeeded");
       host.setActiveRun(null);
-      return response;
+      return { status: "succeeded", runId, text: response.text };
     } catch (error) {
       if (host.isCanceled?.()) {
         host.executionEventBus.completeAttempt(runId, "canceled");
         host.executionEventBus.completeRun(runId, "canceled");
         host.setActiveRun(null);
-        const canceled = new Error("Agent run canceled");
-        canceled.name = "AgentRunCanceledError";
-        throw canceled;
+        return { status: "canceled", runId, text: "Agent run canceled", reason: "user_canceled" };
       }
       host.executionEventBus.completeAttempt(runId, "failed");
       const failure = classifyFailure(error, { provider: true });
@@ -524,7 +538,17 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<string> {
       });
       host.emit("recovery_paused", state, decision);
       if (decision.action === "pause") {
-        return host.formatRecoveryPause(failure.message, decision.reason);
+        return {
+          status: "paused",
+          runId,
+          text: host.formatRecoveryPause(failure.message, decision.reason),
+          recovery: state,
+        };
+      }
+      if (decision.action === "fail") {
+        host.executionEventBus.completeRun(runId, "failed");
+        host.setActiveRun(null);
+        return { status: "failed", runId, text: failure.message, failure };
       }
       await host.applyRecoveryStrategy(failure, decision.recommendedStrategy);
       host.emit(

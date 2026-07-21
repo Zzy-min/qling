@@ -4,6 +4,7 @@ export type ExecutionRunStatus =
   | "awaiting_approval"
   | "recovering"
   | "paused"
+  | "exhausted"
   | "succeeded"
   | "failed"
   | "canceled";
@@ -82,3 +83,10 @@ export interface RecoveryState {
   lastFailure?: FailureClassification;
   lastProgress?: ProgressSnapshot;
 }
+
+export type RunOutcome =
+  | { status: "succeeded"; runId: string; text: string }
+  | { status: "paused"; runId: string; text: string; recovery: RecoveryState | null }
+  | { status: "exhausted"; runId: string; text: string; iterations: number }
+  | { status: "failed"; runId: string; text: string; failure: FailureClassification }
+  | { status: "canceled"; runId: string; text: string; reason: string };

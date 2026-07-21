@@ -43,7 +43,7 @@ function relativeTime(value?: number): string {
 }
 
 function statusLabel(status: string): string {
-  return ({ running: "运行中", queued: "等待", blocked: "阻塞", paused: "暂停", succeeded: "完成", failed: "失败", canceled: "取消" } as Record<string, string>)[status] ?? status;
+  return ({ running: "运行中", queued: "等待", blocked: "阻塞", paused: "暂停", exhausted: "未完成", succeeded: "完成", failed: "失败", canceled: "取消" } as Record<string, string>)[status] ?? status;
 }
 
 function kindLabel(kind: string): string {

@@ -1385,12 +1385,15 @@ async function main() {
 
     const task = decision.task ?? "";
     agent.addUserMessage(task);
-    const response = await agent.run();
+    const outcome = await agent.runDetailed();
     if (jsonMode) {
-      writeHeadlessLine(formatHeadlessResult(response, agent.getSessionStats()));
+      writeHeadlessLine(formatHeadlessResult(outcome, agent.getSessionStats()));
     } else {
-      console.log(response);
+      console.log(outcome.text);
     }
+    if (outcome.status === "paused" || outcome.status === "exhausted") process.exitCode = 2;
+    else if (outcome.status === "failed") process.exitCode = 1;
+    else if (outcome.status === "canceled") process.exitCode = 130;
   } catch (err: any) {
     const code = err.code || "RUN_FAILED";
     reportError(code, err.message || String(err));

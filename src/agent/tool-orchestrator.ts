@@ -245,44 +245,47 @@ export async function executePreparedTools(
   for (const prepared of preparedCalls) {
     const tc = prepared.call;
     turnToolCalls++;
+    deps.executionEventBus.startTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name });
+    deps.emit("tool_start", tc.name, tc.arguments);
+    deps.knowledgeAdapter.onToolCall(tc);
+    let preflightResult = prepared.immediateResult;
 
-    if (tc.name === "write" || tc.name === "bash") {
+    if (!preflightResult && (tc.name === "write" || tc.name === "bash")) {
       const reflection = await deps.reflectiveThink(tc);
       if (reflection.decision === "block") {
         console.error(`🚨 [内省阻断] ${reflection.reason}`);
-        messages.push({
-          role: "tool",
-          content: JSON.stringify({
-            tool_call_id: tc.id,
-            output: `Error: [REFLECTION_BLOCKED] ${reflection.reason}. This action was deemed too risky.`,
-            is_error: true,
-          }),
+        preflightResult = {
           tool_call_id: tc.id,
-        });
-        turnToolFailures++;
-        continue;
+          output: `Error: [REFLECTION_BLOCKED] ${reflection.reason}. This action was deemed too risky.`,
+          is_error: true,
+          error: {
+            code: "REFLECTION_BLOCKED",
+            message: reflection.reason,
+            category: "guard",
+          },
+        };
       } else if (reflection.decision === "warn") {
         console.error(`💭 [内省警告] ${reflection.reason}`);
       }
     }
 
-    if (process.env.QLING_FEATURES_TOOL_SPEC_BOOST === "true") {
+    if (!preflightResult && process.env.QLING_FEATURES_TOOL_SPEC_BOOST === "true") {
       const def = deps.tools.find((t) => t.name === tc.name);
       if (def) {
         const check = checkToolConsistency(tc, def);
         if (!check.ok) {
-          console.error(`⚠️ [SpecBoost] 检查到幻觉风险: ${tc.name} - ${check.error}`);
-          messages.push({
-            role: "tool",
-            content: JSON.stringify({
-              tool_call_id: tc.id,
-              output: `Error: [TOOL_SPEC_VIOLATION] ${check.error}. Please correct your arguments based on the schema and examples.`,
-              is_error: true,
-            }),
+          const checkError = check.error ?? "tool arguments do not match the specification";
+          console.error(`⚠️ [SpecBoost] 检查到幻觉风险: ${tc.name} - ${checkError}`);
+          preflightResult = {
             tool_call_id: tc.id,
-          });
-          turnToolFailures++;
-          continue;
+            output: `Error: [TOOL_SPEC_VIOLATION] ${checkError}. Please correct your arguments based on the schema and examples.`,
+            is_error: true,
+            error: {
+              code: "TOOL_SPEC_VIOLATION",
+              message: checkError,
+              category: "validation",
+            },
+          };
         }
         if (check.warnings.length > 0) {
           console.warn(`[SpecBoost] 潜在警告: ${check.warnings.join("; ")}`);
@@ -290,17 +293,13 @@ export async function executePreparedTools(
       }
     }
 
-    deps.knowledgeAdapter.onToolCall(tc);
-    deps.executionEventBus.startTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name });
-    deps.emit("tool_start", tc.name, tc.arguments);
-
-    let result: ToolResult = prepared.immediateResult ?? {
+    let result: ToolResult = preflightResult ?? {
       tool_call_id: tc.id,
       output: "",
       is_error: false,
     };
 
-    if (!prepared.immediateResult) {
+    if (!preflightResult) {
       try {
         result = await deps.pipeline.execute(tc, (t) => dispatch(t));
       } catch (err) {
@@ -320,7 +319,6 @@ export async function executePreparedTools(
                 category: "permission",
               },
             };
-            turnToolFailures++;
           } else {
             if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
               await deps.workflowRuntime.awaitApproval();
@@ -356,7 +354,6 @@ export async function executePreparedTools(
                   category: "permission",
                 },
               };
-              turnToolFailures++;
             }
           }
         } else {
@@ -370,11 +367,8 @@ export async function executePreparedTools(
               category: "runtime",
             },
           };
-          turnToolFailures++;
         }
       }
-    } else {
-      turnToolFailures++;
     }
 
     deps.knowledgeAdapter.onToolResult(result, tc.name);
@@ -480,9 +474,10 @@ export async function executePreparedTools(
             category: "guard",
           },
         };
-        turnToolFailures++;
       }
     }
+
+    if (result.is_error) turnToolFailures++;
 
     const preview = result.output.split("\n")[0].slice(0, 80);
     const icon = result.is_error ? "❌" : "✅";

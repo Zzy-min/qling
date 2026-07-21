@@ -10,6 +10,7 @@ import {
   loadVerificationCommand,
   persistVerificationCommand,
   runWriteToolVerification,
+  runAdvisoryVerification,
   stagesSummary,
 } from "../../dist/execution/verification-loop.js";
 import { RecoveryController } from "../../dist/execution/recovery-controller.js";
@@ -17,6 +18,27 @@ import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
 
 test("stagesSummary is honest when empty", () => {
   assert.match(stagesSummary(null), /none|未|none/i);
+});
+
+test("advisory verification treats structured tool errors as FAIL without consulting LLM", async () => {
+  const emitted = [];
+  let verifierCalled = false;
+  await runAdvisoryVerification({
+    messages: [{
+      role: "tool",
+      content: JSON.stringify({ output: "forbidden", is_error: true }),
+      tool_call_id: "tool-1",
+    }],
+    verifier: {
+      verify: async () => {
+        verifierCalled = true;
+        return { verdict: "PASS", details: "wrong", steps: [] };
+      },
+    },
+    emit: (...args) => emitted.push(args),
+  });
+  assert.equal(verifierCalled, false);
+  assert.equal(emitted[0]?.[1], "FAIL");
 });
 
 test("persist and load verification command roundtrip", async () => {

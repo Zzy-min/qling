@@ -63,13 +63,12 @@ test("distillSuccessfulBashPractices records practices for successful bash", () 
   assert.deepEqual(practices[0].cmds, ["npm test"]);
 });
 
-test("outer loop treats a cooperative cancel as terminal instead of recovery", async () => {
+test("outer loop returns a typed canceled outcome instead of recovery", async () => {
   const bus = new ExecutionEventBus();
   const events = [];
   bus.subscribe((event) => events.push(event));
   let activeRun = null;
-  await assert.rejects(
-    runOuterAgentLoop({
+  const outcome = await runOuterAgentLoop({
       sessionId: "cancel-session",
       activeRun,
       messages: [{ role: "user", content: "cancel me" }],
@@ -80,13 +79,84 @@ test("outer loop treats a cooperative cancel as terminal instead of recovery", a
       formatRecoveryPause: () => "paused",
       applyRecoveryStrategy: async () => {},
       setActiveRun: (run) => { activeRun = run; },
-      executeInner: async () => "should not be returned",
+      executeInner: async () => ({ status: "succeeded", text: "should not be returned" }),
       isCanceled: () => true,
-    }),
-    (error) => error?.name === "AgentRunCanceledError",
-  );
+    });
+  assert.equal(outcome.status, "canceled");
   assert.equal(activeRun, null);
   assert.equal(events.at(-1).type, "run_completed");
   assert.equal(events.at(-1).status, "canceled");
   assert.equal(events.some((event) => event.type === "failure"), false);
+});
+
+test("outer loop never promotes exhausted or paused inner outcomes to succeeded", async () => {
+  for (const status of ["exhausted", "paused"]) {
+    const bus = new ExecutionEventBus();
+    const events = [];
+    bus.subscribe((event) => events.push(event));
+    let activeRun = null;
+    const recovery = new RecoveryController();
+    if (status === "paused") {
+      recovery.startRun({ runId: "existing", sessionId: "s", originalTask: "task" });
+      recovery.recordFailure({ category: "permission_denied", message: "denied" }, {});
+    }
+    const outcome = await runOuterAgentLoop({
+      sessionId: "s",
+      activeRun,
+      messages: [{ role: "user", content: "task" }],
+      executionEventBus: bus,
+      recoveryController: recovery,
+      emit: () => {},
+      getRecoveryState: () => status === "paused" ? { status: "paused" } : null,
+      formatRecoveryPause: () => "paused",
+      applyRecoveryStrategy: async () => {},
+      setActiveRun: (run) => { activeRun = run; },
+      executeInner: async () => ({ status, text: `${status} text`, iterations: 2 }),
+      isCanceled: () => false,
+    });
+    assert.equal(outcome.status, status);
+    assert.equal(events.some((event) => event.type === "run_completed" && event.status === "succeeded"), false);
+  }
+});
+
+test("resumed run reuses its runId and registers it with a fresh event bus", async () => {
+  const bus = new ExecutionEventBus();
+  const events = [];
+  bus.subscribe((event) => events.push(event));
+  const recovery = new RecoveryController();
+  recovery.startRun({ runId: "run-original", sessionId: "s", originalTask: "task" });
+  recovery.recordFailure({ category: "permission_denied", message: "denied" }, {});
+  recovery.applyAction("retry");
+  let activeRun = {
+    runId: "run-original",
+    sessionId: "s",
+    originalTask: "task",
+    startedAt: 1,
+  };
+
+  const outcome = await runOuterAgentLoop({
+    sessionId: "s",
+    activeRun,
+    messages: [{ role: "user", content: "task" }],
+    executionEventBus: bus,
+    recoveryController: recovery,
+    emit: () => {},
+    getRecoveryState: () => recovery.getRecoveryState(),
+    formatRecoveryPause: () => "paused",
+    applyRecoveryStrategy: async () => {},
+    setActiveRun: (run) => { activeRun = run; },
+    executeInner: async () => ({ status: "succeeded", text: "done" }),
+    isCanceled: () => false,
+  });
+
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.runId, "run-original");
+  assert.deepEqual(
+    events.filter((event) => event.type === "run_started" || event.type === "run_completed")
+      .map((event) => [event.type, event.runId, event.status]),
+    [
+      ["run_started", "run-original", "running"],
+      ["run_completed", "run-original", "succeeded"],
+    ]
+  );
 });

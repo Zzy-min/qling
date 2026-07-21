@@ -9,6 +9,7 @@ export type DashboardTaskStatus =
   | "running"
   | "blocked"
   | "paused"
+  | "exhausted"
   | "succeeded"
   | "failed"
   | "canceled";

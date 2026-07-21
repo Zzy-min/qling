@@ -112,6 +112,12 @@ async function main() {
           }
           if (action === "resume") {
             const mission = await manager.resumeMission(id, "daemon_api");
+            executeMissionInBackground(mission.id, manager, stateDir, {
+              name: mission.name,
+              description: mission.description,
+              sessionId: mission.sessionId,
+              resume: true,
+            });
             res.end(JSON.stringify({ ok: true, mission }));
             return;
           }
@@ -252,6 +258,7 @@ async function main() {
 async function executeMissionInBackground(id: string, manager: MissionManager, stateDir: string, data: any) {
   const mission = manager.getMission(id);
   if (!mission) return;
+  let agent: AgentLoop | null = null;
 
   try {
     if (mission.status === "paused" || mission.status === "canceled") {
@@ -286,11 +293,17 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
       },
     };
 
-    const agent = new AgentLoop(agentConfig);
+    agent = new AgentLoop(agentConfig);
     await agent.waitForInit();
 
     // v0.5 M3: 状态恢复 (High-fidelity Resume)
-    if (data.checkpoint) {
+    if (data.resume) {
+       const restored = await agent.restoreSession(mission.sessionId);
+       if (!restored) throw new Error(`paused session snapshot not found: ${mission.sessionId}`);
+       if (agent.getRecoveryState()?.status === "paused") {
+         agent.applyRecoveryAction("retry");
+       }
+    } else if (data.checkpoint) {
       console.log(`[qlingd] 正在为使命 ${id} 恢复状态机快照...`);
        await manager.appendLog(id, "正在恢复状态机快照", { source: "daemon" });
        agent.syncWorkflowState(data.checkpoint);
@@ -301,15 +314,43 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
        agent.addUserMessage(mission.description);
     }
 
-    const result = await agent.run();
-
-    await manager.appendLog(id, "使命执行成功", {
-      source: "daemon",
-      resultPreview: typeof result === "string" ? result.slice(0, 120) : String(result),
+    const outcome = await agent.runDetailed();
+    const stats = agent.getSessionStats();
+    if (outcome.status === "paused") await agent.checkpointSession();
+    await manager.updateExecutionSnapshot(id, {
+      sessionId: agent.getSessionId(),
+      workflowRunId: outcome.runId,
+      lastContext: agent.getMessagesSnapshot(),
+      metrics: {
+        totalTurns: stats.turnCount,
+        totalTokens: stats.tokens,
+      },
     });
-    await manager.updateStatus(id, "succeeded");
-    console.log(`[qlingd] 使命 ${id} 执行成功。`);
-    await agent.shutdown();
+
+    if (outcome.status === "succeeded") {
+      await manager.appendLog(id, "使命执行成功", { source: "daemon", resultPreview: outcome.text.slice(0, 120) });
+      await manager.updateStatus(id, "succeeded");
+      console.log(`[qlingd] 使命 ${id} 执行成功。`);
+    } else if (outcome.status === "paused") {
+      await manager.appendLog(id, "使命已暂停，等待恢复", { source: "daemon", runId: outcome.runId });
+      await manager.updateStatus(id, "paused", undefined, { runId: outcome.runId });
+    } else if (outcome.status === "exhausted") {
+      await manager.appendLog(id, "使命达到迭代上限但未完成", { source: "daemon", runId: outcome.runId });
+      await manager.updateStatus(id, "exhausted", {
+        message: outcome.text,
+        code: "RUN_EXHAUSTED",
+      });
+    } else if (outcome.status === "canceled") {
+      await manager.updateStatus(id, "canceled", {
+        message: outcome.text,
+        code: "RUN_CANCELED",
+      });
+    } else {
+      await manager.updateStatus(id, "failed", {
+        message: outcome.text,
+        code: "RUN_FAILED",
+      });
+    }
 
   } catch (err) {
     await manager.updateStatus(id, "failed", {
@@ -318,6 +359,8 @@ async function executeMissionInBackground(id: string, manager: MissionManager, s
     });
     await manager.appendLog(id, `使命执行失败: ${(err as Error).message}`, { source: "daemon" });
     console.error(`[qlingd] 使命 ${id} 执行失败: ${(err as Error).message}`);
+  } finally {
+    if (agent) await agent.shutdown().catch(() => undefined);
   }
 }
 

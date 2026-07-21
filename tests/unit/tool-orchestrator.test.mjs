@@ -5,9 +5,11 @@ import {
   buildToolSignature,
   parseToolArguments,
   prepareToolCalls,
+  executePreparedTools,
   repairToolArguments,
   stableStringify,
 } from "../../dist/agent/tool-orchestrator.js";
+import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
 
 test("parseToolArguments accepts object JSON and rejects arrays", () => {
   assert.deepEqual(parseToolArguments('{"path":"a.ts"}').value, { path: "a.ts" });
@@ -68,4 +70,33 @@ test("prepareToolCalls marks invalid arguments immediately", () => {
     { parseRetries: 0 }
   );
   assert.equal(prepared[0].immediateResult?.error?.code, "TOOL_INVALID_ARGUMENTS");
+});
+
+test("executePreparedTools counts a pipeline is_error result exactly once", async () => {
+  const messages = [];
+  const bus = new ExecutionEventBus();
+  const events = [];
+  bus.subscribe((event) => events.push(event));
+  const result = await executePreparedTools({
+    pipeline: { execute: async () => ({ tool_call_id: "1", output: "forbidden", is_error: true }) },
+    tools: [],
+    guardConfig: { enabled: false },
+    channel: null,
+    approvalGate: {},
+    knowledgeAdapter: { onToolCall() {}, onToolResult() {} },
+    memoryStore: { link() {} },
+    workspaceDir: process.cwd(),
+    workflowRuntime: {},
+    executionEventBus: bus,
+    emit() {},
+    reflectiveThink: async () => ({ decision: "proceed", reason: "" }),
+  }, {
+    preparedCalls: [{ call: { id: "1", name: "read", arguments: { path: "x" } } }],
+    messages,
+    runId: "run-1",
+    attemptId: "attempt-1",
+  });
+  assert.equal(result.turnToolFailures, 1);
+  assert.equal(events.filter((event) => event.type === "tool_completed").length, 1);
+  assert.equal(events.find((event) => event.type === "tool_completed")?.status, "failed");
 });

@@ -4,6 +4,14 @@ import * as path from "path";
 
 import type { Message } from "../types.js";
 import { deriveSessionTitle } from "./session-title.js";
+import type { RecoveryState } from "../execution/types.js";
+
+export interface SavedActiveRun {
+  runId: string;
+  sessionId: string;
+  originalTask: string;
+  startedAt: number;
+}
 
 export interface SavedSessionSnapshot {
   version: number;
@@ -16,6 +24,8 @@ export interface SavedSessionSnapshot {
   turnCount: number;
   sessionTokens: number;
   compactionCount: number;
+  activeRun?: SavedActiveRun;
+  recoveryState?: RecoveryState;
 }
 
 export interface SavedSessionSummary {
@@ -141,6 +151,10 @@ export class SessionRegistry {
       turnCount: snapshot.turnCount ?? 0,
       sessionTokens: snapshot.sessionTokens ?? 0,
       compactionCount: snapshot.compactionCount ?? 0,
+      activeRun: snapshot.activeRun ? { ...snapshot.activeRun } : undefined,
+      recoveryState: snapshot.recoveryState
+        ? { ...snapshot.recoveryState, attemptedStrategies: [...snapshot.recoveryState.attemptedStrategies] }
+        : undefined,
     };
   }
 
@@ -174,6 +188,12 @@ export class SessionRegistry {
         turnCount: typeof raw.turnCount === "number" ? raw.turnCount : 0,
         sessionTokens: typeof raw.sessionTokens === "number" ? raw.sessionTokens : 0,
         compactionCount: typeof raw.compactionCount === "number" ? raw.compactionCount : 0,
+        activeRun: raw.activeRun && typeof raw.activeRun === "object"
+          ? { ...(raw.activeRun as SavedActiveRun) }
+          : undefined,
+        recoveryState: raw.recoveryState && typeof raw.recoveryState === "object"
+          ? { ...(raw.recoveryState as RecoveryState) }
+          : undefined,
       };
     } catch {
       return null;

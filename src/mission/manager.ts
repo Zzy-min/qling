@@ -9,7 +9,7 @@ import { existsSync } from "fs";
 import { Mission, MissionStatus, MissionEvent } from "./types.js";
 import { notifyMissionLog, notifyMissionProgress } from "./progress-notify.js";
 
-const TERMINAL_STATUSES = new Set<MissionStatus>(["succeeded", "failed", "canceled"]);
+const TERMINAL_STATUSES = new Set<MissionStatus>(["succeeded", "exhausted", "failed", "canceled"]);
 const PAUSABLE_STATUSES = new Set<MissionStatus>(["queued", "running", "blocked"]);
 
 export class MissionManager {
@@ -116,6 +116,25 @@ export class MissionManager {
   listMissions(): Mission[] {
     return Array.from(this.missions.values())
       .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async updateExecutionSnapshot(
+    id: string,
+    snapshot: {
+      sessionId?: string;
+      workflowRunId?: string;
+      lastContext?: Mission["lastContext"];
+      metrics?: Partial<Mission["metrics"]>;
+    }
+  ): Promise<Mission> {
+    const mission = this.getMissionOrThrow(id);
+    if (snapshot.sessionId) mission.sessionId = snapshot.sessionId;
+    if (snapshot.workflowRunId) mission.workflowRunId = snapshot.workflowRunId;
+    if (snapshot.lastContext) mission.lastContext = snapshot.lastContext.map((message) => ({ ...message }));
+    if (snapshot.metrics) mission.metrics = { ...mission.metrics, ...snapshot.metrics };
+    mission.updatedAt = Date.now();
+    await this.saveMission(mission);
+    return mission;
   }
 
   async refresh(): Promise<void> {
