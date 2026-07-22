@@ -1,7 +1,7 @@
-# 轻灵模块分层与包边界（Phase 4.4）
+# 轻灵模块分层与包边界
 
-**日期**: 2026-07-10 · **更新**: 2026-07-14（Sprint 5 / 1.2）
-**状态**: 目标分层 + **baseline 门禁**（尚未 monorepo 拆包）
+**建立**: 2026-07-10 · **更新**: 2026-07-22（Qling 1.3.1）
+**状态**: 单仓库单包 + **strict 门禁**（当前反向依赖 0）
 **扫描**: `node scripts/dep-layers.mjs`（`--json` / `--write-doc` / `--strict` / `--baseline` / `--write-baseline`）
 
 ---
@@ -14,7 +14,7 @@
 - `@qlingzzy/agent`（agent-runtime + domain 子集）
 - `@qlingzzy/cli`（cli + presentation）
 
-预留边界。当前仍是 monorepo 单包 `@qlingzzy/qling`。
+预留边界。当前仍是单仓库单包 `@qlingzzy/qling`。
 
 ---
 
@@ -54,17 +54,18 @@ foundation → （无上层）
 node scripts/dep-layers.mjs
 ```
 
-近期一次扫描（约 177 个 `src/**/*.ts`；以 `npm run dep:layers` 为准）：
+2026-07-22 扫描结果（247 个 `src/**/*.ts`；以本机重新运行结果为准）：
 
-| 层 | 文件数（约） |
-|----|-------------|
-| cli | 48 |
-| domain | 47 |
-| adapters | 27 |
-| agent-runtime | 22 |
-| core-services | 14 |
-| foundation | 10 |
-| presentation | 9 |
+| 层 | 文件数 |
+|---|---:|
+| cli | 58 |
+| domain | 57 |
+| agent-runtime | 45 |
+| adapters | 32 |
+| presentation | 17 |
+| core-services | 16 |
+| foundation | 16 |
+| other | 6 |
 
 快照：`docs/dependency-layers.snapshot.json`（`node scripts/dep-layers.mjs --write-doc`）。
 
@@ -104,29 +105,28 @@ flowchart TB
 
 ---
 
-## 4. 已知反向依赖（技术债）
+## 4. 当前门禁状态
 
-扫描会报告 `forbidden reverse edges`。Sprint 5（1.2）已修一批：
+`node scripts/dep-layers.mjs --strict` 当前报告：
 
-| 已修 | 做法 |
-|------|------|
-| adapters → cli（reports） | `SlashCommandContext` → `src/slash-context.ts`（agent-runtime） |
-| core-services → domain（SkillMeta） | `SkillMeta` 下沉 `types.ts`（foundation） |
-| core-services → domain（Approval） | `ApprovalRequest/Response` 下沉 `types.ts` |
-| adapters → presentation（eval） | eval 不再 import `tui/shell` |
-| `execution/*` / `dashboard/*` 归类 | 分别归 agent-runtime / adapters |
+```text
+forbidden reverse edges: 0
+```
 
-剩余模式与治理方向：
+已完成的关键治理：
 
-| 模式 | 示例 | 建议 |
-|------|------|------|
-| agent-runtime → cli | `repl.ts` import `commands/index` | 命令表注入 |
-| presentation → cli | tui import `commands/index` | 经 runtime 回调注入 |
-| domain → agent-runtime | `durable-session-supervisor` | 上提 agent 层或注入 factory |
+| 原问题 | 当前做法 |
+|---|---|
+| adapters → cli | `SlashCommandContext` 下沉，slash ports 通过注入安装 |
+| core-services → domain | `SkillMeta`、Approval 类型下沉到 foundation |
+| adapters → presentation | eval 不再静态依赖 TUI shell |
+| agent-runtime / presentation → cli | 命令表和 UI 能力经 runtime 回调注入 |
+| domain → agent-runtime | `DurableSessionSupervisor` 上提到 `src/agent/` |
+| 全局服务串线风险 | Provider、Memory、MCP registry 与 dispatcher 绑定到 `RuntimeServices` 实例 |
 
 **CI 策略**：
 
-- `npm run dep:layers` + **`--strict`** 已进入 `ci:check`（**0** 条反向边）
+- `npm run dep:layers` + **`--strict`** 已进入 `ci:check`（当前 **0** 条反向边）
 - 历史 baseline 文件可保留作审计参考：`docs/dependency-layers.baseline.json`
 - slash 分发：cli 通过 `installSlashPorts` 注入；runtime/presentation 不静态 import `commands/*`
 - `DurableSessionSupervisor` 已上提到 `src/agent/`（agent-runtime）
@@ -169,7 +169,7 @@ node scripts/dep-layers.mjs --json
 # 写入 docs/dependency-layers.snapshot.json
 node scripts/dep-layers.mjs --write-doc
 
-# 有反向依赖则失败（治理后期再用）
+# 有反向依赖则失败
 node scripts/dep-layers.mjs --strict
 ```
 
@@ -181,20 +181,18 @@ npm run dep:layers
 
 ---
 
-## 8. 下一步治理顺序（建议）
+## 8. 后续维护规则
 
-1. ~~agent-loop 与 dashboard 解耦~~（2026-07-14：动态 import，静态边已断）
-2. 抽出 `SlashCommandContext` → 切断 adapters→cli
-3. `eval/` 改挂 adapters 或独立 `eval` 层
-4. `SkillMeta` 下沉 foundation
-5. 再考虑 monorepo workspaces
-
-**已落地拆分（Phase 5.2）**：`providers/llm-client.ts`（foundation）、`memory/lifecycle.ts`（domain）。`forbiddenCount` 20→19。
+1. 新文件必须先加入 `scripts/dep-layers.mjs` 的明确分类，避免长期落入 `other`。
+2. 新增跨层 import 时先判断能否下沉类型、注入接口或移动职责，不直接扩大允许边。
+3. `forbiddenCount` 必须保持为 0；baseline 只作历史审计，不用于掩盖新违规。
+4. SDK 导出扩大前运行契约测试，避免把 CLI/TUI 实现细节提升为公共 API。
+5. 只有出现独立发布、版本或依赖管理需求时才讨论拆包，不为目录美观引入 monorepo 复杂度。
 
 ---
 
 ## 9. 相关
 
-- Phase 4 总路线：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
+- 历史 Phase 4 路线：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
 - 扫描脚本：`scripts/dep-layers.mjs`
 - Phase 5.2 收口：`docs/superpowers/reviews/20260714-phase52-agent-loop-extract-closeout.md`

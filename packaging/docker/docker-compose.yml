@@ -1,4 +1,4 @@
-# DRAFT compose for optional sandbox runs
+# Optional compose profile for local sandbox runs.
 # Usage:
 #   export QLING_LLM_API_KEY=...
 #   docker compose -f packaging/docker/docker-compose.yml run --rm qling doctor
@@ -7,7 +7,7 @@ services:
     build:
       context: ../..
       dockerfile: packaging/docker/Dockerfile
-    image: qling:1.0.0
+    image: qling:local
     working_dir: /workspace
     volumes:
       - ${QLING_HOST_WORKSPACE:-.}:/workspace

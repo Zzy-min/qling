@@ -1,5 +1,5 @@
-# DRAFT — optional isolation image for Qling CLI
-# Build: docker build -f packaging/docker/Dockerfile -t qling:1.0.0 .
+# Optional isolation image for Qling CLI; not the default distribution channel.
+# Build: docker build -f packaging/docker/Dockerfile -t qling:local .
 FROM node:22-bookworm-slim
 
 WORKDIR /app

@@ -1,78 +1,115 @@
-# 官方目录提交指南
+# Qling 分发与官方目录提交指南
 
-## 状态（2026-07-15 / v1.2.2）
+## 当前状态
 
-| 渠道 | 状态 |
-|------|------|
-| 公共 Scoop bucket | https://github.com/Zzy-min/scoop-qling （**推荐 / 立即可用**） |
-| Scoop Extras PR | https://github.com/ScoopInstaller/Extras/pull/18307 — **已关闭**（维护者：未达 Extras 收录门槛，建议自建 bucket） |
-| winget-pkgs PR | https://github.com/microsoft/winget-pkgs/pull/402294 — **OPEN**，CLA 已通过，manifest **1.2.2**，等待验证与审核 |
-| 便携 zip | https://github.com/Zzy-min/qling/releases/download/v1.2.2/qling-win-x64.zip （内嵌 Node，远端 SHA256 `4447130fad0a1e51cf23dc3da707ed23bb1f3087c6338ef4e029ffcd8dc89f0f`） |
-| npm | `@qlingzzy/qling@1.2.2` |
+核验时间：**2026-07-22**。后续状态以各链接页面为准。
 
-### Scoop Extras 说明（诚实）
+| 渠道 | 已核验状态 |
+|---|---|
+| GitHub Release | [`v1.3.1`](https://github.com/Zzy-min/qling/releases/tag/v1.3.1)，便携 ZIP 已上传 |
+| 便携 ZIP | `qling-win-x64.zip`，SHA256 `28cd2b71c935f49a2193b76486272559d48c111e8df052159f9b3dc8687f4d91` |
+| npm | `@qlingzzy/qling@1.3.0`；晚于/早于 Release 时分别核验，不从源码版本推断 |
+| 公共 Scoop bucket | [`Zzy-min/scoop-qling`](https://github.com/Zzy-min/scoop-qling) 仍为 `1.2.2`，尚未同步到最新 Release |
+| Scoop Extras | [PR #18307](https://github.com/ScoopInstaller/Extras/pull/18307) 已关闭、未合并；维护者建议自建 bucket |
+| WinGet | [PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 开放，manifest `1.3.1`，CLA 通过，外部验证/人工审核未完成 |
 
-维护者 [z-Fng](https://github.com/z-Fng) 关闭了 Extras PR：项目尚未满足 Extras 新包门槛（常见参考含社区热度等）。  
-**可用路径**：自建公共 bucket `scoop-qling`（已上线）。待项目成长后再 reopen Extras。
+WinGet 最新验证流水线：[`WinGetSvc-Validation-148-402294-20260722-1`](https://dev.azure.com/shine-oss/8b78618a-7973-49d8-9174-4360829d979b/_build/results?buildId=371743)。核验时仍为 `inProgress`，不得写成“已通过”。
 
-## Scoop Extras
+## 本仓库的规范源
 
-目标仓库：https://github.com/ScoopInstaller/Extras
+| 目标 | 文件 |
+|---|---|
+| Scoop | `packaging/scoop/qling.json` |
+| Scoop bucket 镜像 | `packaging/scoop-bucket/qling.json` |
+| WinGet singleton 校验面 | `packaging/winget/Zzy-min.qling.yaml` |
+| WinGet 多文件清单 | `packaging/winget/manifests/Zzy-min/qling/1.3.1/` |
 
-### 本仓库已备好的 manifest
+当前四个本地声明面均使用 `1.3.1`、同一 Release URL 和同一 SHA256。公共 `scoop-qling` 是另一个 Git 仓库，只有提交并推送后才算完成同步。
 
-- 规范源：`packaging/scoop/qling.json`
-- 本地 bucket：`packaging/scoop-bucket/qling.json`（内容同步）
+## 发布顺序
 
-### 提交步骤
+1. 更新 `package.json` / lockfile / CHANGELOG 与文档。
+2. 运行完整 CI 和恢复、打包门禁。
+3. 构建 Windows 便携 ZIP并执行真实 `--version`、`doctor`、符号链接启动检查。
+4. 创建不可变 GitHub Release，上传 ZIP。
+5. 从公开资产重新核验大小与 SHA256。
+6. 更新本仓库 Scoop/WinGet 清单。
+7. 分别更新并推送公共 Scoop bucket、WinGet PR。
+8. 等待外部流水线与人工审核；不能把“已触发”写成“已通过”。
+
+## 构建与本地门禁
 
 ```powershell
-# 1) 构建便携包并同步 hash
+npm run ci:check
+npm run eval:recovery
 npm run build:portable-win
-npm run sync:winget-sha   # 同时更新 scoop hash（zip）
-
-# 2) 为新版本创建 GitHub Release；不要覆盖已发布版本的同名资产
-gh release create v$(node -p "require('./package.json').version") dist-portable/qling-win-x64.zip
-
-# 3) Fork + PR
-gh repo fork ScoopInstaller/Extras --clone --fork-name scoop-extras-qling
-cd ../scoop-extras-qling
-git checkout -b add-qling
-copy ..\qling\packaging\scoop\qling.json bucket\qling.json
-git add bucket/qling.json
-git commit -m "qling: add portable package"
-git push -u origin HEAD
-gh pr create --repo ScoopInstaller/Extras --title "qling: add portable AI agent CLI" --body "Adds Qling (local-first AI Agent CLI). Portable zip embeds Node runtime."
+npm run validate:packaging
+git diff --check
 ```
 
-## winget-pkgs
+构建结果：
 
-目标仓库：https://github.com/microsoft/winget-pkgs
-
-### 本仓库已备好多文件清单
-
+```text
+dist-portable/qling-win-x64.zip
+dist-portable/portable-meta.json
 ```
-packaging/winget/manifests/Zzy-min/qling/<version>/
+
+## Scoop
+
+同步本仓库两份 manifest：
+
+```powershell
+npm run sync:scoop-bucket
+npm run validate:packaging
+```
+
+更新外部公共 bucket 时，还必须在 `Zzy-min/scoop-qling` 仓库提交并推送新的 `qling.json`。只修改本仓库 `packaging/scoop-bucket/qling.json` 不会改变用户实际安装到的版本。
+
+官方 Extras PR #18307 的失败点是收录门槛，不应描述为 manifest 已进入官方目录。项目满足社区准入条件后再重开申请。
+
+## WinGet
+
+当前多文件清单：
+
+```text
+packaging/winget/manifests/Zzy-min/qling/1.3.1/
   Zzy-min.qling.yaml
   Zzy-min.qling.locale.en-US.yaml
   Zzy-min.qling.installer.yaml
 ```
 
-### 提交步骤
+本地校验：
 
 ```powershell
-npm run build:portable-win
-npm run sync:winget-sha
-gh release create v$(node -p "require('./package.json').version") dist-portable/qling-win-x64.zip
-
-gh repo fork microsoft/winget-pkgs --clone --fork-name winget-pkgs-qling
-# copy manifests tree under manifests/z/Zzy-min/qling/<version>/
-# open PR against microsoft/winget-pkgs
+winget validate --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
 ```
 
-本地校验（可选 winget 客户端）：
+可选本地试装：
 
 ```powershell
-winget validate packaging/winget/manifests/Zzy-min/qling/1.2.2
-winget install --manifest packaging/winget/manifests/Zzy-min/qling/1.2.2
+winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
+qling --version
+qling doctor
 ```
+
+PR 更新后至少确认：
+
+- PR 标题、正文、三个 changed files 都指向同一版本。
+- `InstallerUrl` 能公开下载。
+- `InstallerSha256` 与公开资产 digest 一致。
+- `NestedInstallerFiles.RelativeFilePath` 指向 `qling-win-x64\qling.exe`。
+- 通过 WinGet Links 符号链接启动时能找到内嵌 runtime。
+- 缺少 API key 时友好退出，无 JavaScript 堆栈。
+- CLA、自动验证、人工审核分别报告，不能混为一个“通过”。
+
+## npm
+
+身份、查看和发布必须显式使用官方 registry，避免本机镜像导致错误结论：
+
+```bash
+npm whoami --registry https://registry.npmjs.org/
+npm view @qlingzzy/qling version --registry https://registry.npmjs.org/
+npm publish --access public --registry https://registry.npmjs.org/
+```
+
+发布成功后重新执行 `npm view`；本地 `package.json` 的版本不等于 npm 已发布版本。

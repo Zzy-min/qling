@@ -1,277 +1,202 @@
 # 轻灵 Qling
 
-[![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#环境要求)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#安装)
+[![GitHub Release](https://img.shields.io/github/v/release/Zzy-min/qling?label=release)](https://github.com/Zzy-min/qling/releases/latest)
+[![npm](https://img.shields.io/npm/v/@qlingzzy/qling?label=npm)](https://www.npmjs.com/package/@qlingzzy/qling)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.1-orange.svg)](CHANGELOG.md)
 
-[English](README.en.md) · [安装指南](docs/install.md) · [CHANGELOG](CHANGELOG.md)
+[English](README.en.md) · [安装指南](docs/install.md) · [60 秒演示](docs/demo.md) · [CHANGELOG](CHANGELOG.md)
 
-轻灵（qling）是一个本地优先的 AI Agent CLI。它把会话、上下文、工具执行、skill、任务、权限、诊断、后台使命、观测台和恢复能力收拢到一个可审计、可中断、可继续的命令行界面里——不是 Claude Code 的复制品，而是一个面向中文开发者和本机工作流的终端控制台。
+**面向中文开发者的本地优先 AI Agent CLI 工作台。**
 
-> 一句话：轻灵让 Agent 像一个本地工作台，而不是一个黑盒聊天窗口。
+轻灵把聊天、工具执行、权限、记忆、恢复、后台任务和运行证据收进一个终端控制面。它不把“模型说完成了”当作完成：每次运行都有明确终态，工具调用有时间线，失败可以暂停并保留上下文，长任务可以在终端关闭后继续。
 
-> 想试用或参与改进？从 [v1.3.0 Release](https://github.com/Zzy-min/qling/releases/tag/v1.3.0) 或 npm 开始；真实工作流反馈、复现步骤和改进建议都欢迎提交到 [Issues](https://github.com/Zzy-min/qling/issues)。
+> 状态和诊断默认留在本机；模型请求只发送给你明确配置的 Provider。使用 Ollama 时，模型也可以运行在本机。
+
+[下载最新 Release](https://github.com/Zzy-min/qling/releases/latest) · [查看安装方式](docs/install.md) · [提交问题](https://github.com/Zzy-min/qling/issues)
 
 ## 为什么是轻灵
 
-| 维度 | 轻灵的做法 |
-|---|---|
-| 本地优先 | 会话、checkpoint、导出、记忆、任务、诊断默认落在本机；`qling privacy` 直接查看边界。 |
-| 中文可用 | TUI、帮助、状态提示、命令别名（`帮助` / `使命` / `代理`）面向中文终端。 |
-| Slash 控制面 | `/` 打开命令面板，过滤、参数提示、方向键选择、`Tab` 补全都在当前输入框内完成。 |
-| 可恢复长任务 | `/checkpoint`、`/resume`、`/rewind`、`--continue`、`qling workflow resume` 让中断后的上下文可以接上。 |
-| 本地 skill | `skills/` 与 `.qling/skills/` 中的 Markdown skill 可被 `/skill` 或 `/<skill-name>` 直接读取；内置命令优先级高于 skill。 |
-| 后台使命 | `qling daemon` + `qling mission` 提供长任务状态机、暂停 / 恢复 / 重试 / attach。 |
-| 任务工作台 | `qling dashboard start` 打开仅监听本机的任务中心，统一查看 Mission、循环任务、Workflow、执行来源与最近活动。 |
-| 通道与扩展 | `src/channels/` 内置 console / Telegram / Slack 通道；`qling discovery sync` 动态同步插件与技能。 |
-| 权限可解释 | `/permissions`、`/permissions explain <tool>`、guard、内容过滤、速率限制和密钥脱敏都以本地规则呈现。 |
-| 上下文透明 | `/context`、`/usage` 显示 provider 官方 token usage、成本完整性与压缩状态。 |
-| 诊断内建 | `/doctor`、`/config`、`/mcp`、`/hooks`、`/diff` 用于快速判断当前项目和运行时状态。 |
-| 诚实边界 | 平台专属命令会被识别并给出本地边界说明，不会伪装成功。 |
+多数 Agent CLI 解决的是“让模型调用工具”。轻灵更关注工具调用之后的问题：状态保存在哪里、失败是否被如实呈现、终端断开后任务怎么办、成本信息是否完整，以及你能否看见一条可复查的证据链。
 
-## 快速开始
+| 特点 | 轻灵如何实现 | 入口 |
+|---|---|---|
+| **本地优先，而非本地幻觉** | 会话、checkpoint、记忆、任务、运行 trace 和诊断默认写入 `~/.qling/`；远程 Provider 边界会明确展示。 | `qling privacy`、`qling storage`、`qling doctor` |
+| **终态可信** | 运行只会进入 `succeeded`、`paused`、`exhausted`、`failed` 或 `canceled`；未完成任务不会伪装成成功。 | `qling run ... --json`、Dashboard |
+| **证据链可见** | 工具开始/结束、失败分类、恢复动作、用量来源和运行状态进入结构化事件与本地 trace。 | `/trace`、`/usage`、`qling dashboard start` |
+| **中断后可继续** | checkpoint、session resume、workflow resume 和 Mission 保存运行身份与恢复上下文。 | `/checkpoint`、`/resume`、`qling mission` |
+| **中文终端原生** | 中文帮助与别名、slash 命令面板、补全、多行编辑、历史搜索和 managed scrollback。 | `qling`、`/help`、`qling 快捷键` |
+| **安全边界可解释** | 权限策略、guard、写入沙箱、密钥脱敏和本地 Daemon 鉴权不是隐藏开关。 | `/permissions explain`、`/config`、`/hooks` |
+| **扩展但不失控** | 支持本地 Markdown skills、MCP、生命周期 Hooks、签名清单插件、ACP 和 SDK。 | `/skill`、`qling mcp`、`qling acp` |
 
-完整安装路径（Windows Scoop/winget 草案、卸载、原生模块注意）：见 **[docs/install.md](docs/install.md)**。
+## 它是怎样工作的
 
-### 环境要求
+```mermaid
+flowchart LR
+    A["TUI / Headless / ACP / Mission"] --> B["Agent Runtime"]
+    B --> C["Provider Gateway"]
+    B --> D["Tools / MCP / Skills"]
+    D --> E["Guard + Permissions + Verification"]
+    B --> F["RunOutcome + Recovery"]
+    E --> G["Local state / traces / memory"]
+    F --> G
+    G --> H["Dashboard / resume / recap"]
+```
 
-- Node.js ≥ 18
-- npm ≥ 9
-- 可选：Playwright Chromium，用于 `browser_fetch` 工具（v0.5 已集成）
+同一套运行内核服务于交互 TUI、脚本化 NDJSON、编辑器 ACP 和后台 Mission。Provider、MCP registry、Memory 与工具 dispatcher 绑定到当前 Agent，避免并发 Agent 之间串线；关键 JSON 状态采用原子写入与备份恢复。
 
-### 一键本机启动（推荐）
+## 安装
+
+### Windows 便携包
+
+从 [GitHub Releases](https://github.com/Zzy-min/qling/releases/latest) 下载 `qling-win-x64.zip`，解压后运行：
+
+```powershell
+.\qling-win-x64\qling.exe --version
+.\qling-win-x64\qling.exe doctor
+.\qling-win-x64\qling.exe setup
+```
+
+便携包内嵌 Node.js，不要求系统预装 Node。Scoop、自建 bucket、WinGet 进度和卸载说明见 [安装指南](docs/install.md)。
+
+### npm
+
+```bash
+npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/
+qling --version
+qling bootstrap
+```
+
+GitHub Release 与 npm 可能按不同节奏发布；可分别查看 Releases 和 `npm view @qlingzzy/qling version` 确认版本。
+
+### 从源码启动
+
+要求 Node.js 18+、npm 9+：
 
 ```bash
 git clone https://github.com/Zzy-min/qling.git
 cd qling
 npm run bootstrap
+npm link
 ```
 
-需要浏览器抓取能力时：
+需要 Playwright 浏览器抓取时：
 
 ```bash
 npm run bootstrap -- --with-browser
 ```
 
-`bootstrap` 会检查 Node/npm、安装依赖、构建项目、创建本地 `~/.qling/` 目录并给出 `doctor`/`setup` 下一步。默认不安装浏览器依赖，也不自动开启 dashboard、semantic memory、dynamic discovery。
+`bootstrap` 会检查环境、安装依赖、构建项目、初始化本地目录并给出 `doctor` / `setup` 下一步；不会自动开启 Dashboard、语义记忆或动态发现。
 
-### 全局命令
+## 配置模型
 
-```bash
-# 源码目录内
-npm link
-qling
-
-# 或从 GitHub 直接全局安装
-npm install -g github:Zzy-min/qling
-
-# npm 官方包（已发布 1.3.0；作用域名，CLI 仍是 qling）
-# 若默认 registry 是国内镜像，请显式指定官方源
-npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/
-```
-
-已安装 CLI 后，可运行本机初始化检查：
-
-```bash
-qling bootstrap
-qling bootstrap --with-browser
-qling bootstrap --profile dev
-```
-
-### 手动安装
-
-```bash
-npm install
-npm run build
-npm link   # 可选
-```
-
-### 最小配置
-
-**强烈建议**：永远不要把 API key 直接写到可被同步、备份或分享的运行时文件（包括项目根 `.env` 或 `~/.qling/.env`）。
-
-推荐做法：
-- 使用系统用户环境变量（Windows: 设置 → 环境变量，或 PowerShell `$env:DEEPSEEK_API_KEY=...` 并持久化）。
-- 或运行 `qling setup` 由交互引导配置。
-
-如果必须使用文件，仅在**项目本地** `.env` 且已加入 `.gitignore`。运行时 `~/.qling/.env` 主要用于非敏感 provider/model 配置。
-
-示例（仅演示，实际请勿提交）：
-```bash
-QLING_LLM_PROVIDER=deepseek
-QLING_LLM_ENDPOINT=https://api.deepseek.com
-QLING_LLM_MODEL=deepseek-chat
-# API key 请通过系统环境变量或 qling setup 提供
-```
-
-或者直接走交互式向导：
+最快方式：
 
 ```bash
 qling setup
 ```
 
-`qling setup` 默认走快速路径：Provider、Model、API key。Dashboard、语义记忆、动态技能发现等能力在 Advanced 分支中显式开启。
+`setup` 保存 Provider、Model、Endpoint 等非敏感配置，不把 API key 写入 `.env`。推荐将密钥放入系统用户环境变量：
 
-轻灵支持任意 OpenAI 兼容 provider；通过 `QLING_LLM_ENDPOINT` / `QLING_LLM_MODEL` + 对应 API key 环境变量接入。
-
-> 使用 `/doctor`、`/privacy`、`bootstrap` 时会主动检测运行时 .env 中的明文密钥变量（仅报告名称和路径）。
-
-### 跑通 4 个命令
-
-```bash
-qling                   # 默认进入流式 TUI（chat）
-qling chat              # 显式进入流式 TUI
-qling acp               # ACP v1 NDJSON stdio 编辑器适配（stdout 仅协议）
-qling run "分析这个仓库" # 单次执行，推荐形式
-qling run "分析这个仓库" --json # NDJSON 事件流，适合 CI / 外部编排
-qling bootstrap         # 本机初始化检查
-qling setup             # 交互式配置 LLM 提供商
+```powershell
+[Environment]::SetEnvironmentVariable('QLING_LLM_API_KEY', '<your-key>', 'User')
 ```
 
-## 运行模式
-
-| 模式 | 用途 |
-|---|---|
-| `qling` | 默认进入流式 TUI，等价于 `qling chat`。 |
-| `qling chat` | 显式进入流式 TUI。 |
-| `qling repl` | 简易 REPL，无 TUI 装饰。 |
-| `qling acp` | 显式启动 ACP v1 stdio 适配；支持会话、模式、工具时间线、审批与取消。 |
-| `qling run "任务"` | 单次执行后退出，适合脚本调用。 |
-| `qling run "任务" --json` | 将执行证据、工具状态与最终结果逐行输出为 JSON。无交互审批会安全拒绝，不会阻塞管道。 |
-| `qling bootstrap` | 本机初始化检查、配置提示和 doctor 验证。 |
-| `qling --continue` | 恢复最近一次交互会话。 |
-| `qling --resume <session>` | 恢复指定交互会话。 |
-| `qling daemon start` | 启动后台守护进程（qlingd）。 |
-| `qling workflow resume <id>` | 从状态机 Checkpoint 恢复执行。 |
-| `qling dashboard start` | 启动本地观测台。 |
-
-向后兼容：`qling --tui`、`qling --repl`、`qling --once "task"`、直接以裸任务作为位置参数仍可用，但会有 warning。
-
-## CLI 顶层命令
-
-`qling help` 总是最新基线。常见命令：
+新开终端后运行：
 
 ```bash
-# 状态 / 诊断 / 隐私
-qling status            # 本地状态摘要
-qling doctor            # 稳定性与数据留存诊断
-qling privacy           # 数据留存路径与隐私边界
-qling storage           # 只读盘点 state / sessions / exports / cache
-qling context           # 本地上下文与快照状态
-qling recap [session|latest] [count]   # 已保存会话的回顾
-
-# 会话与恢复
-qling sessions [count]          # 本地保存的会话快照
-qling checkpoint [name]         # 复制最近会话为本地恢复检查点
-qling exports [count]           # 本地 Markdown 会话导出
-qling workflow resume <id>      # 从状态机 checkpoint 恢复
-
-# 后台使命（v0.5）
-qling mission start "任务"      # 开启一个后台使命
-qling mission list              # 列出所有使命
-qling mission show <id>         # 查看详情
-qling mission logs <id>         # 查看日志
-qling mission attach <id>       # 跟随使命输出直到结束
-qling mission pause|resume|cancel|retry <id>
-
-# 后台守护进程
-qling daemon start|status|stop
-
-# 观测 / 同步 / 记忆
-qling dashboard start           # 本地白盒化观测台
-qling discovery sync            # 动态同步插件与技能
-qling memory status|list|search|sources|practices|graph|show|reindex
-
-# 本地任务 / 目标 / 配置
-qling tasks list [count] | cancel <id>
-qling goal status|set|clear
-qling permissions [explain <tool>]
-qling config                    # 密钥脱敏后的有效配置
-qling mcp                       # MCP server 摘要
-qling hooks                     # hooks / guard 摘要
-qling shortcuts                 # TUI 快捷键
-qling statusline                # 输入区状态线
+qling doctor
+qling run "分析当前仓库并列出三个最值得修复的问题"
 ```
 
-中文别名（部分示例）：
+轻灵支持 OpenAI 兼容 Provider，也可以在安装并启动 Ollama 后使用本地模型：
+
+```text
+/model use ollama
+```
+
+## 60 秒体验路径
 
 ```bash
-qling 帮助        # help
-qling 诊断        # doctor
-qling 状态        # status
-qling 代理        # agents
-qling 使命 列表   # mission list
-qling 日志 <id>   # logs <id>
+qling doctor
+qling
 ```
 
-## TUI 内 slash 命令
+进入 TUI 后：
 
-进入 TUI（`qling` 或 `qling chat`）后，按 `/` 打开命令面板。输入前缀过滤候选，`↑/↓` 移动选择，`Tab` 接受候选并保留尾随空格，`Enter` 执行当前输入。
+```text
+/help
+/plan on
+分析这个仓库，先给计划，再执行检查
+/trace
+/usage
+```
 
-### 会话与恢复
+你会看到：
 
-| Command | Purpose |
+1. `doctor` 只读取本机状态与 loopback 服务，不调用模型。
+2. `/` 打开可见的命令面板，命令不会藏在提示词后面。
+3. 工具执行形成时间线，而不是只返回一句“已完成”。
+4. 受控失败进入恢复或暂停状态，并保留失败上下文。
+5. `qling mission start` 可以把长任务交给本地 Daemon，终端关闭后继续运行。
+
+完整录制脚本见 [docs/demo.md](docs/demo.md)。
+
+## 可信执行与恢复
+
+轻灵公开区分五种运行结果：
+
+| Outcome | 含义 | Headless 退出码 |
+|---|---|---:|
+| `succeeded` | 任务完成并产生最终文本 | `0` |
+| `paused` | 工作流保留失败上下文，等待恢复或人工决策 | `2` |
+| `exhausted` | 达到迭代上限，任务仍未完成 | `2` |
+| `failed` | 结构化终止失败 | `1` |
+| `canceled` | 用户或上层运行时取消 | `130` |
+
+脚本和 CI 可以读取版本化 NDJSON：
+
+```bash
+qling run "检查项目并输出结论" --json
+```
+
+输出包含 `schemaVersion: 1`、执行事件、最终 `outcome` 和 usage。若 Provider 用量、价格或子代理 usage 不完整，轻灵会标记 `costIsPartial` / `usageIsIncomplete`，不会把估算值伪装成精确账单。
+
+恢复入口：
+
+```text
+/checkpoint before-refactor
+/sessions
+/resume latest
+/recover status
+/rewind
+```
+
+```bash
+qling --continue
+qling --resume <session-id>
+qling workflow resume <workflow-id>
+```
+
+重复动作只产生一次 `loop_detected` 停止信号；压缩失败会保留原历史并发出 `compaction_failed`，避免自动重试循环。
+
+## TUI：命令可发现，草稿不易丢
+
+`qling` 默认进入 TUI。按 `/` 打开命令候选，输入前缀过滤，`Tab` 补全但不自动执行。状态线显示模型、session、分支、权限模式、目标、后台任务和用量状态。
+
+常用 slash 命令：
+
+| 类别 | 命令 |
 |---|---|
-| `/checkpoint [name] [--force]` | 保存本地恢复点。 |
-| `/sessions` | 列出已保存会话。 |
-| `/resume [session\|latest]` | 恢复指定或最近会话。 |
-| `/rewind`, `/undo` | 显示可恢复点和下一步恢复命令；不自动回滚代码。 |
-| `/clear`, `/reset`, `/new` | 清空当前对话上下文。 |
-| `/compact` | 手动压缩上下文。 |
-| `/export` | 将当前会话导出为本地 Markdown。 |
-| `/exports [count]` | 查看最近导出。 |
+| 会话 | `/checkpoint`、`/sessions`、`/resume`、`/rewind`、`/export` |
+| 执行 | `/plan`、`/goal`、`/verify`、`/recover`、`/trace`、`/diff` |
+| 上下文 | `/context`、`/usage`、`/compact`、`/repomap` |
+| 本地知识 | `/skill`、`/memory`、`/dream`、`/distill`、`/knowledge` |
+| 安全诊断 | `/privacy`、`/permissions`、`/doctor`、`/config`、`/mcp`、`/hooks` |
+| 后台任务 | `/mission`、`/agents`、`/tasks`、`/queue` |
 
-### 模型、上下文与用量
-
-| Command | Purpose |
-|---|---|
-| `/model [model]` | 显示或切换当前 session 模型；不写入配置文件。 |
-| `/usage`, `/cost`, `/stats` | provider 官方 usage、成本完整性与压缩次数；信息不完整时省略精确成本。 |
-| `/context` | 本地上下文和 token 使用情况。 |
-| `/statusline [on\|off]` | 显示或切换输入区状态线。 |
-
-### 工作推进
-
-| Command | Purpose |
-|---|---|
-| `/plan [description]` | 在当前会话中排入普通计划请求。 |
-| `/goal [status\|set <condition>\|clear]` | 管理当前 session 目标。 |
-| `/loop [interval] [prompt]` | 创建本地重复提示任务。 |
-| `/tasks [cancel <id>\|clear]` | 查看或管理本地 loop 任务。 |
-| `/agents` | 查看本地后台使命分组。 |
-| `/mission ...` | 管理本地使命。 |
-
-### 本地知识与 skill
-
-| Command | Purpose |
-|---|---|
-| `/skill`, `/skill list` | 列出本地 skills。 |
-| `/skill search <query>` | 按名称、描述或标签搜索本地 skills。 |
-| `/skill <name>` | 读取指定本地 skill Markdown。 |
-| `/<skill-name>` | 直接调用本地 skill；内置命令优先。 |
-| `/memory ...` | 查看本地记忆、来源、实践、图谱或详情。 |
-| `/dream [count]` | 从当前对话信号中蒸馏本地记忆。 |
-| `/distill [count]` | 查看本地沉淀实践。 |
-
-### 项目、权限与诊断
-
-| Command | Purpose |
-|---|---|
-| `/help [topic]` | 查看全部 slash 命令或聚焦主题帮助。 |
-| `/diff` | 只读查看 Git 状态和 diff 摘要。 |
-| `/copy [N]` | 复制最近第 N 条 assistant 回复到剪贴板。 |
-| `/init [--force]` | 创建本地 `AGENTS.md` 项目引导；默认不覆盖。 |
-| `/privacy` | 查看本地数据留存路径和边界。 |
-| `/permissions [status\|allow\|deny\|ask]` | 查看或切换本地工具权限默认策略。 |
-| `/permissions explain <tool>` | 解释某个工具的本地权限决策。 |
-| `/doctor` | 运行本地诊断。 |
-| `/config` | 查看已脱敏的有效配置。 |
-| `/mcp` | 查看本地 MCP server 配置摘要。 |
-| `/hooks` | 查看 hooks 与 guard 配置摘要。 |
-| `/plugin` | 列出或安装受签名清单约束的本地插件源。 |
-| `/shortcuts` | 查看 TUI 快捷键。 |
-
-## TUI 快捷键
+<details>
+<summary>查看与代码保持同步的 TUI 快捷键</summary>
 
 | Key | Behavior |
 |---|---|
@@ -292,150 +217,231 @@ qling 日志 <id>   # logs <id>
 | `Ctrl+\` | 打开 / 关闭会话切换器。 |
 | `PgUp / PgDn` | 在 managed scrollback 当前轮内翻页。 |
 
-实验性 token 流式输出默认关闭。可在配置中设置 `experimental.streaming_chat: true`（或环境变量 `QLING_EXPERIMENTAL_STREAMING_CHAT=true`）仅为 `qling chat` 开启；Headless、Mission 和 ACP 仍使用完整响应。
+完整列表以 `qling shortcuts` 或 `/shortcuts` 为准。
 
-## 内置工具
+</details>
 
-| Tool | 来源 | 用途 |
-|---|---|---|
-| `bash` | `src/tools/bash.ts` | 通过 guard 管线执行 shell 命令。 |
-| `read` | `src/tools/read.ts` | 读取本地文件，带大小和二进制保护。 |
-| `write` | `src/tools/write.ts` | 写入本地文件。 |
-| `search` | `src/tools/search.ts` | 搜索本地文件和内容。 |
-| `planner` | `src/tools/planner.ts` | 生成结构化任务计划。 |
-| `skill` | `src/tools/skill.ts` | 加载本地 Markdown skills。 |
-| `todo` | `src/tools/todo.ts` | 管理本地任务列表。 |
-| `url-fetch` | `src/tools/url-fetch.ts` | guard 策略下抓取允许的远程 URL。 |
-| `browser-fetch` | `src/tools/browser-fetch.ts` | 通过 Playwright 抓取浏览器渲染页面（v0.5）。 |
-| `subtask` | `src/tools/subtask.ts` | 运行隔离子任务 agent。 |
-| `vision-analyze` | `src/tools/vision-analyze.ts` | 使用配置的视觉 provider 分析本地图片。 |
+实验性 token streaming 默认关闭。只为交互 TUI 开启：
 
-## 使命（Mission）后台任务
-
-使命是轻灵在 v0.5 引入的后台任务模型。`qling daemon` 启动 qlingd 后：
-
-- `qling mission start "..."` 把任务交给守护进程，关闭终端也能继续。
-- 守护进程挂了或者没起时，CLI 自动回退到本地文件状态机上继续。
-- `qling mission attach <id>` 以只读模式跟随使命输出。
-- `/agents` / `qling agents` / `qling 代理` 按状态分组查看。
-
-完整命令：
-
-```bash
-qling mission start "任务"      # 提交到 qlingd
-qling mission list              # 列出
-qling mission show <id>         # 详情
-qling mission logs <id>         # 日志
-qling mission attach <id>       # 跟随输出
-qling mission pause|resume|cancel|retry <id>
-qling mission stop|terminate <id>   # cancel 的别名
-qling mission respawn <id>          # retry 的别名
+```yaml
+experimental:
+  streaming_chat: true
 ```
 
-## 本地数据边界
+也可设置 `QLING_EXPERIMENTAL_STREAMING_CHAT=true`。Headless、Mission 和 ACP 默认继续使用完整响应；不支持流式的 Provider 会单次回退，不重复请求。
 
-轻灵默认把运行态数据写入 `~/.qling/`（可被 `--file-state-dir` 覆盖），常见内容：
+## 长任务与本地 Dashboard
 
-- saved sessions
-- checkpoints
-- exports
-- memory indexes（SQLite + 向量）
-- session goals
-- loop tasks
-- mission metadata
-- guard / 审计 artifacts
-- 通道状态（Telegram / Slack）
+```bash
+qling daemon start
+qling mission start "完成仓库审查并生成报告"
+qling mission list
+qling mission attach <id>
+qling dashboard start
+```
 
-查看边界：
+Mission 支持 `pause`、`resume`、`cancel`、`retry` 和只读 `attach`。暂停状态会保存 session、消息上下文和 `runId`；Daemon 重启后可以从已保存的运行状态继续。
+
+Daemon 默认只监听 `127.0.0.1`，自动生成本地 bearer token。非 loopback 监听必须同时显式允许远程绑定并保持鉴权开启。
+
+## Skills、MCP 与集成
+
+### 本地 Skills
+
+Markdown skill 可以放在内置、用户或工作区目录，通过以下方式发现和读取：
+
+```text
+/skill list
+/skill search test
+/skill fix-failing-test
+/fix-failing-test
+```
+
+内置 slash 命令优先于同名 skill，避免扩展覆盖核心控制面。说明见 [docs/skills.md](docs/skills.md)。
+
+### MCP
+
+```bash
+qling mcp
+qling mcp presets
+qling mcp add ...
+```
+
+MCP 支持 stdio 与 HTTP transport。默认 eager 暴露保持兼容，也可以启用按需 `search_tool` / `use_tool` catalog；输出按 UTF-8 字节限制并返回截断元数据，HTTP 错误不会作为正常工具消息交付。
+
+### 其他入口
+
+- `qling acp`：ACP v1 NDJSON stdio，供编辑器接入。
+- `@qlingzzy/qling` SDK：复用 AgentLoop 与结构化 `RunOutcome`，见 [docs/sdk.md](docs/sdk.md)。
+- JSON lifecycle Hooks：`SessionStart/End`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`。
+- 本地插件源：受签名清单约束，通过 `/plugin` 管理。
+- Channels：console、Telegram、Slack；未配置的通道只在 `doctor` 中告警。
+
+## 本地数据、安全与隐私
+
+默认状态目录是 `~/.qling/`，可通过 `--file-state-dir` 覆盖。常见内容包括：
+
+- sessions、checkpoints、exports
+- workspace/global memory 与 WAL
+- mission、workflow、goal、loop task 状态
+- 脱敏后的 run traces 与本地审计 artifacts
+- Daemon token、插件索引与通道状态
+
+快速检查：
 
 ```bash
 qling privacy
 qling storage
+qling config
+qling permissions
 qling doctor
 ```
 
-TUI 内：
+安全默认值：
 
-```text
-/privacy
-/storage
-/doctor
-/context
+- API key 不进入 Prompt、trace、日志或错误正文。
+- `setup` 不把 API key 写入 `.env`。
+- 写工具默认受 workspace sandbox、权限策略与 guard 约束。
+- Daemon 默认 loopback + bearer 鉴权，请求体默认限制 1 MiB。
+- OTEL 默认关闭；即使显式启用也只允许元数据模式，不导出对话内容。
+- 记忆损坏时优先备份恢复并进入只读降级，不用空数据覆盖损坏文件。
+
+## 常用 CLI
+
+```bash
+# 交互与脚本
+qling
+qling chat
+qling repl
+qling run "任务"
+qling run "任务" --json
+qling acp
+
+# 本地状态
+qling status
+qling doctor
+qling privacy
+qling storage
+qling context
+qling recap latest 5
+
+# 会话与恢复
+qling sessions
+qling checkpoint before-change
+qling --continue
+qling workflow resume <id>
+
+# 后台与扩展
+qling daemon start|status|stop
+qling mission start|list|show|logs|attach|pause|resume|cancel|retry
+qling dashboard start
+qling memory status|search|sources|practices|graph|show|reindex
+qling mcp
+qling discovery sync
 ```
+
+部分中文别名：
+
+```bash
+qling 帮助
+qling 诊断
+qling 状态
+qling 代理
+qling 使命 列表
+qling 日志 <id>
+```
+
+完整、实时的命令基线以 `qling help`、`qling shortcuts` 和 TUI 内 `/help` 为准。
 
 ## 项目结构
 
 ```text
 src/
-  agent-loop.ts          Agent 主循环与模型 / 工具编排
-  agent/                 隔离子任务 agent
-  channels/              控制台 / Telegram / Slack 通道
-  cli/                   CLI 启动契约 + setup + daemon 控制
-  commands/              slash 命令实现
-  daemon.ts              qlingd 后台守护进程入口
-  dashboard-server.ts    本地观测 HTTP 服务
-  discovery-*.ts         动态插件 / 技能注册
-  guard/                 权限、内容过滤、审计
-  mcp/                   MCP stdio + HTTP 客户端
-  memory/                WAL / 投影 / 语义记忆
-  mission/               使命状态机
-  pipeline/              prompt section / hooks / 验证
-  session/               会话注册 / goal / task / scheduler
-  skills/                本地 skill 注册
-  tools/                 内置工具实现
-  tui/                   流式终端 UI
+  agent-loop.ts          SDK 兼容入口与 Agent 生命周期
+  agent/                 主循环、工具编排、压缩与子任务
+  cli/                   CLI 契约、setup、headless JSON
+  commands/              slash 命令
+  execution/             事件、失败分类、恢复与 RunOutcome
+  guard/                 权限、过滤、速率限制与审计
+  mcp/                   MCP registry、transport 与 tool catalog
+  memory/                WAL、投影、向量索引与知识整合
+  mission/               后台使命状态机
+  persistence/           原子 JSON 持久化
+  pipeline/              Prompt、Hooks 与验证管线
+  providers/             Provider gateway、错误分类与 streaming
+  session/               session、goal、task 与 scheduler
+  tools/                 内置工具与实验性 anchored edit
+  tui/                   终端状态、输入、布局与渲染
 tests/
-  unit/                  单元测试
-  smoke/                 端到端冒烟测试
-docs/superpowers/        specs / plans / reviews
+  unit/                  单元和契约测试
+  smoke/                 CLI、打包与进程级冒烟测试
+docs/superpowers/        设计规格、实施计划与评审记录
 ```
 
 ## 开发与验证
 
 ```bash
-npm run build         # tsc
-npm test              # 单元测试
-npm run test:smoke    # 端到端冒烟
-npm run ci:check      # build + unit + smoke
+npm install
+npm run build
+npm test
+npm run test:smoke
+npm run ci:check
 ```
 
-发布前建议：
+关键本地评测：
 
 ```bash
-npm run ci:check
-git diff --check
-npm audit --registry=https://registry.npmjs.org --audit-level=high
+npm run eval:smoke
+npm run eval:recovery
+npm run eval:tasks
+npm run eval:anchored
+npm run validate:packaging
+npm run dep:layers -- --strict
 ```
+
+`ci:check` 覆盖 build、unit、smoke、核心 eval、打包清单和依赖分层。涉及恢复、打包或实验编辑时，仍应单独运行对应评测并执行 `git diff --check`。
+
+## 分发状态
+
+以下状态核验于 2026-07-22，此后以各渠道页面为准：
+
+| 渠道 | 已核验状态 |
+|---|---|
+| 源码 / GitHub Release | `v1.3.1`，Windows 便携 ZIP 已发布 |
+| npm `@qlingzzy/qling` | `1.3.0` |
+| 公共 `Zzy-min/scoop-qling` bucket | `1.2.2`，不是当前最新版 |
+| Scoop Extras | PR #18307 已关闭且未合并；官方目录尚未收录 |
+| WinGet | PR #402294 开放，manifest `1.3.1`；外部验证与审核尚未完成 |
+
+不要从源码版本推断 npm、Scoop 或 WinGet 已同步。具体选择与校验命令见 [安装指南](docs/install.md)。
+
+## 当前边界
+
+- 需要配置远程 OpenAI 兼容 Provider，或自行启动本地 Ollama，模型任务才能运行。
+- token streaming、browser act、LSP、anchored edit、动态发现和 JSON lifecycle Hooks 中的部分能力仍是显式 opt-in。
+- Dashboard 与 Daemon 面向本机控制面；远程暴露需要额外安全配置，不建议直接公开到互联网。
+- `browser_fetch` 需要单独安装 Playwright Chromium。
+- GitHub Release、npm、Scoop bucket 与 WinGet 审核可能处于不同版本节奏，请以各分发渠道显示的版本为准。
+
+## 文档
+
+- [安装与卸载](docs/install.md)
+- [60 秒演示](docs/demo.md)
+- [SDK](docs/sdk.md)
+- [Skills](docs/skills.md)
+- [Docker](docs/docker.md)
+- [网页与浏览器能力](docs/web-routing.md)
+- [OTEL 元数据边界](docs/otel.md)
+- [架构分层](docs/architecture-layers.md)
+- [版本记录](CHANGELOG.md)
 
 ## 设计原则
 
-- **Local-first**：有价值的状态留在本机，路径和边界可查看。
-- **Slash-first**：本地控制面优先从 `/` 发现和执行。
-- **Recoverable**：长任务必须能 checkpoint、resume、recap 和 inspect。
-- **Honest boundaries**：不支持的云端能力必须明确说明，不伪装成功。
-- **Terminal-native**：增强终端体验，但保持纯文本兼容和低依赖。
-
-## 版本与变更
-
-- 当前源码版本：`1.3.1`（已发布版本见 GitHub Releases / npm）
-
-- 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
-- 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)
-- Skills：见 [docs/skills.md](docs/skills.md)
-- 演示路径：见 [docs/demo.md](docs/demo.md)
-- 评测：`npm run eval:smoke` / `eval:recovery` / `eval:tasks` / `eval:anchored`
-- 网页/平台路由：见 [docs/web-routing.md](docs/web-routing.md)
-- SDK：见 [docs/sdk.md](docs/sdk.md)
-- 可选 OTEL 元数据导出：见 [docs/otel.md](docs/otel.md)（默认关闭、双重确认、不导出内容）
-- 本地评测：`npm run eval:smoke`（无 LLM）；可选 `QLING_EVAL_LLM=1 npm run eval:llm`
-- Phase 4 路线：`docs/superpowers/specs/20260710-phase4-capability-roadmap-spec.md`
-- 可选 TS 语义：`QLING_LSP=1` 后使用工具 `lsp`（definition/hover/…）
-- 模块分层：`docs/architecture-layers.md`；`npm run dep:layers`
-- 英文说明：见 [README.en.md](README.en.md)
-- 竞品对标与 1.0 路线：见 `docs/superpowers/specs/20260709-agent-cli-competitive-analysis-and-v1-roadmap-spec.md`
-- **2026-07 生态续调研与 Phase 3 路线**：见 `docs/superpowers/specs/20260710-agent-ecosystem-refresh-and-phase3-roadmap-spec.md`
-- Phase 3 实施计划：见 `docs/superpowers/plans/20260710-phase3-harness-lean-skills-orchestration-plan.md`
-- 设计 / 实施文档：见 `docs/superpowers/specs/`、`docs/superpowers/plans/`
+- **Local-first**：重要运行状态默认留在本机，路径与边界可查看。
+- **Evidence over optimism**：工具时间线、验证结果和结构化终态优先于模型自述。
+- **Recoverable by design**：中断、失败和长任务都必须有可恢复路径。
+- **Honest boundaries**：不支持、未配置或信息不完整时明确说明。
+- **Terminal-native**：增强终端交互，同时保留纯文本、Headless 和协议入口。
 
 ## License
 

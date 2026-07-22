@@ -1,66 +1,75 @@
 {
-  "generatedAt": "2026-07-10T14:11:04.249Z",
-  "fileCount": 177,
+  "generatedAt": "2026-07-22T07:40:41.541Z",
+  "fileCount": 247,
   "layerCounts": {
-    "agent-runtime": 22,
-    "domain": 47,
-    "cli": 48,
-    "adapters": 27,
-    "foundation": 10,
-    "core-services": 14,
-    "presentation": 9
+    "agent-runtime": 45,
+    "domain": 57,
+    "cli": 58,
+    "adapters": 32,
+    "foundation": 16,
+    "core-services": 16,
+    "other": 6,
+    "presentation": 17
   },
   "edges": [
+    {
+      "edge": "agent-runtime->foundation",
+      "count": 70
+    },
+    {
+      "edge": "agent-runtime->domain",
+      "count": 52
+    },
     {
       "edge": "cli->adapters",
       "count": 37
     },
     {
-      "edge": "agent-runtime->foundation",
-      "count": 35
-    },
-    {
-      "edge": "agent-runtime->domain",
-      "count": 27
-    },
-    {
-      "edge": "cli->domain",
-      "count": 25
-    },
-    {
-      "edge": "adapters->foundation",
-      "count": 23
+      "edge": "domain->foundation",
+      "count": 36
     },
     {
       "edge": "adapters->domain",
-      "count": 22
+      "count": 30
     },
     {
-      "edge": "domain->foundation",
-      "count": 21
+      "edge": "cli->domain",
+      "count": 29
     },
     {
-      "edge": "cli->foundation",
-      "count": 16
+      "edge": "adapters->foundation",
+      "count": 27
     },
     {
       "edge": "agent-runtime->core-services",
-      "count": 15
+      "count": 26
     },
     {
-      "edge": "core-services->foundation",
-      "count": 9
+      "edge": "cli->foundation",
+      "count": 24
     },
     {
       "edge": "adapters->agent-runtime",
+      "count": 19
+    },
+    {
+      "edge": "core-services->foundation",
+      "count": 12
+    },
+    {
+      "edge": "cli->presentation",
       "count": 9
     },
     {
-      "edge": "adapters->cli",
-      "count": 8
+      "edge": "agent-runtime->other",
+      "count": 7
     },
     {
       "edge": "cli->agent-runtime",
+      "count": 7
+    },
+    {
+      "edge": "presentation->domain",
       "count": 6
     },
     {
@@ -68,43 +77,43 @@
       "count": 5
     },
     {
-      "edge": "presentation->domain",
+      "edge": "presentation->agent-runtime",
       "count": 5
     },
     {
-      "edge": "presentation->cli",
+      "edge": "other->domain",
+      "count": 4
+    },
+    {
+      "edge": "cli->other",
       "count": 3
     },
     {
-      "edge": "core-services->domain",
-      "count": 2
-    },
-    {
-      "edge": "agent-runtime->cli",
-      "count": 2
-    },
-    {
-      "edge": "domain->agent-runtime",
-      "count": 2
+      "edge": "other->foundation",
+      "count": 3
     },
     {
       "edge": "presentation->foundation",
+      "count": 3
+    },
+    {
+      "edge": "presentation->other",
       "count": 2
     },
     {
-      "edge": "agent-runtime->adapters",
+      "edge": "cli->core-services",
       "count": 1
     },
     {
-      "edge": "adapters->presentation",
+      "edge": "domain->core-services",
       "count": 1
     },
     {
-      "edge": "cli->presentation",
+      "edge": "other->core-services",
       "count": 1
     },
     {
-      "edge": "presentation->agent-runtime",
+      "edge": "other->agent-runtime",
       "count": 1
     },
     {
@@ -112,121 +121,6 @@
       "count": 1
     }
   ],
-  "forbidden": [
-    {
-      "from": "agent-loop.ts",
-      "to": "dashboard-server.ts",
-      "fromLayer": "agent-runtime",
-      "toLayer": "adapters"
-    },
-    {
-      "from": "context-report.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "doctor.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "eval/tasks.ts",
-      "to": "tui/shell.ts",
-      "fromLayer": "adapters",
-      "toLayer": "presentation"
-    },
-    {
-      "from": "guard/approval.ts",
-      "to": "channels/types.ts",
-      "fromLayer": "core-services",
-      "toLayer": "domain"
-    },
-    {
-      "from": "local-storage-report.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "pipeline/sections.ts",
-      "to": "skills/types.ts",
-      "fromLayer": "core-services",
-      "toLayer": "domain"
-    },
-    {
-      "from": "privacy-report.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "recap.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "repl.ts",
-      "to": "commands/index.ts",
-      "fromLayer": "agent-runtime",
-      "toLayer": "cli"
-    },
-    {
-      "from": "repl.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "agent-runtime",
-      "toLayer": "cli"
-    },
-    {
-      "from": "session/durable-session-supervisor.ts",
-      "to": "agent-loop.ts",
-      "fromLayer": "domain",
-      "toLayer": "agent-runtime"
-    },
-    {
-      "from": "session/durable-session-supervisor.ts",
-      "to": "tools/index.ts",
-      "fromLayer": "domain",
-      "toLayer": "agent-runtime"
-    },
-    {
-      "from": "session-export-index.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "session-export.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "statusline.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "adapters",
-      "toLayer": "cli"
-    },
-    {
-      "from": "tui/streaming-repl.ts",
-      "to": "commands/index.ts",
-      "fromLayer": "presentation",
-      "toLayer": "cli"
-    },
-    {
-      "from": "tui/streaming-repl.ts",
-      "to": "commands/runtime.ts",
-      "fromLayer": "presentation",
-      "toLayer": "cli"
-    },
-    {
-      "from": "tui/streaming-tui.ts",
-      "to": "commands/index.ts",
-      "fromLayer": "presentation",
-      "toLayer": "cli"
-    }
-  ],
-  "forbiddenCount": 19
+  "forbidden": [],
+  "forbiddenCount": 0
 }

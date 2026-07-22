@@ -13,11 +13,11 @@
 
 ## 快速示例
 
-仓库内草案：`packaging/docker/`。
+仓库内的可选隔离配置位于 `packaging/docker/`。它不属于默认安装路径，发布前应在目标平台重新构建验证。
 
 ```bash
 # 构建
-docker build -f packaging/docker/Dockerfile -t qling:1.0.0 .
+docker build -f packaging/docker/Dockerfile -t qling:local .
 
 # 运行（挂载当前目录为工作区）
 docker run --rm -it \
@@ -30,7 +30,7 @@ docker run --rm -it \
   -e QLING_GUARD_NETWORK_MODE=strict \
   -v "%cd%":/workspace \
   -w /workspace \
-  qling:1.0.0 \
+  qling:local \
   run "列出 /workspace 下的文件"
 ```
 
@@ -52,7 +52,7 @@ docker compose -f packaging/docker/docker-compose.yml run --rm qling doctor
 | `browser_fetch` | 需额外装 Chromium 依赖，镜像体积大；默认镜像可不含 Playwright |
 | GUI TUI | 交互 TUI 可用 `docker run -it`；体验不如本机终端 |
 | 原生模块 | `better-sqlite3` 需在镜像构建时编译 |
-| Daemon | 容器重启会丢进程；状态可挂载 `~/.qling` 卷（慎挂） |
+| Daemon | 容器重启会终止进程；Compose 示例把状态挂载到命名卷 `qling-state` |
 
 ## 推荐安全组合
 
