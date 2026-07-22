@@ -102,6 +102,17 @@ const HOME_DIR = os.homedir();
 const DEFAULT_QLING_DIR = path.join(HOME_DIR, ".qling");
 const EXPLICIT_ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 
+export class MissingApiKeyError extends Error {
+  readonly code = "QLING_API_KEY_MISSING";
+
+  constructor() {
+    super(
+      "未配置模型 API Key。请运行 `qling setup`，或设置 QLING_LLM_API_KEY、DEEPSEEK_API_KEY、OPENAI_API_KEY；使用本地 Ollama 时可将 endpoint 设为 http://localhost:11434/v1。"
+    );
+    this.name = "MissingApiKeyError";
+  }
+}
+
 export function resolveMemoryDreamLlmEnabled(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): boolean {
@@ -321,9 +332,7 @@ export class AgentLoop extends AgentEventEmitter {
       "";
     const apiKey = resolveSessionApiKey(rawApiKey, endpoint, provider);
     if (!apiKey) {
-      throw new Error(
-        "Missing API key (expected config.apiKey / QLING_LLM_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY)。本地 Ollama 可将 endpoint 设为 http://localhost:11434/v1 以跳过密钥。"
-      );
+      throw new MissingApiKeyError();
     }
     this.runtimeRootDir = path.resolve(
       config.runtime?.fileStateDir ??

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.3.1 (2026-07-22)
+
+- Resolve the real portable launcher target before locating the bundled Node runtime, so the WinGet `qling` alias works outside the package directory.
+- Convert missing API key startup failures into a coded, actionable CLI message without a JavaScript stack trace.
+- Add Windows symlink-launch and missing-key regression coverage for the external WinGet validation path.
+
 ## v1.3.0 (2026-07-17)
 
 Grok Build 对标能力大版本：双表面 Dashboard、Plan/后台/权限/沙箱、斜杠 Skills、headless JSON、ACP、隐私安全 OTEL，以及 Linux CI 跨平台路径修复。

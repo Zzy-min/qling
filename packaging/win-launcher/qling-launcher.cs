@@ -4,13 +4,16 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 internal static class Program
 {
     private static int Main(string[] args)
     {
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string baseDir = ResolveBaseDirectory();
         string node = Path.Combine(baseDir, "runtime", "node.exe");
         string entry = Path.Combine(baseDir, "package", "dist", "index.js");
 
@@ -54,6 +57,77 @@ internal static class Program
             return p.ExitCode;
         }
     }
+
+    private static string ResolveBaseDirectory()
+    {
+        try
+        {
+            string executablePath = Assembly.GetExecutingAssembly().Location;
+            string finalPath = ResolveFinalPath(executablePath);
+            string directory = Path.GetDirectoryName(finalPath);
+            if (!string.IsNullOrEmpty(directory)) return directory;
+        }
+        catch
+        {
+            // Preserve the existing launcher diagnostics if final-path lookup is unavailable.
+        }
+        return AppDomain.CurrentDomain.BaseDirectory;
+    }
+
+    private static string ResolveFinalPath(string path)
+    {
+        using (SafeFileHandle handle = CreateFile(
+            path,
+            0,
+            FileShare.Read | FileShare.Write | FileShare.Delete,
+            IntPtr.Zero,
+            FileMode.Open,
+            0,
+            IntPtr.Zero))
+        {
+            if (handle.IsInvalid) return path;
+
+            var buffer = new StringBuilder(512);
+            uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0) return path;
+            if (length >= buffer.Capacity)
+            {
+                buffer = new StringBuilder((int)length + 1);
+                length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+                if (length == 0 || length >= buffer.Capacity) return path;
+            }
+
+            string finalPath = buffer.ToString();
+            const string uncPrefix = @"\\?\UNC\";
+            const string localPrefix = @"\\?\";
+            if (finalPath.StartsWith(uncPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return @"\\" + finalPath.Substring(uncPrefix.Length);
+            }
+            if (finalPath.StartsWith(localPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return finalPath.Substring(localPrefix.Length);
+            }
+            return finalPath;
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string fileName,
+        uint desiredAccess,
+        FileShare shareMode,
+        IntPtr securityAttributes,
+        FileMode creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        SafeFileHandle file,
+        StringBuilder filePath,
+        uint filePathLength,
+        uint flags);
 
     private static void AppendQuoted(StringBuilder sb, string value)
     {

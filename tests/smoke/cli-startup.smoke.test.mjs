@@ -28,6 +28,41 @@ test("cli startup matrix smoke: parser-level route mapping", () => {
   }
 });
 
+test("cli startup smoke: missing API key exits with setup guidance and no stack trace", () => {
+  const root = mkdtempSync(join(tmpdir(), "qling-cli-missing-key-"));
+  try {
+    const env = {
+      ...process.env,
+      USERPROFILE: root,
+      HOME: root,
+      QLING_LLM_ENDPOINT: "https://api.deepseek.com",
+      QLING_LLM_API_KEY: "",
+      DEEPSEEK_API_KEY: "",
+      OPENAI_API_KEY: "",
+      API_KEY: "",
+      QLING_FILE_STATE_DIR: join(root, ".qling"),
+      QLING_FILE_CACHE_DIR: join(root, ".qling", "cache"),
+      QLING_WORKSPACE_DIR: root,
+      QLING_BOOT_QUIET: "true",
+    };
+    const result = spawnSync(process.execPath, [ENTRY], {
+      cwd: root,
+      encoding: "utf8",
+      env,
+      timeout: 10_000,
+    });
+
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /QLING_API_KEY_MISSING/);
+    assert.match(result.stderr, /qling setup/);
+    assert.match(result.stderr, /QLING_LLM_API_KEY/);
+    assert.match(result.stderr, /Ollama/);
+    assert.doesNotMatch(result.stderr, /at new AgentLoop|file:\/\/\/|Node\.js v\d+/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cli startup smoke: --help exits with code 0 and prints contract", () => {
   const result = spawnSync(process.execPath, [ENTRY, "--help"], { encoding: "utf-8" });
   assert.equal(result.status, 0);

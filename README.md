@@ -2,7 +2,7 @@
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#环境要求)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.1-orange.svg)](CHANGELOG.md)
 
 [English](README.en.md) · [安装指南](docs/install.md) · [CHANGELOG](CHANGELOG.md)
 
@@ -417,7 +417,7 @@ npm audit --registry=https://registry.npmjs.org --audit-level=high
 
 ## 版本与变更
 
-- 当前版本：`1.3.0`
+- 当前源码版本：`1.3.1`（已发布版本见 GitHub Releases / npm）
 
 - 完整变更历史：见 [CHANGELOG.md](CHANGELOG.md)
 - 安装与分发：见 [docs/install.md](docs/install.md)、[packaging/](packaging/)

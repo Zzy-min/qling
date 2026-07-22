@@ -1123,10 +1123,11 @@ async function main() {
     }
   }
 
-  const agent = new AgentLoop(agentConfig);
+  let agent: AgentLoop | undefined;
   let unsubscribeExecutionEvents: (() => void) | undefined;
 
   try {
+    agent = new AgentLoop(agentConfig);
     await agent.waitForInit();
     if (jsonMode) {
       unsubscribeExecutionEvents = agent.subscribeExecutionEvents((event) => {
@@ -1410,7 +1411,7 @@ async function main() {
   } finally {
     unsubscribeExecutionEvents?.();
     try {
-      await agent.shutdown();
+      await agent?.shutdown();
     } catch {
       // ignore
     }
