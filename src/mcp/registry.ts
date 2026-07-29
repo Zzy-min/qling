@@ -22,8 +22,8 @@ export class MCPRegistry {
 
   registerServer(config: MCPServerConfig): void {
     const client = new MCPClient(config, {
-      connection: this.connectionTimeout,
-      call: this.callTimeout,
+      connection: config.connection_timeout_ms ?? this.connectionTimeout,
+      call: config.call_timeout_ms ?? this.callTimeout,
     });
     this.clients.set(config.name, client);
   }

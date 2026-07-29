@@ -11,6 +11,8 @@ export interface MCPServerConfig {
   transport?: "stdio" | "http";
   url?: string;
   headers?: Record<string, string>;
+  connection_timeout_ms?: number;
+  call_timeout_ms?: number;
 }
 
 export interface MCPToolDefinition {

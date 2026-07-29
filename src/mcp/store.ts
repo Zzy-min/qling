@@ -17,6 +17,8 @@ export interface StoredMcpServer {
   transport?: "stdio" | "http";
   url?: string;
   headers?: Record<string, string>;
+  connection_timeout_ms?: number;
+  call_timeout_ms?: number;
   /** 来源 preset id（若有） */
   preset?: string;
   addedAt?: string;
@@ -106,6 +108,41 @@ export async function addMcpPresetToStore(
     ok: true,
     name,
     message: `已添加 MCP server '${name}' (preset=${preset.id}) → ${storePath}.${envHint}`,
+    storePath,
+  };
+}
+
+export async function addCustomMcpToStore(
+  name: string,
+  server: Omit<StoredMcpServer, "preset" | "addedAt">,
+  options: { storePath?: string; stateDir?: string } = {}
+): Promise<{ ok: boolean; name: string; message: string; storePath: string }> {
+  const normalizedName = name.trim();
+  const storePath = options.storePath ?? defaultMcpStorePath(options.stateDir);
+  if (!normalizedName) {
+    return { ok: false, name: "", message: "server 名称不能为空", storePath };
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(normalizedName) || normalizedName === "__proto__") {
+    return {
+      ok: false,
+      name: normalizedName,
+      message: "server 名称只能包含字母、数字、点、下划线和连字符",
+      storePath,
+    };
+  }
+  const store = await loadMcpStore(storePath);
+  store.servers[normalizedName] = {
+    ...server,
+    args: [...server.args],
+    env: server.env ? { ...server.env } : undefined,
+    headers: server.headers ? { ...server.headers } : undefined,
+    addedAt: new Date().toISOString(),
+  };
+  await saveMcpStore(store, storePath);
+  return {
+    ok: true,
+    name: normalizedName,
+    message: `已添加自定义 MCP server '${normalizedName}' (${server.transport ?? "stdio"}) → ${storePath}`,
     storePath,
   };
 }

@@ -4,6 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { MCPRegistry } from "../../dist/mcp/registry.js";
 
 describe("MCPRegistry", () => {
@@ -42,6 +43,38 @@ describe("MCPRegistry", () => {
     const result = await reg.connectServer("nonexistent");
     assert.equal(result.status, "failed");
     assert.ok(result.error);
+  });
+
+  it("uses per-server timeout overrides", async () => {
+    const server = createServer((_req, res) => {
+      setTimeout(() => {
+        if (!res.destroyed) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end("{}");
+        }
+      }, 250);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const reg = new MCPRegistry({ connection: 1000, call: 1000 });
+      reg.registerServer({
+        name: "short-timeout",
+        command: "",
+        args: [],
+        enabled: true,
+        transport: "http",
+        url: `http://127.0.0.1:${server.address().port}`,
+        connection_timeout_ms: 25,
+        call_timeout_ms: 25,
+      });
+      const startedAt = Date.now();
+      const result = await reg.connectServer("short-timeout");
+      assert.equal(result.status, "failed");
+      assert.match(result.error, /timeout/i);
+      assert.ok(Date.now() - startedAt < 500);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it("should return empty tools when no servers connected", () => {
