@@ -9,9 +9,11 @@
 
 ## Recommended path today
 
-1. `npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/`
-2. Or `git clone` + `npm run bootstrap` + `npm link`
-3. Or Scoop local bucket: `scoop bucket add qling path\to\packaging\scoop-bucket`
+1. **Windows**: `winget install --id Zzy-min.qling -e` (official source; package `1.3.1`)
+2. Or GitHub Release portable ZIP (`qling-win-x64.zip`)
+3. Or `npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/`
+4. Or `git clone` + `npm run bootstrap` + `npm link`
+5. Or Scoop local bucket: `scoop bucket add qling path\to\packaging\scoop-bucket`
 
 See [docs/install.md](../docs/install.md).
 
@@ -19,12 +21,13 @@ See [docs/install.md](../docs/install.md).
 
 | Artifact | Status |
 |----------|--------|
-| npm `@qlingzzy/qling` | Published (see package.json version) |
-| Scoop hash | Filled for current version |
+| npm `@qlingzzy/qling` | **`1.3.1` on npmjs.org** |
+| Scoop hash | Filled for in-repo `1.3.1` manifests |
 | Scoop self-bucket | `packaging/scoop-bucket` usable locally |
-| Scoop official catalog | Not submitted |
-| winget portable zip | Built via `npm run build:portable-win`; attach to GitHub Release |
-| winget-pkgs PR | Not submitted |
+| Scoop public bucket `Zzy-min/scoop-qling` | **`1.3.1` synced** |
+| Scoop official Extras | Not merged |
+| winget portable zip | On GitHub Release `v1.3.1` |
+| **winget-pkgs** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged** — ID `Zzy-min.qling` `1.3.1` |
 
 ## Scripts
 

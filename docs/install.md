@@ -4,18 +4,18 @@
 
 ## 先选择渠道
 
-以下状态核验于 **2026-07-22**；此后应以链接页面显示的版本为准。
+以下状态核验于 **2026-07-29**；此后应以链接页面显示的版本为准。
 
 | 渠道 | 已核验版本/状态 | 建议 |
 |---|---|---|
-| [GitHub Release](https://github.com/Zzy-min/qling/releases/latest) | `v1.3.1`，已发布 Windows 便携 ZIP | Windows 获取当前版本的最短路径 |
+| [GitHub Release](https://github.com/Zzy-min/qling/releases/latest) | `v1.3.1`，已发布 Windows 便携 ZIP | 无需系统 Node 的最短路径之一 |
+| **[WinGet](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling)** | **`Zzy-min.qling` `1.3.1` 已进官方源**（[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并） | Windows 推荐：`winget install --id Zzy-min.qling -e` |
 | 源码 | `main` / `1.3.1` | 开发、贡献或需要完整测试工具链 |
-| [npm](https://www.npmjs.com/package/@qlingzzy/qling) | `1.3.0` | 跨平台全局安装；可能晚于 GitHub Release |
-| [公共 Scoop bucket](https://github.com/Zzy-min/scoop-qling) | `1.2.2` | 当前落后，不建议用于安装最新版本 |
+| [npm](https://www.npmjs.com/package/@qlingzzy/qling) | **`1.3.1` 已发布** | 跨平台全局安装 |
+| [公共 Scoop bucket](https://github.com/Zzy-min/scoop-qling) | **`1.3.1`** | Windows：`scoop bucket add qling https://github.com/Zzy-min/scoop-qling && scoop install qling` |
 | [Scoop Extras PR #18307](https://github.com/ScoopInstaller/Extras/pull/18307) | 已关闭、未合并 | 尚未进入官方 Extras |
-| [WinGet PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) | manifest `1.3.1`，PR 开放 | 外部验证/审核完成前不能按官方目录已收录宣传 |
 
-GitHub Release、npm、Scoop 与 WinGet 是独立发布面，不应假定它们版本相同。
+GitHub Release、WinGet、npm 与 Scoop 是独立发布面，不应假定它们版本相同。
 
 ## 环境要求
 
@@ -103,9 +103,18 @@ scoop bucket add qling https://github.com/Zzy-min/scoop-qling
 scoop info qling
 ```
 
-截至 2026-07-22，该公共 bucket 仍为 `1.2.2`。先检查 `scoop info qling`，不要把它当作 `1.3.1` 使用。
+公共 bucket 已同步到 **`1.3.1`**（与 GitHub Release 便携 ZIP 一致）：
 
-### 从当前源码中的 1.3.1 manifest 安装
+```powershell
+scoop bucket add qling https://github.com/Zzy-min/scoop-qling
+scoop install qling
+# 或已添加 bucket 时：
+scoop update qling
+qling --version
+scoop info qling
+```
+
+### 从本仓库 manifest 安装（维护 / 离线）
 
 ```powershell
 git clone https://github.com/Zzy-min/qling.git
@@ -114,7 +123,7 @@ scoop install .\packaging\scoop\qling.json
 qling --version
 ```
 
-本仓库的 `packaging/scoop/qling.json` 与 `packaging/scoop-bucket/qling.json` 均为 `1.3.1`。同步/校验命令：
+本仓库的 `packaging/scoop/qling.json` 与 `packaging/scoop-bucket/qling.json` 均为 `1.3.1`。同步到公共 bucket 前先在本仓校验：
 
 ```powershell
 npm run validate:packaging
@@ -123,11 +132,40 @@ npm run sync:scoop-bucket
 
 官方 Extras PR #18307 因收录门槛关闭，并非 manifest 语法已经进入官方目录。项目满足社区准入条件后再重新申请。
 
-## 方式 E：WinGet
+## 方式 E：WinGet（官方源已收录）
 
-WinGet PR #402294 已更新到 `1.3.1`，但外部验证与人工审核尚未完成。当前不要宣称可以从官方 WinGet 源稳定安装。
+[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已于 **2026-07-29** 合并。官方清单：
 
-本仓库清单：
+- 包 ID：`Zzy-min.qling`
+- 版本：`1.3.1`
+- 路径：[manifests/z/Zzy-min/qling/1.3.1](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1)
+
+### 从官方源安装
+
+```powershell
+winget source update
+winget search Zzy-min.qling
+winget show --id Zzy-min.qling
+winget install --id Zzy-min.qling -e
+qling --version
+qling doctor
+qling setup
+```
+
+升级 / 卸载：
+
+```powershell
+winget upgrade --id Zzy-min.qling -e
+winget uninstall --id Zzy-min.qling
+```
+
+说明：
+
+- 安装器为 GitHub Release 上的 Windows 便携 ZIP（内嵌 Node）。
+- 便携启动器支持 WinGet 风格符号链接路径；缺少 API key 时返回 `QLING_API_KEY_MISSING`，不抛原始堆栈。
+- 若 `winget search` 找不到包，先 `winget source update`，并确认 `winget source list` 中 `winget` 源可用。
+
+### 本仓库镜像清单（维护 / 离线试装）
 
 ```text
 packaging/winget/manifests/Zzy-min/qling/1.3.1/
@@ -136,14 +174,10 @@ packaging/winget/manifests/Zzy-min/qling/1.3.1/
   Zzy-min.qling.installer.yaml
 ```
 
-本地校验与试装：
-
 ```powershell
 winget validate --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
 winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
 ```
-
-正式收录状态以 [PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 为准。
 
 ## 配置与密钥
 

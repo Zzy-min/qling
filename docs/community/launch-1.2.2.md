@@ -11,8 +11,8 @@ Facts to keep accurate:
 - npm package: `@qlingzzy/qling@1.2.2`.
 - Windows portable release includes Node and passed `qling.exe --version` plus `qling.exe doctor` after a clean remote download.
 - GitHub Actions passes on Linux and Windows.
-- The public Scoop bucket is available at `Zzy-min/scoop-qling`.
-- WinGet is still under external validation and maintainer review. Do not describe it as available yet.
+- The public Scoop bucket is available at `Zzy-min/scoop-qling` (may lag the latest GitHub Release).
+- WinGet: package `Zzy-min.qling` was accepted via [microsoft/winget-pkgs#402294](https://github.com/microsoft/winget-pkgs/pull/402294) (merged; manifest `1.3.1`). Prefer `winget install --id Zzy-min.qling -e` on Windows.
 
 ## Developer-community post (Chinese)
 

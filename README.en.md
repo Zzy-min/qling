@@ -57,6 +57,21 @@ Download `qling-win-x64.zip` from [GitHub Releases](https://github.com/Zzy-min/q
 
 The archive embeds Node.js. It does not require a system Node installation.
 
+### WinGet (Windows)
+
+`Zzy-min.qling` is in the [official WinGet repository](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling) (manifest `1.3.1`; [PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged):
+
+```powershell
+winget source update
+winget search Zzy-min.qling
+winget install --id Zzy-min.qling -e
+qling --version
+qling doctor
+qling setup
+```
+
+If your local source is stale, run `winget source update` again, or use the portable ZIP above. A missing API key returns `QLING_API_KEY_MISSING` instead of a JavaScript stack trace.
+
 ### npm
 
 ```bash
@@ -65,7 +80,7 @@ qling --version
 qling bootstrap
 ```
 
-GitHub Releases and npm may publish on different schedules. Check the release page and `npm view @qlingzzy/qling version` when an exact version matters.
+GitHub Releases, WinGet, and npm may publish on different schedules. Check the [release page](https://github.com/Zzy-min/qling/releases/latest), `winget show Zzy-min.qling`, and `npm view @qlingzzy/qling version` when an exact version matters.
 
 ### Source
 
@@ -261,17 +276,17 @@ npm run dep:layers -- --strict
 
 ## Distribution status
 
-Verified on 2026-07-22; channel pages remain the source of truth after that date.
+Verified on **2026-07-29**; channel pages remain the source of truth after that date.
 
 | Channel | Verified state |
 |---|---|
 | Source / GitHub Release | `v1.3.1`; Windows portable ZIP is published |
-| npm `@qlingzzy/qling` | `1.3.0` |
-| Public `Zzy-min/scoop-qling` bucket | `1.2.2`; not the latest release |
-| Scoop Extras | PR #18307 closed without merge; use source/npm/portable ZIP until the bucket is resynced |
-| WinGet | PR #402294 is open on manifest `1.3.1`; external validation/review is not yet complete |
+| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged**; package ID `Zzy-min.qling`, manifest `1.3.1` in [winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1) |
+| npm `@qlingzzy/qling` | **`1.3.1` published** (`npm view @qlingzzy/qling version`) |
+| Public `Zzy-min/scoop-qling` bucket | **`1.3.1`** (portable ZIP + hash aligned with GitHub Release) |
+| Scoop Extras | PR #18307 closed without merge |
 
-Do not infer that every channel carries the same version. See [docs/install.md](docs/install.md) for current choices.
+Do not infer that every channel carries the same version. See [docs/install.md](docs/install.md) for install commands and verification.
 
 ## Current boundaries
 

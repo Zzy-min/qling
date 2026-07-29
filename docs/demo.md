@@ -95,7 +95,7 @@ qling dashboard start
 - 没有 API key、Authorization header、Daemon token 或通道 token。
 - 没有 `C:\Users\<name>`、`/Users/<name>`、邮箱或私人仓库路径。
 - 不把 `paused`、`exhausted`、`failed` 或 `canceled` 说成成功。
-- 不宣称未完成的 WinGet/Scoop 官方收录。
+- WinGet 官方源已收录 `Zzy-min.qling`（1.3.1）；Scoop 公共 bucket 可能仍落后，勿与 GitHub Release 版本混称。
 - 画面中的版本、命令和 README 当前版本一致。
 - 导出视频后完整回看一次，检查裁切、CJK 宽度、ANSI 残留和字幕同步。
 

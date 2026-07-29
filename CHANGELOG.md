@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Docs / distribution
+
+- Document **WinGet official listing** after [microsoft/winget-pkgs#402294](https://github.com/microsoft/winget-pkgs/pull/402294) merge (`Zzy-min.qling` `1.3.1`).
+- Publish **npm `@qlingzzy/qling@1.3.1`** and sync public Scoop bucket **`Zzy-min/scoop-qling` to `1.3.1`**.
+- Refresh README (zh/en), `docs/install.md`, `packaging/README.md`, and maintainer packaging notes for aligned channels.
+
 ## v1.3.1 (2026-07-22)
 
 - Resolve the real portable launcher target before locating the bundled Node runtime, so the WinGet `qling` alias works outside the package directory.

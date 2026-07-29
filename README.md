@@ -57,7 +57,22 @@ flowchart LR
 .\qling-win-x64\qling.exe setup
 ```
 
-便携包内嵌 Node.js，不要求系统预装 Node。Scoop、自建 bucket、WinGet 进度和卸载说明见 [安装指南](docs/install.md)。
+便携包内嵌 Node.js，不要求系统预装 Node。Scoop、自建 bucket 与卸载说明见 [安装指南](docs/install.md)。
+
+### WinGet（Windows）
+
+[WinGet 官方源](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling) 已收录 `Zzy-min.qling`（manifest `1.3.1`，[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并）：
+
+```powershell
+winget source update
+winget search Zzy-min.qling
+winget install --id Zzy-min.qling -e
+qling --version
+qling doctor
+qling setup
+```
+
+若本机源尚未同步，可稍后再试 `winget source update`，或改用上方便携 ZIP。缺少 API key 时会返回 `QLING_API_KEY_MISSING` 友好提示，而不是 JavaScript 堆栈。
 
 ### npm
 
@@ -67,7 +82,7 @@ qling --version
 qling bootstrap
 ```
 
-GitHub Release 与 npm 可能按不同节奏发布；可分别查看 Releases 和 `npm view @qlingzzy/qling version` 确认版本。
+GitHub Release、WinGet 与 npm 可能按不同节奏发布；请分别查看 [Releases](https://github.com/Zzy-min/qling/releases/latest)、`winget show Zzy-min.qling` 与 `npm view @qlingzzy/qling version`。
 
 ### 从源码启动
 
@@ -403,17 +418,17 @@ npm run dep:layers -- --strict
 
 ## 分发状态
 
-以下状态核验于 2026-07-22，此后以各渠道页面为准：
+以下状态核验于 **2026-07-29**，此后以各渠道页面为准：
 
 | 渠道 | 已核验状态 |
 |---|---|
 | 源码 / GitHub Release | `v1.3.1`，Windows 便携 ZIP 已发布 |
-| npm `@qlingzzy/qling` | `1.3.0` |
-| 公共 `Zzy-min/scoop-qling` bucket | `1.2.2`，不是当前最新版 |
+| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并**；包 ID `Zzy-min.qling`，manifest `1.3.1` 在 [winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1) |
+| npm `@qlingzzy/qling` | **`1.3.1` 已发布**（`npm view @qlingzzy/qling version`） |
+| 公共 `Zzy-min/scoop-qling` bucket | **`1.3.1`**（便携 ZIP + hash 与 GitHub Release 对齐） |
 | Scoop Extras | PR #18307 已关闭且未合并；官方目录尚未收录 |
-| WinGet | PR #402294 开放，manifest `1.3.1`；外部验证与审核尚未完成 |
 
-不要从源码版本推断 npm、Scoop 或 WinGet 已同步。具体选择与校验命令见 [安装指南](docs/install.md)。
+不要从源码版本推断 npm 或 Scoop 公共 bucket 已同步。安装与校验命令见 [安装指南](docs/install.md)。
 
 ## 当前边界
 
@@ -421,7 +436,7 @@ npm run dep:layers -- --strict
 - token streaming、browser act、LSP、anchored edit、动态发现和 JSON lifecycle Hooks 中的部分能力仍是显式 opt-in。
 - Dashboard 与 Daemon 面向本机控制面；远程暴露需要额外安全配置，不建议直接公开到互联网。
 - `browser_fetch` 需要单独安装 Playwright Chromium。
-- GitHub Release、npm、Scoop bucket 与 WinGet 审核可能处于不同版本节奏，请以各分发渠道显示的版本为准。
+- GitHub Release、WinGet、npm 与 Scoop 可能处于不同版本节奏，请以各分发渠道显示的版本为准。
 
 ## 文档
 

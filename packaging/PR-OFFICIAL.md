@@ -2,18 +2,23 @@
 
 ## 当前状态
 
-核验时间：**2026-07-22**。后续状态以各链接页面为准。
+核验时间：**2026-07-29**。后续状态以各链接页面为准。
 
 | 渠道 | 已核验状态 |
 |---|---|
 | GitHub Release | [`v1.3.1`](https://github.com/Zzy-min/qling/releases/tag/v1.3.1)，便携 ZIP 已上传 |
 | 便携 ZIP | `qling-win-x64.zip`，SHA256 `28cd2b71c935f49a2193b76486272559d48c111e8df052159f9b3dc8687f4d91` |
-| npm | `@qlingzzy/qling@1.3.0`；晚于/早于 Release 时分别核验，不从源码版本推断 |
-| 公共 Scoop bucket | [`Zzy-min/scoop-qling`](https://github.com/Zzy-min/scoop-qling) 仍为 `1.2.2`，尚未同步到最新 Release |
+| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并**；官方包 ID `Zzy-min.qling` `1.3.1` 位于 [winget-pkgs tree](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1) |
+| npm | **`@qlingzzy/qling@1.3.1` 已发布** |
+| 公共 Scoop bucket | [`Zzy-min/scoop-qling`](https://github.com/Zzy-min/scoop-qling) **已同步 `1.3.1`** |
 | Scoop Extras | [PR #18307](https://github.com/ScoopInstaller/Extras/pull/18307) 已关闭、未合并；维护者建议自建 bucket |
-| WinGet | [PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 开放，manifest `1.3.1`，CLA 通过，外部验证/人工审核未完成 |
 
-WinGet 最新验证流水线：[`WinGetSvc-Validation-148-402294-20260722-1`](https://dev.azure.com/shine-oss/8b78618a-7973-49d8-9174-4360829d979b/_build/results?buildId=371743)。核验时仍为 `inProgress`，不得写成“已通过”。
+Windows 用户推荐安装：
+
+```powershell
+winget source update
+winget install --id Zzy-min.qling -e
+```
 
 ## 本仓库的规范源
 
@@ -34,8 +39,9 @@ WinGet 最新验证流水线：[`WinGetSvc-Validation-148-402294-20260722-1`](ht
 4. 创建不可变 GitHub Release，上传 ZIP。
 5. 从公开资产重新核验大小与 SHA256。
 6. 更新本仓库 Scoop/WinGet 清单。
-7. 分别更新并推送公共 Scoop bucket、WinGet PR。
-8. 等待外部流水线与人工审核；不能把“已触发”写成“已通过”。
+7. 更新并推送公共 Scoop bucket（若仍落后）。
+8. **新版本** 再向 `microsoft/winget-pkgs` 提交更新 PR；合并前不得写成「官方源已是新版本」。
+9. 合并后更新本文件与 `docs/install.md` / README 分发状态表。
 
 ## 构建与本地门禁
 
