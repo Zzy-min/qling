@@ -71,11 +71,19 @@ test("config supports ${ENV_VAR} template expansion with warnings", async () => 
       "llm:\n  api_key: ${MY_TEST_KEY}\nruntime:\n  workspace_dir: ${MISSING_KEY}\n",
       "utf-8"
     );
-    await withEnv({ MY_TEST_KEY: "abc-123", MISSING_KEY: undefined }, async () => {
-      const loaded = await loadQlingConfig({ configPath });
-      assert.equal(loaded.config.llm.api_key, "abc-123");
-      assert.match(loaded.warnings.join("\n"), /Missing env variable/);
-    });
+    // Clear QLING_LLM_API_KEY so host env cannot override file template expansion.
+    await withEnv(
+      {
+        MY_TEST_KEY: "abc-123",
+        MISSING_KEY: undefined,
+        QLING_LLM_API_KEY: undefined,
+      },
+      async () => {
+        const loaded = await loadQlingConfig({ configPath });
+        assert.equal(loaded.config.llm.api_key, "abc-123");
+        assert.match(loaded.warnings.join("\n"), /Missing env variable/);
+      }
+    );
   });
 });
 
