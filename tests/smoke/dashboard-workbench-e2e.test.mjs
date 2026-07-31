@@ -49,11 +49,25 @@ test("dashboard workbench renders tasks, filters and responsive detail", async (
   });
   const dashboard = new DashboardServer({ port, collector, workflowRuntime: workflow, agentLoop: agent });
   const browser = await chromium.launch({ headless: true });
+  const consoleErrors = [];
+  const remoteRequests = [];
 
   try {
     await dashboard.start();
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    page.on("pageerror", (error) => consoleErrors.push(error.message));
+    page.on("request", (request) => {
+      const requestUrl = new URL(request.url());
+      if (!["127.0.0.1", "localhost"].includes(requestUrl.hostname)) remoteRequests.push(request.url());
+    });
     await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "networkidle" });
+    const traversal = await page.request.get(`http://127.0.0.1:${port}/assets/%2e%2e/package.json`);
+    assert.equal(traversal.status(), 404);
+    const csp = await page.request.get(`http://127.0.0.1:${port}/`);
+    assert.match(csp.headers()["content-security-policy"], /script-src 'self'/);
     await page.getByText("扫描依赖边界", { exact: true }).waitFor();
     assert.equal(await page.getByText("加载中...", { exact: true }).count(), 0);
     assert.equal(await page.locator(".task-row").count(), 2);
@@ -66,11 +80,17 @@ test("dashboard workbench renders tasks, filters and responsive detail", async (
     await page.getByText("缺少 README", { exact: false }).waitFor();
     await page.getByRole("button", { name: "关闭" }).click();
 
+    await page.setViewportSize({ width: 1024, height: 768 });
+    assert.equal(await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth), true);
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator(".task-row").filter({ hasText: "验证发布包" }).click();
     await page.locator("#detail-pane.open").waitFor();
     await page.getByRole("button", { name: "关闭" }).click();
     await page.waitForFunction(() => !document.querySelector("#detail-pane")?.classList.contains("open"));
+    assert.equal(await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth), true);
+    assert.deepEqual(consoleErrors, []);
+    assert.deepEqual(remoteRequests, []);
   } finally {
     await browser.close();
     dashboard.stop();

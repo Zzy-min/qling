@@ -71,6 +71,15 @@ import {
 import type { TuiFocus } from "./focus-model.js";
 import { tabStructuralFocus } from "./focus-model.js";
 import { ScrollbackViewport } from "./scrollback-viewport.js";
+import {
+  consumeMouseInput,
+  FullscreenRenderer,
+  resolveColorMode,
+  resolveIconMode,
+  resolveTuiMode,
+  type TuiMode,
+} from "./fullscreen.js";
+import { readClipboardText, writeClipboardText } from "../runtime/clipboard.js";
 
 // ── ANSI 颜色工具（短别名兼容既有调用） ─────────────────
 
@@ -149,6 +158,10 @@ export class StreamUI {
   private currentToolRunning: boolean = false;
   private dataHandler: ((chunk: string) => void) | null = null;
   private resizeHandler: (() => void) | null = null;
+  private exitRestoreHandler: (() => void) | null = null;
+  private termRestoreHandler: (() => void) | null = null;
+  private wheelScrollTimer: NodeJS.Timeout | null = null;
+  private pendingWheelLines = 0;
   private statusLine: string | null = null;
   private statusLineEnabled = true;
   private progressTimer: NodeJS.Timeout | null = null;
@@ -196,6 +209,8 @@ export class StreamUI {
   private readonly doubleCtrlCExitWindowMs = 2_000;
   private slashUi: SlashUiPorts | null = null;
   private readonly slashUiPromise: Promise<SlashUiPorts>;
+  private fullscreen: FullscreenRenderer | null = null;
+  private readonly requestedTuiMode: TuiMode;
 
   /** G1/G3: 浮层 — 会话 / 轮次 / 通用选项切换器 */
   private overlay:
@@ -243,6 +258,8 @@ export class StreamUI {
   private onSessionPick: ((sessionId: string) => void | Promise<void>) | null = null;
   /** Shift+Tab：在原输入框内切模式，不提交、不另起输入框 */
   private onModeCycle: (() => void | Promise<void>) | null = null;
+  /** Ctrl+C：任务运行时直接中断 Agent，不进入双击退出流程。 */
+  private onInterrupt: (() => boolean | void) | null = null;
   /** 对标 Grok ActivePane：prompt | scrollback */
   private focus: TuiFocus = "prompt";
   /** 对标 JumpRestore：打开浮层前快照，Esc 恢复 */
@@ -252,11 +269,33 @@ export class StreamUI {
   constructor(
     model: string = "deepseek-chat",
     tools: number = 0,
-    options: { now?: () => number; slashUi?: SlashUiPorts } = {}
+    options: { now?: () => number; slashUi?: SlashUiPorts; tuiMode?: TuiMode } = {}
   ) {
     this.model = model;
     this.tools = tools;
     this.now = options.now ?? (() => Date.now());
+    this.requestedTuiMode =
+      options.tuiMode ??
+      ((["auto", "fullscreen", "classic"].includes(String(process.env.QLING_TUI_MODE)))
+        ? process.env.QLING_TUI_MODE as TuiMode
+        : "auto");
+    const capabilities = this.terminalCapabilities();
+    if (resolveTuiMode(this.requestedTuiMode, capabilities) === "fullscreen") {
+      const writeFullscreen = process.stdout.write.bind(process.stdout);
+      this.fullscreen = new FullscreenRenderer({
+        workspace: process.cwd(),
+        model: this.model,
+        ready: true,
+        tokens: 0,
+        branch: "-",
+        sessionMode: "agent",
+        permissionMode: "ask",
+      }, capabilities, {
+        iconMode: resolveIconMode(process.env.QLING_TUI_ICONS),
+        write: (value) => writeFullscreen(value),
+        writeClipboard: (value) => writeClipboardText(value),
+      });
+    }
     if (options.slashUi) {
       this.slashUi = options.slashUi;
       this.slashUiPromise = Promise.resolve(options.slashUi);
@@ -266,6 +305,29 @@ export class StreamUI {
         return ports;
       });
     }
+  }
+
+  private terminalCapabilities() {
+    return {
+      stdinTTY: process.stdin.isTTY === true,
+      stdoutTTY: process.stdout.isTTY === true,
+      columns: Number(process.stdout.columns || 80),
+      rows: Number(process.stdout.rows || 24),
+      colorMode: resolveColorMode(),
+    };
+  }
+
+  private queueFullscreenWheel(lineDelta: number): void {
+    if (!this.fullscreen || lineDelta === 0) return;
+    this.pendingWheelLines += lineDelta;
+    if (this.wheelScrollTimer) return;
+    this.wheelScrollTimer = setTimeout(() => {
+      this.wheelScrollTimer = null;
+      const pending = this.pendingWheelLines;
+      this.pendingWheelLines = 0;
+      this.fullscreen?.scrollLines(pending);
+    }, 16);
+    this.wheelScrollTimer.unref?.();
   }
 
   /** REPL 注入：打开会话列表时拉数据 */
@@ -280,6 +342,11 @@ export class StreamUI {
   /** Shift+Tab 模式循环（REPL 注入，原位更新 chrome + 输入框） */
   setModeCycleHandler(handler: () => void | Promise<void>): void {
     this.onModeCycle = handler;
+  }
+
+  /** 任务运行期间 Ctrl+C 的业务中断入口，由 REPL 绑定到 AgentLoop。 */
+  setInterruptHandler(handler: () => boolean | void): void {
+    this.onInterrupt = handler;
   }
 
   /**
@@ -297,6 +364,19 @@ export class StreamUI {
     }
     if (patch.permissionMode !== undefined) {
       this.chromeStatus.permissionMode = patch.permissionMode;
+    }
+    if (this.fullscreen) {
+      this.fullscreen.updateChrome({
+        model: this.model,
+        workspace: this.chromeStatus.workspace ?? process.cwd(),
+        tokens: this.chromeStatus.tokens ?? 0,
+        branch: this.chromeStatus.branch ?? "-",
+        ready: this.chromeStatus.ready ?? true,
+        sessionMode: this.chromeStatus.sessionMode ?? "agent",
+        permissionMode: this.chromeStatus.permissionMode ?? "ask",
+      });
+      this.redrawInput();
+      return;
     }
     if (!this.running) return;
     if (this.streamActive) return;
@@ -637,6 +717,16 @@ export class StreamUI {
    */
   dispatchKey(seq: string): void {
     if (!this.running) return;
+    if (this.fullscreen && (seq === "\x1bc" || seq === "\x1bC")) {
+      this.fullscreen.copySelection();
+      return;
+    }
+    if (this.fullscreen && (seq === "\x1b[5~" || seq === "\x1b[6~" || seq === "\x1b[F" || seq === "\x1b[4~")) {
+      if (seq === "\x1b[5~") this.fullscreen.scrollPages(1);
+      else if (seq === "\x1b[6~") this.fullscreen.scrollPages(-1);
+      else this.fullscreen.scrollEnd();
+      return;
+    }
     if (seq === "\x1c") {
       this.handleSessionPickerToggle();
       return;
@@ -663,7 +753,12 @@ export class StreamUI {
       return;
     }
     // Shift+Tab（常见 CSI u / 传统 \x1b[Z）
-    if (seq === "\x1b[Z" || seq === "\x1b[1;2Z") {
+    if (
+      seq === "\x1b[Z" ||
+      seq === "\x1b[1;2Z" ||
+      seq === "\x1b[9;2u" ||
+      seq === "\x1b[27;2;9~"
+    ) {
       this.handleShiftTab();
       return;
     }
@@ -767,16 +862,49 @@ export class StreamUI {
   start(): void {
     this.running = true;
     // 先进入安静模式，再画框，避免后续 ProjectionWorker/Memory 日志打穿输入区
-    enterTuiQuietMode();
+    enterTuiQuietMode(
+      this.fullscreen
+        ? (level, text) => {
+            if (!this.fullscreen) return;
+            if (level === "error") this.fullscreen.appendError(text);
+            else this.fullscreen.appendNotice(text);
+          }
+        : undefined
+    );
     void this.slashUiPromise;
-    this.printHeader();
-    this.printInputBar();
-    this.setupInput();
+    try {
+      if (this.fullscreen) {
+        this.fullscreen.start();
+        this.exitRestoreHandler = () => this.fullscreen?.stop();
+        this.termRestoreHandler = () => {
+          this.stop();
+          process.exitCode = 143;
+        };
+        process.once("exit", this.exitRestoreHandler);
+        process.once("SIGTERM", this.termRestoreHandler);
+        this.fullscreen.setInput("", "输入任务，/help 查看命令", 0);
+        this.promptLive = true;
+        this.streamActive = false;
+      } else {
+        this.printHeader();
+        this.printInputBar();
+      }
+      this.setupInput();
+    } catch (error) {
+      this.stop();
+      throw error;
+    }
   }
 
   stop(): void {
     this.running = false;
     this.stopProgress();
+    if (this.wheelScrollTimer) {
+      clearTimeout(this.wheelScrollTimer);
+      this.wheelScrollTimer = null;
+      this.pendingWheelLines = 0;
+    }
+    this.fullscreen?.stop();
     leaveTuiQuietMode();
     if (this.dataHandler) {
       process.stdin.off("data", this.dataHandler);
@@ -786,11 +914,19 @@ export class StreamUI {
       process.stdout.off("resize", this.resizeHandler);
       this.resizeHandler = null;
     }
+    if (this.exitRestoreHandler) {
+      process.off("exit", this.exitRestoreHandler);
+      this.exitRestoreHandler = null;
+    }
+    if (this.termRestoreHandler) {
+      process.off("SIGTERM", this.termRestoreHandler);
+      this.termRestoreHandler = null;
+    }
     if (typeof process.stdin.setRawMode === "function") {
       process.stdin.setRawMode(false);
     }
     process.stdin.pause();
-    process.stdout.write("\n");
+    if (!this.fullscreen) process.stdout.write("\n");
   }
 
   onInput(cb: (cmd: string) => Promise<void>): void {
@@ -803,6 +939,14 @@ export class StreamUI {
    */
   setAgentBusy(busy: boolean): void {
     this.agentBusy = Boolean(busy);
+    if (this.fullscreen) {
+      this.fullscreen.updateChrome({ ready: !this.agentBusy });
+      this.fullscreen.setInput(
+        this.input.value,
+        "输入任务，/help 查看命令",
+        this.input.cursorPos
+      );
+    }
     if (this.agentBusy) {
       this.streamActive = true;
       // 不在这里 promptLive=false：submitSlashDraft 已处理；避免误清审批态
@@ -836,11 +980,23 @@ export class StreamUI {
     memoryStatus?: string;
   }): void {
     this.chromeStatus = { ...this.chromeStatus, ...status };
+    this.fullscreen?.updateChrome({
+      tokens: this.chromeStatus.tokens ?? 0,
+      branch: this.chromeStatus.branch ?? "-",
+      workspace: this.chromeStatus.workspace ?? process.cwd(),
+      ready: this.chromeStatus.ready ?? true,
+      model: this.model,
+      sessionMode: this.chromeStatus.sessionMode ?? "agent",
+      permissionMode: this.chromeStatus.permissionMode ?? "ask",
+    });
   }
 
   setModel(model: string): void {
     const next = String(model ?? "").trim();
-    if (next) this.model = next;
+    if (next) {
+      this.model = next;
+      this.fullscreen?.updateChrome({ model: next });
+    }
   }
 
   setRecoveryState(state: RecoveryState | null): void {
@@ -861,6 +1017,18 @@ export class StreamUI {
   }
 
   private appendRecoveryCard(state: RecoveryState): void {
+    if (this.fullscreen) {
+      const failure = state.lastFailure;
+      this.fullscreen.appendError(
+        [
+          "执行已暂停",
+          `原因 ${failure?.category ?? "unknown"}: ${failure?.message ?? "-"}`,
+          `证据 ${failure?.fingerprint ?? "-"}  剩余预算 ${state.remainingStrategyAttempts}`,
+          "R 重试  S 下一策略  E 编辑任务  C 取消并保存摘要",
+        ].join("\n")
+      );
+      return;
+    }
     this.ensureStreamMode();
     const failure = state.lastFailure;
     process.stdout.write("\n" + [
@@ -881,10 +1049,12 @@ export class StreamUI {
 
   setExpandLongToolOutput(expanded: boolean): void {
     this.expandLongToolOutput = Boolean(expanded);
+    this.fullscreen?.setExpandToolOutput(this.expandLongToolOutput);
   }
 
   toggleExpandLongToolOutput(): boolean {
     this.expandLongToolOutput = !this.expandLongToolOutput;
+    this.fullscreen?.setExpandToolOutput(this.expandLongToolOutput);
     return this.expandLongToolOutput;
   }
 
@@ -896,6 +1066,21 @@ export class StreamUI {
     this.stopProgress();
     // 审批/选项浮层期间禁止 spinner：\r 会打穿浮层下输入框，叠出重复 chrome
     if (this.overlay) return;
+    if (this.fullscreen) {
+      this.progressLabel = label.trim() || "agent";
+      this.progressStartedAt = this.now();
+      const paint = () => {
+        if (this.overlay || !this.fullscreen) return;
+        this.fullscreen.setProgress(
+          this.progressLabel,
+          this.now() - this.progressStartedAt
+        );
+      };
+      paint();
+      this.progressTimer = setInterval(paint, Math.max(500, intervalMs));
+      this.progressTimer.unref?.();
+      return;
+    }
     // 绝不在活动输入框内容行上 \r，否则会画出「框里转圈」的错乱画面
     this.ensureStreamMode();
     if (this.overlay) return;
@@ -917,15 +1102,23 @@ export class StreamUI {
   }
 
   stopProgress(): void {
-    if (!this.progressTimer) return;
-    clearInterval(this.progressTimer);
-    this.progressTimer = null;
+    const hadTimer = Boolean(this.progressTimer);
+    if (this.progressTimer) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = null;
+    }
+    if (this.fullscreen) {
+      this.fullscreen.setProgress(null);
+      return;
+    }
+    if (!hadTimer) return;
     process.stdout.write("\r\x1b[K");
   }
 
   /** 清掉 spinner 当前行，但不停止计时（工具输出落盘前调用） */
   private clearProgressLine(): void {
     if (!this.progressTimer) return;
+    if (this.fullscreen) return;
     process.stdout.write("\r\x1b[K");
   }
 
@@ -988,6 +1181,10 @@ export class StreamUI {
   }
 
   private backToPrompt(): void {
+    if (this.fullscreen) {
+      this.promptLive = false;
+      return;
+    }
     this.moveToInputContentStart();
     process.stdout.write("\r");
     process.stdout.write("\x1b[J");
@@ -1000,6 +1197,10 @@ export class StreamUI {
    * 用提交前仍保留的 lastInput* 行数整块上移擦除。
    */
   private eraseSubmittedInputBlock(): void {
+    if (this.fullscreen) {
+      this.promptLive = false;
+      return;
+    }
     const rows = Math.max(
       0,
       this.lastInputContentLineCount + this.lastInputHintLineCount
@@ -1032,6 +1233,15 @@ export class StreamUI {
   }
 
   private redrawInput(): void {
+    if (this.fullscreen) {
+      this.fullscreen.setInput(
+        this.input.value,
+        "输入任务，/help 查看命令",
+        this.input.cursorPos
+      );
+      this.promptLive = true;
+      return;
+    }
     // 任务忙锁 / 流式期：禁止；审批浮层可重绘整块
     if (this.shouldSuppressInputChrome()) return;
     if (this.streamActive && !this.overlay) return;
@@ -1054,6 +1264,15 @@ export class StreamUI {
    * 任务流式态：只追加一行，绝不重画输入框。
    */
   private appendFeedbackAndRedraw(message: string, usePlaceholder = false): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendNotice(message.replace(/\x1b\[[0-9;]*m/g, ""));
+      this.fullscreen.setInput(
+        this.input.value,
+        usePlaceholder ? "输入任务，/help 查看命令" : undefined,
+        this.input.cursorPos
+      );
+      return;
+    }
     // 审批面板打开时：擦掉整块 → 写消息 → 再画回单份面板+输入（避免叠框）
     if (this.overlay) {
       this.stopProgress();
@@ -1078,6 +1297,11 @@ export class StreamUI {
 
   /** 离开活动输入框，进入只追加的流式输出区（提交任务 / 工具输出前调用） */
   private ensureStreamMode(): void {
+    if (this.fullscreen) {
+      this.streamActive = true;
+      this.chromeContiguous = false;
+      return;
+    }
     // 浮层期间不允许 ensureStreamMode 拆掉输入 chrome（会残留双框）
     if (this.overlay) {
       this.stopProgress();
@@ -1214,6 +1438,14 @@ export class StreamUI {
   }
 
   private syncCursor(): void {
+    if (this.fullscreen) {
+      this.fullscreen.setInput(
+        this.input.value,
+        undefined,
+        this.input.cursorPos
+      );
+      return;
+    }
     const uiMode = resolveGrokUiMode(
       this.chromeStatus.sessionMode,
       this.chromeStatus.permissionMode
@@ -1317,6 +1549,16 @@ export class StreamUI {
   }
 
   private writeInputValue(usePlaceholder = false): void {
+    if (this.fullscreen) {
+      this.fullscreen.setInput(
+        this.input.value,
+        usePlaceholder ? "输入任务，/help 查看命令" : "",
+        this.input.cursorPos
+      );
+      this.lastInputContentLineCount = 3;
+      this.lastInputHintLineCount = 1;
+      return;
+    }
     // 硬门闩：agent 跑工具时禁止任何输入框（审批 overlay 走 paintOverlay 例外）
     if (this.shouldSuppressInputChrome()) return;
     const contentWidth = this.inputFrameContentWidth();
@@ -1640,12 +1882,32 @@ export class StreamUI {
     if (this.agentBusy && !this.overlay) return;
     // slash 缓冲先整块 Markdown 渲染再恢复输入框
     if (this.slashMdBuffer.length > 0) {
-      this.flushSlashMarkdown();
+      if (this.fullscreen) {
+        const text = this.slashMdBuffer.join("\n");
+        this.slashMdBuffer = [];
+        this.fullscreen.setTransientOutput(null);
+        this.fullscreen.appendAssistant(text);
+      } else {
+        this.flushSlashMarkdown();
+      }
       this.slashOutputActive = false;
     }
     // 浮层（切换器）占用输入槽时禁止再叠一份输入框
     if (this.overlay) {
       this.streamActive = false;
+      return;
+    }
+    if (this.fullscreen) {
+      this.inputStartRow = 0;
+      this.streamActive = false;
+      this.slashOutputActive = false;
+      this.clearInputIfSlashResidue();
+      this.fullscreen.setInput(
+        this.input.value,
+        "输入任务，/help 查看命令",
+        this.input.cursorPos
+      );
+      this.promptLive = true;
       return;
     }
     this.inputStartRow = 0;
@@ -1692,6 +1954,22 @@ export class StreamUI {
     process.stdin.setEncoding("utf8");
 
     this.resizeHandler = () => {
+      if (this.fullscreen) {
+        const capabilities = this.terminalCapabilities();
+        if (capabilities.columns < 80 || capabilities.rows < 24) {
+          this.fullscreen.stop();
+          this.fullscreen = null;
+          process.stdout.write(
+            "终端尺寸低于 80×24，已切换到经典模式；扩大窗口后重新启动可恢复全屏界面。\n"
+          );
+          this.printHeader();
+          this.writeInputValue(!this.input.value);
+          this.syncCursor();
+          return;
+        }
+        this.fullscreen.resize(capabilities);
+        return;
+      }
       // 任务忙/流式期禁止；输入态才重绘
       if (this.running && !this.agentBusy && !this.streamActive) {
         this.redrawInput();
@@ -1700,11 +1978,22 @@ export class StreamUI {
     process.stdout.on("resize", this.resizeHandler);
 
     let partial = "";
+    let mousePartial = "";
     let bracketedPaste = false;
     let pasteSawCarriageReturn = false;
 
     this.dataHandler = (chunk: string) => {
       if (!this.running) return;
+      if (this.fullscreen) {
+        const mouse = consumeMouseInput(mousePartial + chunk);
+        mousePartial = mouse.pending;
+        chunk = mouse.rest;
+        this.queueFullscreenWheel(mouse.lineDelta);
+        for (const event of mouse.events) {
+          this.fullscreen.handleMouse(event);
+        }
+        if (!chunk) return;
+      }
       // Ctrl+\ → 会话切换器（Grok 风格入口）
       if (chunk === "\x1c") {
         partial = "";
@@ -1793,7 +2082,12 @@ export class StreamUI {
         } else if (seq === "\t") {
           partial = "";
           this.handleTab();
-        } else if (seq === "\x1b[Z") {
+        } else if (
+          seq === "\x1b[Z" ||
+          seq === "\x1b[1;2Z" ||
+          seq === "\x1b[9;2u" ||
+          seq === "\x1b[27;2;9~"
+        ) {
           partial = "";
           if (this.overlay) return;
           this.handleShiftTab();
@@ -1860,11 +2154,13 @@ export class StreamUI {
           else this.handleHistoryDown();
         } else if (seq === "\x1b[5~") {
           partial = "";
-          if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
+          if (this.fullscreen && !this.overlay) this.fullscreen.scrollPages(1);
+          else if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
           else this.navigateTurns(-1);
         } else if (seq === "\x1b[6~") {
           partial = "";
-          if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
+          if (this.fullscreen && !this.overlay) this.fullscreen.scrollPages(-1);
+          else if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
           else this.navigateTurns(1);
         } else if (seq === "\x1b[1;2A") {
           partial = "";
@@ -1884,6 +2180,12 @@ export class StreamUI {
           partial = "";
           if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleDelete();
+        } else if (
+          this.fullscreen &&
+          (seq === "\x1bc" || seq === "\x1bC")
+        ) {
+          partial = "";
+          this.fullscreen.copySelection();
         } else if (seq === "\x1bd" || seq === "\x1b[3;5~" || seq === "\x1b[3;3~") {
           partial = "";
           if (this.overlay && !this.isFilterableOverlay()) return;
@@ -1912,6 +2214,10 @@ export class StreamUI {
           this.handleHome();
         } else if (seq === "\x1b[F" || seq === "\x1b[4~") {
           partial = "";
+          if (this.fullscreen && !this.overlay && !this.input.value) {
+            this.fullscreen.scrollEnd();
+            continue;
+          }
           if (this.overlay && !this.isFilterableOverlay()) return;
           this.handleEnd();
         } else if (seq === "\x0f") {
@@ -2026,40 +2332,7 @@ export class StreamUI {
   private async pasteFromClipboard(): Promise<void> {
     if (this.overlay && !this.isFilterableOverlay()) return;
     try {
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const execFileAsync = promisify(execFile);
-      let text = "";
-      if (process.platform === "win32") {
-        const { stdout } = await execFileAsync(
-          "powershell.exe",
-          ["-NoProfile", "-Command", "Get-Clipboard -Raw"],
-          { encoding: "utf8", timeout: 3000, windowsHide: true }
-        );
-        text = String(stdout ?? "");
-      } else if (process.platform === "darwin") {
-        const { stdout } = await execFileAsync("pbpaste", [], {
-          encoding: "utf8",
-          timeout: 3000,
-        });
-        text = String(stdout ?? "");
-      } else {
-        try {
-          const { stdout } = await execFileAsync(
-            "xclip",
-            ["-selection", "clipboard", "-o"],
-            { encoding: "utf8", timeout: 3000 }
-          );
-          text = String(stdout ?? "");
-        } catch {
-          const { stdout } = await execFileAsync(
-            "xsel",
-            ["--clipboard", "--output"],
-            { encoding: "utf8", timeout: 3000 }
-          );
-          text = String(stdout ?? "");
-        }
-      }
+      let text = await readClipboardText();
       // 去掉结尾多余换行；filterable 内整段粘贴
       text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
       if (this.isFilterableOverlay()) {
@@ -2128,6 +2401,16 @@ export class StreamUI {
   }
 
   private handleCtrlC(): void {
+    if (this.agentBusy) {
+      const interrupted = this.onInterrupt?.();
+      this.appendFeedbackAndRedraw(
+        interrupted === false
+          ? S.y("当前任务已在停止中")
+          : S.y("^C") + " " + DIM("正在中断当前任务"),
+        true
+      );
+      return;
+    }
     if (!this.input.value) {
       const now = this.now();
       const shouldExit =
@@ -2267,6 +2550,34 @@ export class StreamUI {
   repaintChrome(options: { clearScreen?: boolean } = {}): void {
     if (!this.running) return;
     this.streamActive = false;
+    if (this.fullscreen) {
+      if (this.overlay) {
+        this.overlay = null;
+        this.jumpRestore = null;
+        this.focus = "prompt";
+        this.fullscreen.setOverlay(null);
+      }
+      // Theme changes mutate the shared palette. Recompose the alternate
+      // screen through the fullscreen renderer; classic clear/print calls
+      // would bypass its screen buffer and can erase the fixed input frame.
+      this.fullscreen.updateChrome({
+        model: this.model,
+        workspace: this.chromeStatus.workspace ?? process.cwd(),
+        tokens: this.chromeStatus.tokens ?? 0,
+        branch: this.chromeStatus.branch ?? "-",
+        ready: this.chromeStatus.ready ?? true,
+        sessionMode: this.chromeStatus.sessionMode ?? "agent",
+        permissionMode: this.chromeStatus.permissionMode ?? "ask",
+      });
+      this.fullscreen.setInput(
+        this.input.value,
+        "输入任务，/help 查看命令",
+        this.input.cursorPos
+      );
+      this.promptLive = true;
+      this.chromeContiguous = false;
+      return;
+    }
     if (this.overlay) {
       this.overlay = null;
       this.jumpRestore = null;
@@ -2279,6 +2590,38 @@ export class StreamUI {
     this.printHeader();
     this.printInputBar();
     this.syncCursor();
+  }
+
+  clearConversationView(): void {
+    if (!this.running) return;
+    if (this.progressTimer) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = null;
+    }
+    this.progressLabel = "";
+    this.progressStartedAt = 0;
+    this.streamActive = false;
+    this.slashOutputActive = false;
+    this.slashMdBuffer = [];
+    this.assistantStreamOpen = false;
+    this.assistantStreamText = "";
+    this.currentToolRunning = false;
+    this.turnLog = [];
+    this.scrollbackViewport = new ScrollbackViewport({ maxTurns: 40 });
+    this.lastToolOutputBlob = null;
+    this.input.clear();
+    this.draftDisplaySource = null;
+    this.slashCompletionSelectedIndex = 0;
+    this.overlay = null;
+    this.jumpRestore = null;
+    this.focus = "prompt";
+
+    if (this.fullscreen) {
+      this.fullscreen.clearConversationView();
+      this.promptLive = true;
+      return;
+    }
+    this.repaintChrome({ clearScreen: true });
   }
 
   /** 尽量可靠地清空当前视口（Windows ConPTY 友好） */
@@ -2627,6 +2970,18 @@ export class StreamUI {
     }
     const lineCount = plain.length;
 
+    if (this.fullscreen) {
+      this.fullscreen.setInput(
+        this.input.value,
+        "输入任务，/help 查看命令",
+        this.input.cursorPos
+      );
+      this.fullscreen.setOverlay(plain);
+      this.overlay.lineCount = lineCount;
+      this.overlay.blockLines = lineCount;
+      this.promptLive = true;
+      return;
+    }
     if (replace && this.overlay.blockLines > 0) {
       this.eraseOverlayBlock();
     } else if (this.overlay.blockLines > 0) {
@@ -2657,7 +3012,9 @@ export class StreamUI {
     const wasOptions = this.overlay.kind === "options";
     const onDismiss =
       wasOptions && this.overlay.kind === "options" ? this.overlay.onDismiss : undefined;
-    if (this.overlay.blockLines > 0) {
+    if (this.fullscreen) {
+      this.fullscreen.setOverlay(null);
+    } else if (this.overlay.blockLines > 0) {
       this.eraseOverlayBlock();
     } else {
       process.stdout.write("\r\x1b[J");
@@ -2685,6 +3042,18 @@ export class StreamUI {
           // ignore dismiss handler errors
         }
       }
+    }
+
+    if (this.fullscreen) {
+      if (hint) this.fullscreen.appendNotice(hint);
+      this.fullscreen.setInput(
+        this.input.value,
+        "输入任务，/help 查看命令",
+        this.input.cursorPos
+      );
+      this.promptLive = true;
+      this.streamActive = false;
+      return;
     }
 
     if (hint) {
@@ -2771,6 +3140,11 @@ export class StreamUI {
   // 任务执行中一律 ensureStreamMode：只往下追加，禁止重画输入框。
 
   appendToolStart(tool: string, command: string): void {
+    if (this.fullscreen) {
+      this.currentToolRunning = true;
+      this.fullscreen.appendTool(tool, command, "running");
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     this.currentToolRunning = true;
@@ -2779,6 +3153,12 @@ export class StreamUI {
   }
 
   appendToolSuccess(tool: string, command: string, output: string, durationMs: number): void {
+    if (this.fullscreen) {
+      this.currentToolRunning = false;
+      this.fullscreen.appendTool(tool, command, "success", durationMs, output);
+      this.scrollbackViewport.appendTool(tool, [`${command} · success · ${fmtDur(durationMs)}`, output].filter(Boolean).join("\n"));
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     if (this.currentToolRunning) {
@@ -2796,6 +3176,12 @@ export class StreamUI {
   }
 
   appendToolError(tool: string, command: string, error: string, durationMs: number): void {
+    if (this.fullscreen) {
+      this.currentToolRunning = false;
+      this.fullscreen.appendTool(tool, command, "error", durationMs, error);
+      this.scrollbackViewport.appendTool(tool, `${command} · error · ${fmtDur(durationMs)}\n${error}`);
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     if (this.currentToolRunning) {
@@ -2818,6 +3204,11 @@ export class StreamUI {
     this.clearProgressLine();
     const raw = String(text ?? "").trim();
     if (!raw) return;
+    if (this.fullscreen) {
+      this.fullscreen.appendAssistant(raw);
+      this.scrollbackViewport.appendAssistant(raw);
+      return;
+    }
     this.writeMarkdownBlock(raw, { roleHeader: true });
     this.scrollbackViewport.appendAssistant(raw);
   }
@@ -2825,6 +3216,12 @@ export class StreamUI {
   appendAssistantDelta(delta: string): void {
     const visibleDelta = sanitizeStreamingText(delta);
     if (!visibleDelta) return;
+    if (this.fullscreen) {
+      this.assistantStreamOpen = true;
+      this.assistantStreamText += visibleDelta;
+      this.fullscreen.streamAssistant(this.assistantStreamText);
+      return;
+    }
     this.ensureStreamMode();
     this.stopProgress();
     if (!this.assistantStreamOpen) {
@@ -2839,6 +3236,13 @@ export class StreamUI {
   completeAssistantStream(finalText?: string): boolean {
     if (!this.assistantStreamOpen) return false;
     const text = String(finalText ?? this.assistantStreamText);
+    if (this.fullscreen) {
+      this.fullscreen.completeAssistant(text);
+      this.scrollbackViewport.appendAssistant(text);
+      this.assistantStreamOpen = false;
+      this.assistantStreamText = "";
+      return true;
+    }
     const visibleText = sanitizeStreamingText(text);
     if (visibleText.startsWith(this.assistantStreamText)) {
       process.stdout.write(visibleText.slice(this.assistantStreamText.length));
@@ -2851,18 +3255,27 @@ export class StreamUI {
   }
 
   cancelAssistantStream(): void {
-    if (this.assistantStreamOpen) process.stdout.write("\n");
+    if (this.assistantStreamOpen && !this.fullscreen) process.stdout.write("\n");
     this.assistantStreamOpen = false;
     this.assistantStreamText = "";
   }
 
   appendCogitated(durationMs: number): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendNotice(`◆ 思考完成 · ${fmtDur(durationMs)}`);
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     process.stdout.write("\n" + DIM("◆ Cogitated for " + fmtDur(durationMs)));
   }
 
   appendValidation(status: "pass" | "fail" | "warn", text: string): void {
+    if (this.fullscreen) {
+      if (status === "fail") this.fullscreen.appendError(text);
+      else this.fullscreen.appendNotice(`${status === "pass" ? "● pass" : "● warn"}  ${text}`);
+      return;
+    }
     const icon = status === "pass" ? S.g("●") : status === "fail" ? S.r("●") : S.y("●");
     const label = status === "pass" ? S.g("pass") : status === "fail" ? S.r("fail") : S.y("warn");
     const line = icon + " " + label + "  " + S.d(text);
@@ -2872,6 +3285,11 @@ export class StreamUI {
   }
 
   appendOutput(text: string): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendAssistant(String(text ?? ""));
+      this.scrollbackViewport.appendAssistant(String(text ?? ""));
+      return;
+    }
     this.ensureStreamMode();
     const raw = String(text ?? "");
     if (!raw.trim()) {
@@ -2898,6 +3316,24 @@ export class StreamUI {
     if (this.overlay) {
       this.closeOverlay(undefined, false);
     }
+    if (this.fullscreen) {
+      if (!this.slashOutputActive) {
+        this.slashOutputActive = true;
+        this.slashMdBuffer = [];
+      }
+      if (this.input.value === "/" || this.input.value.trim() === "/") {
+        this.input.clear();
+      }
+      this.slashMdBuffer.push(String(text ?? ""));
+      this.streamActive = true;
+      this.promptLive = true;
+      this.fullscreen.setTransientOutput(this.slashMdBuffer.join("\n"), {
+        value: this.input.value,
+        cursorIndex: this.input.cursorPos,
+        placeholder: "输入任务，/help 查看命令",
+      });
+      return;
+    }
     // 首行：擦掉当前/刚提交残留的输入框，不留 orphan
     if (!this.slashOutputActive) {
       if (this.promptLive) {
@@ -2923,6 +3359,10 @@ export class StreamUI {
     if (!this.running) return;
     const msg = String(text ?? "").trim();
     if (!msg) return;
+    if (this.fullscreen) {
+      this.fullscreen.appendNotice(msg);
+      return;
+    }
     // 任务忙 / 流式中：只追加一行
     if (this.agentBusy || (this.streamActive && !this.promptLive)) {
       process.stdout.write(S.d(msg) + "\n");
@@ -2950,6 +3390,15 @@ export class StreamUI {
   }
 
   appendUserInput(text: string): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendUser(text);
+      this.fullscreen.setInput("", undefined, 0);
+      const preview = text.replace(/\s+/g, " ").trim().slice(0, 64);
+      this.turnLog.push({ preview: preview || "(空)", fullText: text });
+      if (this.turnLog.length > 40) this.turnLog.shift();
+      this.scrollbackViewport.startUserTurn(text);
+      return;
+    }
     this.ensureStreamMode();
     const lines = text.split("\n");
     process.stdout.write("\n" + S.s(formatRoleHeader("user")) + "\n");
@@ -3003,6 +3452,48 @@ export class StreamUI {
         return { role: role as "user" | "assistant", text };
       })
       .filter((m): m is { role: "user" | "assistant"; text: string } => m !== null);
+
+    if (this.fullscreen) {
+      this.fullscreen.clearEntries();
+      this.fullscreen.appendNotice(`── ${label} ──`);
+      if (dialog.length === 0) {
+        this.fullscreen.appendNotice("(该会话暂无可显示的对话消息)");
+      } else {
+        const hidden = Math.max(0, dialog.length - maxMessages);
+        if (hidden > 0) {
+          this.fullscreen.appendNotice(
+            `(仅显示最近 ${maxMessages} 条对话，另有 ${hidden} 条已折叠；模型上下文仍完整)`
+          );
+        }
+        for (const msg of dialog.slice(-maxMessages)) {
+          if (msg.role === "user") {
+            this.fullscreen.appendUser(msg.text);
+            const preview = msg.text.replace(/\s+/g, " ").trim().slice(0, 64);
+            this.turnLog.push({ preview: preview || "(空)", fullText: msg.text });
+            if (this.turnLog.length > 40) this.turnLog.shift();
+            this.scrollbackViewport.startUserTurn(msg.text);
+          } else {
+            this.fullscreen.appendAssistant(msg.text);
+            this.scrollbackViewport.appendAssistant(msg.text);
+          }
+        }
+      }
+      this.fullscreen.appendNotice("── 以上为历史回放；继续输入即可在该会话上下文中对话 ──");
+      if (options.statusLine?.trim()) this.fullscreen.appendNotice(options.statusLine.trim());
+      if (drawInput) {
+        this.fullscreen.setInput(
+          this.input.value,
+          "输入任务，/help 查看命令",
+          this.input.cursorPos
+        );
+        this.promptLive = true;
+        this.streamActive = false;
+      } else {
+        this.promptLive = false;
+        this.streamActive = true;
+      }
+      return;
+    }
 
     // 擦掉当前输入框，历史接在顶栏/既有 scrollback 下，最后只画一次输入框
     this.backToPrompt();
@@ -3106,6 +3597,11 @@ export class StreamUI {
   }
 
   appendFinal(text: string): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendResult(String(text ?? ""));
+      this.scrollbackViewport.appendAssistant(String(text ?? ""));
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     // 若仍有 slash 缓冲，先冲刷
@@ -3138,10 +3634,18 @@ export class StreamUI {
   }
 
   appendError(text: string): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendError(text);
+      return;
+    }
     this.appendFeedbackAndRedraw(S.r("● error") + "  " + S.r(text), !this.input.value);
   }
 
   appendState(from: string, to: string): void {
+    if (this.fullscreen) {
+      if (to === "thinking" || to === "running") this.fullscreen.appendNotice(`◯ 正在执行…  ${from} → ${to}`);
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     process.stdout.write(
@@ -3150,6 +3654,10 @@ export class StreamUI {
   }
 
   appendDone(durationMs: number): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendNotice(`☑ 任务完成  ${fmtDur(durationMs)}`);
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     const dur = fmtDur(durationMs);
@@ -3157,6 +3665,10 @@ export class StreamUI {
   }
 
   appendRepair(reason: string, action: string, retryCount: number): void {
+    if (this.fullscreen) {
+      this.fullscreen.appendNotice(`◆ 恢复 #${retryCount} · ${reason} → ${action}`);
+      return;
+    }
     this.ensureStreamMode();
     this.clearProgressLine();
     process.stdout.write("\n" + S.y("[repair]"));

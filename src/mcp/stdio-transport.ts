@@ -47,7 +47,9 @@ export class StdioTransport {
       });
 
       this.proc.stderr?.on("data", (chunk: Buffer) => {
-        process.stderr.write("[MCP:stdio] " + chunk.toString());
+        // 交给 console guard：全屏 TUI 活跃时会进入可寻址内容区，
+        // 避免子进程 stderr 触发终端原生滚动并冲掉固定顶栏/输入框。
+        console.error("[MCP:stdio] " + chunk.toString().trimEnd());
       });
 
       this.proc.on("close", () => {

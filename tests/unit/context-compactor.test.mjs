@@ -166,3 +166,29 @@ test("context-compactor: invalid provider summaries fall back locally without fa
   assert.doesNotMatch(text, /摘要失败|无 API Key|摘要生成失败/);
   assert.equal(outcome.messages[0].synthetic_reason, "compaction_summary");
 });
+
+test("context-compactor: preserves the runtime side-effect ledger", async () => {
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => "A sufficiently detailed summary that remains valid after compaction.",
+    minSummaryChars: 20,
+  });
+  const ledger = {
+    role: "user",
+    content: "<run_side_effects>\n- C:\\repo\\a.txt：创建\n</run_side_effects>",
+    synthetic_reason: "run_side_effects",
+    synthetic_key: "run-side-effects-v1",
+  };
+  const outcome = await compactor.compactDetailed([
+    ledger,
+    { role: "user", content: "old task" },
+    { role: "assistant", content: "old response" },
+    { role: "user", content: "latest task" },
+    { role: "assistant", content: "latest response" },
+  ], 1);
+  assert.equal(outcome.status, "compacted");
+  const preserved = outcome.messages.filter(
+    (message) => message.synthetic_reason === "run_side_effects"
+  );
+  assert.equal(preserved.length, 1);
+  assert.equal(preserved[0].content, ledger.content);
+});

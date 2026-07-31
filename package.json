@@ -70,7 +70,9 @@
   },
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "npm run clean && tsc",
+    "build": "npm run clean && tsc && npm run dashboard:build",
+    "dashboard:build": "vite build --config vite.dashboard.config.ts",
+    "dashboard:test": "vitest run --config vitest.dashboard.config.ts",
     "start": "node dist/index.js",
     "tui": "node dist/index.js chat",
     "repl": "node dist/index.js repl",
@@ -94,7 +96,7 @@
     "sync:scoop-bucket": "node scripts/sync-scoop-bucket.mjs",
     "build:portable-win": "node scripts/build-portable-win.mjs",
     "sync:winget-sha": "node scripts/sync-winget-sha.mjs",
-    "ci:check": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/eval-anchored-edit.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
+    "ci:check": "npm run dashboard:test && npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/eval-anchored-edit.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.2.1",
@@ -105,7 +107,10 @@
     "axios": "^1.7.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.0",
+    "motion": "^12.43.0",
     "playwright": "^1.59.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "string-width": "^8.2.0",
     "yaml": "^2.8.1",
     "zod": "^3.23.0"
@@ -119,9 +124,20 @@
     }
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.17",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@types/string-width": "^2.0.0",
-    "typescript": "^5.5.0"
+    "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^24.1.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.0",
+    "vite": "^6.4.1",
+    "vitest": "^2.1.9"
   }
 }

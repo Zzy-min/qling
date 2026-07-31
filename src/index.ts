@@ -1379,6 +1379,7 @@ async function main() {
       const repl = new StreamingREPL(agent, {
         continueSession: decision.global.continueSession,
         resumeSession: decision.global.resumeSession,
+        tuiMode: decision.global.tuiMode,
       });
       await repl.start();
       return;

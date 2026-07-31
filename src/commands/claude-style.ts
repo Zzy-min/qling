@@ -1,6 +1,6 @@
 import { existsSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { spawn, execFile } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { join } from "path";
 
@@ -12,6 +12,7 @@ import {
   resolveModelCandidates,
 } from "../providers/presets.js";
 import { openOptionPickerOrFallback } from "../tui/option-picker-helpers.js";
+import { writeClipboardText } from "../runtime/clipboard.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -594,28 +595,6 @@ export const commitCommand: SlashCommand = {
   },
 };
 
-async function writeClipboardFallback(text: string): Promise<void> {
-  if (process.platform !== "win32") {
-    throw new Error("clipboard fallback only implemented for Windows");
-  }
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("powershell", ["-NoProfile", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd())"], {
-      stdio: ["pipe", "ignore", "pipe"],
-      windowsHide: true,
-    });
-    let err = "";
-    child.stderr.on("data", (chunk) => {
-      err += String(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(err || `Set-Clipboard exited with ${code}`));
-    });
-    child.stdin.end(text);
-  });
-}
-
 export const copyCommand: SlashCommand = {
   name: "/copy",
   description: "复制最近第 N 条 assistant 回复",
@@ -638,7 +617,7 @@ export const copyCommand: SlashCommand = {
     const content = String(selected.content);
     try {
       if (context.writeClipboard) await context.writeClipboard(content);
-      else await writeClipboardFallback(content);
+      else await writeClipboardText(content);
       context.writeLine(`✅ 已复制第 ${n} 条最近 assistant 回复 (${content.length} chars)。`);
     } catch (err) {
       context.writeError(`❌ 剪贴板不可用: ${err instanceof Error ? err.message : String(err)}`);

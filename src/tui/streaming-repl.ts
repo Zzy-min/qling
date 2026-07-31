@@ -56,12 +56,13 @@ export class StreamingREPL {
       continueSession?: boolean;
       handleSlashCommand?: SlashCommandHandler;
       slashUi?: SlashUiPorts;
+      tuiMode?: "auto" | "fullscreen" | "classic";
     } = {}
   ) {
     this.agent = agent ?? new AgentLoop();
     const model = this.agent.getModel();
     const toolsCount = this.agent.getToolCount();
-    this.ui = new StreamUI(model, toolsCount, { slashUi: options.slashUi });
+    this.ui = new StreamUI(model, toolsCount, { slashUi: options.slashUi, tuiMode: options.tuiMode });
     this.daemonSessionApi = new DaemonSessionApi();
     this.startupResumeTarget = options.resumeSession;
     this.startupContinue = options.continueSession ?? false;
@@ -94,6 +95,7 @@ export class StreamingREPL {
     const { TuiChannel } = await import("../channels/tui-channel.js");
     this.agent.setChannel(new TuiChannel(this.ui));
     this.ui.onInput((cmd) => this.handleUserInput(cmd));
+    this.ui.setInterruptHandler(() => this.agent.cancelActiveRun());
     // Shift+Tab：Grok 三态原位切换 + plan 时确保计划目录
     this.ui.setModeCycleHandler(async () => {
       const { cycleAgentMode } = await import("../commands/mode.js");
@@ -376,6 +378,7 @@ export class StreamingREPL {
       openOptionPicker: (spec) => this.ui.openOptionPicker(spec),
       requestPlanApproval: (opts) => this.ui.requestPlanApproval(opts),
       repaintChrome: () => this.ui.repaintChrome({ clearScreen: true }),
+      clearConversationView: () => this.ui.clearConversationView(),
       applySessionChrome: (patch) => this.ui.applySessionChrome(patch),
       setImmediatePrompt: (prompt: string) => {
         this.immediatePrompt = prompt;
@@ -412,6 +415,7 @@ export class StreamingREPL {
   }
 
   private async refreshStatusLine(): Promise<void> {
+    (this.ui as any).setModel?.(this.agent.getModel());
     if (!this.statusLineEnabled) return;
     try {
       const context = this.createSlashContext();

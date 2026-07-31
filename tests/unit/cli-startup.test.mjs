@@ -46,6 +46,21 @@ test("cli: no args defaults to chat (TUI)", () => {
   assert.equal(result.mode, "chat");
 });
 
+test("cli: --tui-mode configures fullscreen compatibility mode", () => {
+  for (const [args, expected] of [
+    [["chat", "--tui-mode", "fullscreen"], "fullscreen"],
+    [["--tui-mode=classic", "chat"], "classic"],
+    [["chat", "--tui-mode", "auto"], "auto"],
+  ]) {
+    const result = parseCliArgs(args);
+    assert.equal(result.kind, "ok");
+    assert.equal(result.global.tuiMode, expected);
+  }
+  const invalid = parseCliArgs(["chat", "--tui-mode", "wide"]);
+  assert.equal(invalid.kind, "error");
+  assert.equal(invalid.code, "CLI_INVALID_OPTION_VALUE");
+});
+
 test("cli: acp is an explicit stdio adapter mode", () => {
   const result = parseCliArgs(["acp"]);
   assert.equal(result.kind, "ok");

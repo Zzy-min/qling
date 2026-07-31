@@ -32,6 +32,30 @@ async function withCapturedStdout(fn) {
   }
 }
 
+async function withFullscreenTerminal(fn) {
+  const properties = [
+    [process.stdin, "isTTY", true],
+    [process.stdout, "isTTY", true],
+    [process.stdout, "columns", 80],
+    [process.stdout, "rows", 24],
+  ];
+  const previous = properties.map(([target, key]) =>
+    Object.getOwnPropertyDescriptor(target, key)
+  );
+  try {
+    for (const [target, key, value] of properties) {
+      Object.defineProperty(target, key, { configurable: true, value });
+    }
+    await fn();
+  } finally {
+    properties.forEach(([target, key], index) => {
+      const descriptor = previous[index];
+      if (descriptor) Object.defineProperty(target, key, descriptor);
+      else delete target[key];
+    });
+  }
+}
+
 test("option picker opens after slash-style streamActive (Enter path)", async () => {
   await withCapturedStdout(async (getOutput, clear) => {
     const ui = new StreamUI("m", 0, {
@@ -265,6 +289,163 @@ test("repaintChrome clears and reprints header after setTheme", async () => {
       setTheme("bamboo");
       ui.stop();
     }
+  });
+});
+
+test("fullscreen theme picker restores the fixed input frame after applying a theme", async () => {
+  await withFullscreenTerminal(async () => {
+    await withCapturedStdout(async (getOutput, clear) => {
+      const ui = new StreamUI("m", 0, {
+        tuiMode: "fullscreen",
+        slashUi: {
+          findSlashCompletion: () => [],
+          formatSlashCommandPanel: () => [],
+          formatGroupedSlashPanel: () => [],
+        },
+      });
+      ui.start();
+      try {
+        const { setTheme } = await import("../../dist/tui/theme.js");
+        ui.showOptionPicker({
+          title: "主题切换 · Theme",
+          items: [{ id: "night", label: "night" }],
+          onPick: () => {
+            setTheme("night");
+            ui.repaintChrome({ clearScreen: true });
+          },
+        });
+        clear();
+        ui.confirmOverlay();
+        await Promise.resolve();
+        const out = getOutput();
+        assert.doesNotMatch(out, /\x1b\[2J/);
+        assert.match(stripAnsi(out), /╭─ .*normal.*╮/);
+        assert.match(out, /\x1b\[21;1H\x1b\[2K/);
+      } finally {
+        const { setTheme } = await import("../../dist/tui/theme.js");
+        setTheme("bamboo");
+        ui.stop();
+      }
+    });
+  });
+});
+
+test("fullscreen routes task console output through addressed content rows", async () => {
+  await withFullscreenTerminal(async () => {
+    await withCapturedStdout(async (getOutput, clear) => {
+      const ui = new StreamUI("m", 0, {
+        tuiMode: "fullscreen",
+        slashUi: {
+          findSlashCompletion: () => [],
+          formatSlashCommandPanel: () => [],
+          formatGroupedSlashPanel: () => [],
+        },
+      });
+      ui.start();
+      try {
+        clear();
+        console.log("external task log");
+        console.error("external task error");
+        const out = getOutput();
+        assert.match(
+          out,
+          /\x1b\[\d+;1H\x1b\[2K[^\n]*external task log/
+        );
+        assert.match(
+          out,
+          /\x1b\[\d+;1H\x1b\[2K[^\n]*external task error/
+        );
+        assert.doesNotMatch(
+          out,
+          /external task log\nexternal task error\n/
+        );
+      } finally {
+        ui.stop();
+      }
+    });
+  });
+});
+
+test("fullscreen Alt+C preserves app mouse capture and does not submit input", async () => {
+  await withFullscreenTerminal(async () => {
+    await withCapturedStdout(async (getOutput, clear) => {
+      const ui = new StreamUI("m", 0, {
+        tuiMode: "fullscreen",
+        slashUi: {
+          findSlashCompletion: () => [],
+          formatSlashCommandPanel: () => [],
+          formatGroupedSlashPanel: () => [],
+        },
+      });
+      ui.start();
+      try {
+        clear();
+        ui.dispatchKey("\x1bc");
+        assert.doesNotMatch(getOutput(), /\x1b\[\?100(?:0|2|6)l/);
+        assert.equal(ui.getInputDraft(), "");
+      } finally {
+        ui.stop();
+      }
+    });
+  });
+});
+
+test("fullscreen bottom keyboard actions remain available with app-managed drag selection", async () => {
+  await withFullscreenTerminal(async () => {
+    await withCapturedStdout(async (getOutput, clear) => {
+      const submitted = [];
+      let modeCycles = 0;
+      const ui = new StreamUI("m", 0, {
+        tuiMode: "fullscreen",
+        slashUi: {
+          findSlashCompletion: () => [],
+          formatSlashCommandPanel: () => [],
+          formatGroupedSlashPanel: () => [],
+        },
+      });
+      ui.onInput(async (command) => {
+        submitted.push(command);
+      });
+      let interrupts = 0;
+      ui.setInterruptHandler(() => {
+        interrupts += 1;
+        return true;
+      });
+      ui.setModeCycleHandler(() => {
+        modeCycles += 1;
+      });
+      ui.start();
+      try {
+        clear();
+
+        ui.dispatchKey("\x1b[Z");
+        assert.equal(modeCycles, 1, "Shift+Tab remains routed while mouse capture is active");
+
+        ui.setAgentBusy(true);
+        ui.dispatchKey("\x03");
+        assert.equal(
+          interrupts,
+          1,
+          "Ctrl+C remains routed while mouse capture is active"
+        );
+        assert.match(stripAnsi(getOutput()), /中断|取消/);
+        ui.setAgentBusy(false);
+
+        for (const command of ["/help", "/clear", "/model", "/exit"]) {
+          for (const char of command) ui.dispatchKey(char);
+          assert.match(stripAnsi(getOutput()), new RegExp(command.replace("/", "\\/")));
+          ui.dispatchKey("\r");
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(
+          submitted,
+          ["/help", "/clear", "/model", "/exit"],
+          "Enter submits every slash action advertised in the bottom bar"
+        );
+      } finally {
+        ui.stop();
+      }
+    });
   });
 });
 

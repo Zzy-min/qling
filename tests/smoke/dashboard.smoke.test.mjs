@@ -35,5 +35,6 @@ test("dashboard smoke: page and client are separate typed assets", async () => {
   assert.match(DASHBOARD_HTML, /轻灵任务工作台/);
   assert.match(DASHBOARD_HTML, /MISSION CONTROL|最近会话/);
   assert.match(DASHBOARD_HTML, /assets\/dashboard\.js/);
+  assert.doesNotMatch(DASHBOARD_HTML, /fonts\.googleapis|fonts\.gstatic|https?:\/\//);
   assert.doesNotMatch(DASHBOARD_HTML, /sess:\s*any/);
 });

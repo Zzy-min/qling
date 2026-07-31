@@ -98,6 +98,11 @@ export function buildPromptInspectSnapshot(
   };
 }
 
+export function buildMandatoryRulesReference(rulesBlock: string): string {
+  const digest = createHash("sha256").update(rulesBlock, "utf8").digest("hex").slice(0, 16);
+  return `<mandatory_rules_ref sha256="${digest}">完整强制规则仅位于 system 的【强制规则】section；本引用不降低其优先级。</mandatory_rules_ref>`;
+}
+
 export async function assembleSystemPrompt(options: {
   baseSystemPrompt: string;
   sectionRegistry: PromptSectionRegistry;
@@ -167,9 +172,9 @@ export async function assembleSystemPrompt(options: {
     }),
     "session-runtime-v1"
   );
-  // 硬规则 + 动态节写入合成消息（每轮刷新），提高约束可见度
+  // 动态消息只携带规则引用，避免把完整硬规则重复注入上下文。
   const contextPayload = [
-    `<mandatory_rules priority="critical">\n${rulesBlock}\n</mandatory_rules>`,
+    buildMandatoryRulesReference(rulesBlock),
     dynamicSections.trim()
       ? `<dynamic_context>\n${dynamicSections}\n</dynamic_context>`
       : "",
@@ -182,10 +187,9 @@ export async function assembleSystemPrompt(options: {
     contextPayload,
     "mandatory-rules-v1"
   );
-  // system 主干：base + 硬规则（再钉一次）+ 静态节（含 RULES section）
+  // system 主干中的 RULES section 是完整硬规则的唯一副本。
   const parts = [
     options.baseSystemPrompt.trim(),
-    rulesBlock,
     staticSections,
   ].filter((p) => p && p.trim().length > 0);
   return parts.join("\n\n");

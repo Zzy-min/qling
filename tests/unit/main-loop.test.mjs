@@ -1,14 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   applyProviderUsage,
   distillSuccessfulBashPractices,
   logTurnTelemetry,
+  runInnerIterationLoop,
   runOuterAgentLoop,
 } from "../../dist/agent/main-loop.js";
 import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
 import { RecoveryController } from "../../dist/execution/recovery-controller.js";
+import { ContextCompactor } from "../../dist/context-compactor.js";
 
 test("applyProviderUsage only accumulates official usage", () => {
   const base = {
@@ -159,6 +164,7 @@ test("resumed run reuses its runId and registers it with a fresh event bus", asy
       ["run_completed", "run-original", "succeeded"],
     ]
   );
+  assert.throws(() => recovery.getRecoveryState(), /recovery run has not started/);
 });
 
 test("provider retry budget is the only retry layer and honors Retry-After", async () => {
@@ -222,4 +228,198 @@ test("operator pause keeps the active run resumable instead of reporting cancell
   assert.equal(outcome.status, "paused");
   assert.equal(outcome.runId, activeRun.runId);
   assert.equal(recovery.getRecoveryState().status, "paused");
+});
+
+test("inner loop pauses on the second same-family failure even when command arguments change", async () => {
+  const bus = new ExecutionEventBus();
+  const events = [];
+  bus.subscribe((event) => events.push(event));
+  bus.startRun({ runId: "run-efficient", sessionId: "efficient-session" });
+  const recovery = new RecoveryController();
+  recovery.startRun({
+    runId: "run-efficient",
+    sessionId: "efficient-session",
+    originalTask: "diagnose",
+  });
+  let chatCalls = 0;
+  const host = {
+    messages: [{ role: "user", content: "diagnose" }],
+    turnCount: 0,
+    sessionId: "efficient-session",
+    maxIterations: 5,
+    toolRepeatLimit: 6,
+    parseRetries: 0,
+    verificationCommand: null,
+    counters: {
+      sessionTokens: 0,
+      sessionPromptTokens: 0,
+      sessionCompletionTokens: 0,
+      tokenUsageSource: "unknown",
+    },
+    compactionCount: 0,
+    toolCallTotal: 0,
+    toolFailureTotal: 0,
+    retryCountTotal: 0,
+    loggingFormat: "json",
+    activeRunId: "run-efficient",
+    compactor: new ContextCompactor(1_000_000, "test"),
+    pipeline: {
+      execute: async (call) => ({
+        tool_call_id: call.id,
+        output: `Command failed at C:\\repo\\probe${chatCalls}.ps1 exit ${chatCalls}`,
+        is_error: true,
+        error: { code: "TOOL_ERROR", category: "runtime", message: "Command failed" },
+      }),
+    },
+    tools: [],
+    guardConfig: { enabled: false },
+    channel: null,
+    approvalGate: {},
+    knowledgeAdapter: {
+      onToolCall() {},
+      onToolResult() {},
+      onAssistantMessage() {},
+      async onTurnEnd() {},
+    },
+    memoryStore: {
+      link() {},
+      addConversationTurn() {},
+      addPractice() {},
+    },
+    workspaceDir: process.cwd(),
+    workflowRuntime: {},
+    executionEventBus: bus,
+    recoveryController: recovery,
+    verifier: {},
+    buildSystemPrompt: async () => "system",
+    chat: async () => {
+      chatCalls++;
+      return {
+        content: "",
+        tool_calls: [{
+          id: `bash-${chatCalls}`,
+          type: "function",
+          function: {
+            name: "bash",
+            arguments: JSON.stringify({ cmd: `powershell probe${chatCalls}.ps1` }),
+          },
+        }],
+      };
+    },
+    emit() {},
+    runVerificationCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    getRecoveryState: () => {
+      try {
+        return recovery.getRecoveryState();
+      } catch {
+        return null;
+      }
+    },
+    reflectiveThink: async () => ({ decision: "proceed", reason: "" }),
+    checkAutoDream: async () => {},
+  };
+
+  const outcome = await runInnerIterationLoop(host);
+  assert.equal(outcome.status, "paused");
+  assert.equal(chatCalls, 2);
+  assert.equal(host.toolFailureTotal, 2);
+  assert.match(outcome.text, /同类失败|失败/);
+  assert.equal(events.filter((event) => event.type === "efficiency_guard").length, 1);
+});
+
+test("inner loop exposes successful file side effects to the next model turn", async () => {
+  const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "qling-ledger-"));
+  try {
+    const bus = new ExecutionEventBus();
+    bus.startRun({ runId: "run-ledger", sessionId: "ledger-session" });
+    const recovery = new RecoveryController();
+    recovery.startRun({
+      runId: "run-ledger",
+      sessionId: "ledger-session",
+      originalTask: "write a file",
+    });
+    let chatCalls = 0;
+    const messages = [{ role: "user", content: "write a file" }];
+    const host = {
+      messages,
+      turnCount: 0,
+      sessionId: "ledger-session",
+      maxIterations: 3,
+      toolRepeatLimit: 6,
+      parseRetries: 0,
+      verificationCommand: null,
+      counters: {
+        sessionTokens: 0,
+        sessionPromptTokens: 0,
+        sessionCompletionTokens: 0,
+        tokenUsageSource: "unknown",
+      },
+      compactionCount: 0,
+      toolCallTotal: 0,
+      toolFailureTotal: 0,
+      retryCountTotal: 0,
+      loggingFormat: "json",
+      activeRunId: "run-ledger",
+      compactor: new ContextCompactor(1_000_000, "test"),
+      pipeline: {
+        execute: async (call) => {
+          writeFileSync(path.join(workspaceDir, String(call.arguments.path)), "hello");
+          return { tool_call_id: call.id, output: "written", is_error: false };
+        },
+      },
+      tools: [],
+      guardConfig: { enabled: false },
+      channel: null,
+      approvalGate: {},
+      knowledgeAdapter: {
+        onToolCall() {},
+        onToolResult() {},
+        onAssistantMessage() {},
+        async onTurnEnd() {},
+      },
+      memoryStore: {
+        link() {},
+        addConversationTurn() {},
+        addPractice() {},
+      },
+      workspaceDir,
+      workflowRuntime: {},
+      executionEventBus: bus,
+      recoveryController: recovery,
+      verifier: {},
+      buildSystemPrompt: async () => "system",
+      chat: async () => {
+        chatCalls++;
+        if (chatCalls === 1) {
+          return {
+            content: "",
+            tool_calls: [{
+              id: "write-ledger",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: JSON.stringify({ path: "created.txt", content: "hello" }),
+              },
+            }],
+          };
+        }
+        const ledger = messages.find(
+          (message) => message.synthetic_reason === "run_side_effects"
+        );
+        assert.match(ledger?.content ?? "", /created\.txt.*创建/);
+        return { content: "done" };
+      },
+      emit() {},
+      runVerificationCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+      getRecoveryState: () => recovery.getRecoveryState(),
+      reflectiveThink: async () => ({ decision: "proceed", reason: "" }),
+      checkAutoDream: async () => {},
+    };
+
+    const outcome = await runInnerIterationLoop(host);
+    assert.equal(outcome.status, "succeeded");
+    assert.equal(chatCalls, 2);
+  } finally {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
 });

@@ -43,6 +43,7 @@ function createUiRecorder() {
   const validations = [];
   const outputs = [];
   const errors = [];
+  const clears = [];
   let stopped = false;
   let statusLine = null;
   return {
@@ -51,6 +52,7 @@ function createUiRecorder() {
     validations,
     outputs,
     errors,
+    clears,
     get stopped() {
       return stopped;
     },
@@ -78,6 +80,9 @@ function createUiRecorder() {
     setStatusLineEnabled: () => {},
     isOverlayOpen: () => false,
     dismissOverlay: () => {},
+    clearConversationView: () => {
+      clears.push(true);
+    },
   };
 }
 
@@ -506,6 +511,21 @@ test("streaming repl routes slash command errors through ui instead of console",
     assert.deepEqual(ui.errors, ["slash error line"]);
   } finally {
     console.error = originalError;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl exposes the active view clear port to slash commands", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-clear-view-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+
+    repl.createSlashContext().clearConversationView();
+
+    assert.equal(ui.clears.length, 1);
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
 });

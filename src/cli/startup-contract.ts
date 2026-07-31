@@ -259,6 +259,21 @@ export function parseCliArgs(args: string[]): CliResolution {
       warnings.push("`--tui` is deprecated, use `qling chat` instead.");
       continue;
     }
+    if (arg === "--tui-mode" || arg.startsWith("--tui-mode=")) {
+      const inline = arg.startsWith("--tui-mode=") ? arg.slice("--tui-mode=".length) : null;
+      const value = String(inline ?? args[i + 1] ?? "").trim().toLowerCase();
+      if (!["auto", "fullscreen", "classic"].includes(value)) {
+        return {
+          kind: "error",
+          code: "CLI_INVALID_OPTION_VALUE",
+          message: "--tui-mode 仅支持 auto、fullscreen 或 classic。",
+          exitCode: 2,
+        };
+      }
+      global.tuiMode = value as "auto" | "fullscreen" | "classic";
+      if (inline === null) i++;
+      continue;
+    }
     if (arg === "--repl" || arg === "-r") {
       modeFromAliasRepl = true;
       warnings.push("`--repl` is deprecated, use `qling repl` instead.");
@@ -629,6 +644,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
 主要用法:
   ${binName}                          # 默认进入流式 TUI（chat）
   ${binName} chat                     # 显式进入流式 TUI
+  ${binName} --tui-mode fullscreen    # 强制全屏 TUI（auto|fullscreen|classic）
   ${binName} --continue               # 恢复最近一次交互会话
   ${binName} --resume <session>       # 恢复指定交互会话
   ${binName} repl                     # 简易 REPL
@@ -639,6 +655,11 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName} setup                    # 快速配置 LLM 提供商（不保存 API key 到 .env）
   ${binName} --version                # 打印版本（亦支持 -V / version）
   ${binName} help                     # 显示帮助
+
+TUI 环境变量:
+  QLING_TUI_MODE=auto|fullscreen|classic
+  QLING_TUI_ICONS=unicode|nerd        # 默认 unicode；Nerd Font 需显式启用
+  QLING_TUI_THEME=bamboo|night|mono
 
 管理命令:
   ${binName} daemon start             # 启动后台守护进程

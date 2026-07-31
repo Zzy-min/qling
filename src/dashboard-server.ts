@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import type { AgentLoop } from "./agent-loop.js";
 import { buildDashboardTasks } from "./dashboard/model.js";
-import { DASHBOARD_CSS, DASHBOARD_HTML } from "./dashboard/page.js";
+import { DASHBOARD_HTML } from "./dashboard/page.js";
 import type {
   DashboardControlResult,
   DashboardSnapshot,
@@ -42,7 +42,25 @@ const TASK_LIMIT = 50;
 const TASK_SCAN_LIMIT = 5_000;
 const ACTIVITY_LIMIT = 20;
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8" };
-const CLIENT_URL = new URL("./dashboard/client.js", import.meta.url);
+const DASHBOARD_WEB_URL = new URL("./dashboard-web/", import.meta.url);
+const DASHBOARD_INDEX_URL = new URL("index.html", DASHBOARD_WEB_URL);
+const ASSET_MIME: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+};
+
+function dashboardAssetUrl(pathname: string): URL | null {
+  const match = /^\/assets\/([a-zA-Z0-9._-]+)$/.exec(pathname);
+  if (!match) return null;
+  return new URL(`assets/${match[1]}`, DASHBOARD_WEB_URL);
+}
+
+function assetMime(pathname: string): string {
+  const dot = pathname.lastIndexOf(".");
+  return ASSET_MIME[dot >= 0 ? pathname.slice(dot) : ""] ?? "application/octet-stream";
+}
 
 function sendJson(res: http.ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, JSON_HEADERS);
@@ -93,7 +111,8 @@ export class DashboardServer {
   private snapshotCache: SnapshotCache | null = null;
   private daemonHealthy = false;
   private daemonTimer: ReturnType<typeof setInterval> | null = null;
-  private clientSource: string | null = null;
+  private indexSource: string | null = null;
+  private readonly assetSource = new Map<string, Buffer>();
   public listening = false;
 
   constructor(options: DashboardOptions) {
@@ -185,28 +204,26 @@ export class DashboardServer {
     const url = new URL(req.url || "/", `http://127.0.0.1:${this.options.port}`);
     try {
       if (url.pathname === "/" && req.method === "GET") {
+        this.indexSource ??= await readFile(DASHBOARD_INDEX_URL, "utf-8").catch(() => DASHBOARD_HTML);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-cache",
         });
-        res.end(DASHBOARD_HTML);
+        res.end(this.indexSource);
         return;
       }
-      if (url.pathname === "/assets/dashboard.css" && req.method === "GET") {
+      const assetUrl = req.method === "GET" ? dashboardAssetUrl(url.pathname) : null;
+      if (assetUrl) {
+        let body = this.assetSource.get(url.pathname);
+        if (!body) {
+          body = await readFile(assetUrl);
+          this.assetSource.set(url.pathname, body);
+        }
         res.writeHead(200, {
-          "Content-Type": "text/css; charset=utf-8",
-          "Cache-Control": "public, max-age=3600",
+          "Content-Type": assetMime(url.pathname),
+          "Cache-Control": url.pathname.includes("-") ? "public, max-age=31536000, immutable" : "public, max-age=3600",
         });
-        res.end(DASHBOARD_CSS);
-        return;
-      }
-      if (url.pathname === "/assets/dashboard.js" && req.method === "GET") {
-        this.clientSource ??= await readFile(CLIENT_URL, "utf-8");
-        res.writeHead(200, {
-          "Content-Type": "text/javascript; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
-        res.end(this.clientSource);
+        res.end(body);
         return;
       }
       if (url.pathname === "/api/dashboard/snapshot" && req.method === "GET") {

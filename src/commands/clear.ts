@@ -18,7 +18,12 @@ export const clearCommand: SlashCommand = {
       await (context.agentLoop as any).checkpointSession();
     }
 
-    // 清屏 + 重画顶栏/输入框（与 Ctrl+L 同类，并重置会话）
+    // /clear 必须同时清理 renderer 的会话缓冲；仅重画 chrome 会把旧条目再次绘出。
+    if (typeof context.clearConversationView === "function") {
+      context.clearConversationView();
+      return;
+    }
+    // 兼容旧 adapter：至少清屏并重画顶栏/输入框。
     if (typeof context.repaintChrome === "function") {
       context.repaintChrome();
       return;

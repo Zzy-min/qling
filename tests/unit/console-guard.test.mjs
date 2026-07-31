@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   enterBootQuietMode,
   enterTuiQuietMode,
+  forceConsoleError,
   leaveBootQuietMode,
   leaveTuiQuietMode,
   isBootQuietMode,
@@ -59,5 +60,40 @@ test("boot quiet silences init banners but keeps real dashboard failures", () =>
     leaveTuiQuietMode();
     console.error = realError;
     console.warn = realWarn;
+  }
+});
+
+test("fullscreen TUI sink receives visible console output without direct writes", () => {
+  const routed = [];
+  const leaked = [];
+  const realError = console.error;
+  const realWarn = console.warn;
+  const realLog = console.log;
+
+  resetConsoleGuardForTests();
+  console.error = (...args) => leaked.push(["error", args.join(" ")]);
+  console.warn = (...args) => leaked.push(["warn", args.join(" ")]);
+  console.log = (...args) => leaked.push(["log", args.join(" ")]);
+
+  try {
+    enterTuiQuietMode((level, text) => routed.push([level, text]));
+    console.log("task log");
+    console.warn("task warning");
+    console.error("task failure");
+    forceConsoleError("forced failure");
+    console.error("[ProjectionWorker] replayed 1 entries, checkpoint saved");
+
+    assert.deepEqual(routed, [
+      ["log", "task log"],
+      ["warn", "task warning"],
+      ["error", "task failure"],
+      ["error", "forced failure"],
+    ]);
+    assert.deepEqual(leaked, []);
+  } finally {
+    resetConsoleGuardForTests();
+    console.error = realError;
+    console.warn = realWarn;
+    console.log = realLog;
   }
 });

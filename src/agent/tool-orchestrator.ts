@@ -21,6 +21,12 @@ import {
   resolveToolResultMaxChars,
 } from "../context-tool-hygiene.js";
 import { maybeAutoCommitAfterWrite } from "../git/auto-commit.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import {
+  normalizeFailureFingerprint,
+  type ToolExecutionObservation,
+} from "./run-efficiency.js";
 import type {
   Message,
   RawToolCall,
@@ -227,6 +233,7 @@ export interface ExecuteToolsContext {
 export interface ExecuteToolsResult {
   turnToolCalls: number;
   turnToolFailures: number;
+  observations: ToolExecutionObservation[];
 }
 
 /**
@@ -239,6 +246,7 @@ export async function executePreparedTools(
   const dispatchTool = deps.dispatchTool ?? dispatch;
   let turnToolCalls = 0;
   let turnToolFailures = 0;
+  const observations: ToolExecutionObservation[] = [];
   const { preparedCalls, messages, runId, attemptId } = context;
 
   if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
@@ -247,6 +255,15 @@ export async function executePreparedTools(
 
   for (const prepared of preparedCalls) {
     const tc = prepared.call;
+    const mutationArgs = tc.arguments as { path?: string; file?: string; dry_run?: boolean };
+    const mutationTargetRaw =
+      tc.name === "write" || tc.name === "patch"
+        ? String(mutationArgs.path || mutationArgs.file || "").trim()
+        : "";
+    const mutationTarget = mutationTargetRaw
+      ? path.resolve(deps.workspaceDir || process.cwd(), mutationTargetRaw)
+      : "";
+    const mutationExistedBefore = mutationTarget ? existsSync(mutationTarget) : false;
     turnToolCalls++;
     deps.executionEventBus.startTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name });
     deps.emit("tool_start", tc.name, tc.arguments);
@@ -373,6 +390,11 @@ export async function executePreparedTools(
         }
       }
     }
+    const mutationSucceeded =
+      !result.is_error &&
+      Boolean(mutationTarget) &&
+      !mutationArgs.dry_run &&
+      (tc.name === "write" || tc.name === "patch");
 
     deps.knowledgeAdapter.onToolResult(result, tc.name);
     const usageSnapshot = result.meta?.usageSnapshot as UsageLedgerSnapshot | undefined;
@@ -481,6 +503,20 @@ export async function executePreparedTools(
     }
 
     if (result.is_error) turnToolFailures++;
+    observations.push({
+      tool: tc.name,
+      failed: Boolean(result.is_error),
+      failureFingerprint: result.is_error
+        ? normalizeFailureFingerprint({
+            tool: tc.name,
+            code: result.error?.code,
+            category: result.error?.category,
+            message: [result.error?.message, result.output].filter(Boolean).join(" | "),
+          })
+        : undefined,
+      targetPath: mutationSucceeded ? mutationTarget : undefined,
+      mutation: mutationSucceeded ? (mutationExistedBefore ? "updated" : "created") : undefined,
+    });
 
     const preview = result.output.split("\n")[0].slice(0, 80);
     const icon = result.is_error ? "❌" : "✅";
@@ -501,5 +537,5 @@ export async function executePreparedTools(
     });
   }
 
-  return { turnToolCalls, turnToolFailures };
+  return { turnToolCalls, turnToolFailures, observations };
 }

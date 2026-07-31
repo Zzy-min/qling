@@ -81,6 +81,8 @@ export interface SlashCommandContext {
   }) => Promise<"approve" | "revise" | "quit">;
   /** 主题等变更后清屏重画顶栏+输入框（append-only 下唯一可靠方式） */
   repaintChrome?: () => void;
+  /** /clear 专用：清空当前会话视图及临时输出，再重画固定 chrome。 */
+  clearConversationView?: () => void;
   /** 原位更新 Mode/Perm 外观（不重打输入框） */
   applySessionChrome?: (patch: {
     sessionMode?: string;
@@ -114,6 +116,7 @@ export function withDefaultWriters(
     openOptionPicker: context.openOptionPicker,
     requestPlanApproval: context.requestPlanApproval,
     repaintChrome: context.repaintChrome,
+    clearConversationView: context.clearConversationView,
     applySessionChrome: context.applySessionChrome,
     setImmediatePrompt: context.setImmediatePrompt,
     setInputDraft: context.setInputDraft,

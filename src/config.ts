@@ -230,6 +230,7 @@ export interface CliGlobalOptions {
   provider?: string;
   endpoint?: string;
   apiKey?: string;
+  tuiMode?: "auto" | "fullscreen" | "classic";
 }
 
 export interface LoadedConfig {

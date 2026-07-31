@@ -32,6 +32,8 @@ import { findLastUserMessageContent } from "./system-prompt.js";
 import { formatRecoveryPause } from "../execution/recovery-messages.js";
 import type { UsageLedger } from "../usage-ledger.js";
 import type { ToolDispatcher } from "../tools/index.js";
+import { RunEfficiencyGuard } from "./run-efficiency.js";
+import { upsertSyntheticMessage } from "./synthetic-messages.js";
 
 export interface TurnTelemetry {
   turn: number;
@@ -214,7 +216,9 @@ export type InnerLoopOutcome =
 
 export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerLoopOutcome> {
   const toolSignatureCounts = new Map<string, number>();
+  const efficiency = new RunEfficiencyGuard();
   let autoCompactSuppressed = false;
+  let compactionBudgetNotified = false;
 
   for (let i = 0; i < host.maxIterations; i++) {
     host.turnCount++;
@@ -223,13 +227,27 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     host.executionEventBus.startAttempt({ runId, sessionId: host.sessionId, attemptId });
 
     const lastUserMsg = findLastUserMessageContent(host.messages);
+    const sideEffectLedger = efficiency.formatSideEffectLedger();
+    if (sideEffectLedger) {
+      upsertSyntheticMessage(
+        host.messages,
+        "run_side_effects",
+        sideEffectLedger,
+        "run-side-effects-v1"
+      );
+    }
 
     // 默认自动压缩：上下文估计超阈值时摘要旧消息并保留最近轮
     {
       const { resolveAutoCompactConfig } = await import("../session/compact-auto.js");
       const autoCfg = resolveAutoCompactConfig();
-      if (!autoCompactSuppressed && autoCfg.enabled && host.compactor.needsCompaction(host.messages)) {
+      const needsCompaction =
+        !autoCompactSuppressed &&
+        autoCfg.enabled &&
+        host.compactor.needsCompaction(host.messages);
+      if (needsCompaction && efficiency.canCompact(host.turnCount)) {
         const beforeCount = host.messages.length;
+        efficiency.recordCompaction(host.turnCount);
         console.error("\n📦 上下文压缩中...（" + beforeCount + " 条消息）");
         const compacted = await host.compactor.compactDetailed(
           host.messages,
@@ -259,6 +277,13 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
             auto: true,
           });
         }
+      } else if (needsCompaction && !compactionBudgetNotified) {
+        compactionBudgetNotified = true;
+        console.error("📦 已达到自动压缩预算或冷却期，保留当前上下文。");
+        host.emit("compaction_suppressed", {
+          reason: "run_budget_or_cooldown",
+          auto: true,
+        });
       }
     }
 
@@ -351,7 +376,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         verificationStagesSummary: "未执行（重复调用守卫先行暂停）",
       }) };
     }
-    const { turnToolCalls, turnToolFailures } = await executePreparedTools(
+    const { turnToolCalls, turnToolFailures, observations } = await executePreparedTools(
       {
         pipeline: host.pipeline,
         tools: host.tools,
@@ -375,6 +400,54 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         attemptId,
       }
     );
+    const efficiencyStop = efficiency.recordTools(observations);
+    if (efficiencyStop) {
+      const failure = classifyFailure(
+        new Error(`repeated action: ${efficiencyStop.reason}`),
+        { tool: efficiencyStop.tool }
+      );
+      const decision = host.recoveryController.recordFailure(failure, {
+        changed: false,
+        currentStrategy: "stop_repeated_action",
+      });
+      const totals = logTurnTelemetry(
+        { turn: host.turnCount, toolCalls: turnToolCalls, toolFailures: turnToolFailures },
+        {
+          toolCallTotal: host.toolCallTotal,
+          toolFailureTotal: host.toolFailureTotal,
+          compactionCount: host.compactionCount,
+          retryCountTotal: host.retryCountTotal,
+          format: host.loggingFormat,
+        }
+      );
+      host.toolCallTotal = totals.toolCallTotal;
+      host.toolFailureTotal = totals.toolFailureTotal;
+      host.executionEventBus.emit({
+        runId,
+        sessionId: host.sessionId,
+        attemptId,
+        tool: efficiencyStop.tool,
+        type: "efficiency_guard",
+        status: "paused",
+        stage: "tool",
+        category: "repeated_action",
+        fingerprint: efficiencyStop.fingerprint,
+        recoveryAction: "pause",
+      });
+      host.executionEventBus.completeAttempt(runId, "recovering");
+      host.emit("efficiency_guard", efficiencyStop);
+      const ledger = efficiency.formatSideEffectLedger();
+      return {
+        status: "paused",
+        text:
+          formatRecoveryPause({
+            reason: decision.reason,
+            next: "检查失败上下文后使用 /recover retry|edit|cancel",
+            state: host.getRecoveryState(),
+            verificationStagesSummary: "未执行（效率守卫先行暂停）",
+          }) + (ledger ? `\n\n${ledger}` : ""),
+      };
+    }
 
     const verifyOutcome = await runWriteToolVerification(preparedCalls, {
       verificationCommand: host.verificationCommand,
@@ -501,16 +574,19 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       if (host.isCanceled?.()) {
         host.executionEventBus.completeAttempt(runId, "canceled");
         host.executionEventBus.completeRun(runId, "canceled");
+        host.recoveryController.completeRun("canceled");
         host.setActiveRun(null);
         return { status: "canceled", runId, text: "Agent run canceled", reason: "user_canceled" };
       }
       if (response.status === "exhausted") {
         host.executionEventBus.completeAttempt(runId, "exhausted");
         host.executionEventBus.completeRun(runId, "exhausted");
+        host.recoveryController.completeRun("exhausted");
         host.setActiveRun(null);
         return { ...response, runId };
       }
       host.executionEventBus.completeRun(runId, "succeeded");
+      host.recoveryController.completeRun("succeeded");
       host.setActiveRun(null);
       return { status: "succeeded", runId, text: response.text };
     } catch (error) {
@@ -526,6 +602,7 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       if (host.isCanceled?.()) {
         host.executionEventBus.completeAttempt(runId, "canceled");
         host.executionEventBus.completeRun(runId, "canceled");
+        host.recoveryController.completeRun("canceled");
         host.setActiveRun(null);
         return { status: "canceled", runId, text: "Agent run canceled", reason: "user_canceled" };
       }
@@ -558,6 +635,7 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       }
       if (failure.category === "provider_transient") {
         host.executionEventBus.completeRun(runId, "failed");
+        host.recoveryController.completeRun("failed");
         host.setActiveRun(null);
         return { status: "failed", runId, text: failure.message, failure };
       }
@@ -584,6 +662,7 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       }
       if (decision.action === "fail") {
         host.executionEventBus.completeRun(runId, "failed");
+        host.recoveryController.completeRun("failed");
         host.setActiveRun(null);
         return { status: "failed", runId, text: failure.message, failure };
       }

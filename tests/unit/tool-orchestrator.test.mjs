@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildToolSignature,
@@ -97,6 +100,52 @@ test("executePreparedTools counts a pipeline is_error result exactly once", asyn
     attemptId: "attempt-1",
   });
   assert.equal(result.turnToolFailures, 1);
+  assert.equal(result.observations.length, 1);
+  assert.equal(result.observations[0].failed, true);
+  assert.match(result.observations[0].failureFingerprint, /^read:/);
   assert.equal(events.filter((event) => event.type === "tool_completed").length, 1);
   assert.equal(events.find((event) => event.type === "tool_completed")?.status, "failed");
+});
+
+test("executePreparedTools reports successful file mutations for the run ledger", async () => {
+  const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "qling-efficiency-"));
+  try {
+    const result = await executePreparedTools({
+      pipeline: {
+        execute: async () => ({ tool_call_id: "write-1", output: "written", is_error: false }),
+      },
+      tools: [],
+      guardConfig: { enabled: false },
+      channel: null,
+      approvalGate: {},
+      knowledgeAdapter: { onToolCall() {}, onToolResult() {} },
+      memoryStore: { link() {} },
+      workspaceDir,
+      workflowRuntime: {},
+      executionEventBus: new ExecutionEventBus(),
+      emit() {},
+      reflectiveThink: async () => ({ decision: "proceed", reason: "" }),
+    }, {
+      preparedCalls: [{
+        call: {
+          id: "write-1",
+          name: "write",
+          arguments: { path: "created.txt", content: "hello" },
+        },
+      }],
+      messages: [],
+      runId: "run-write",
+      attemptId: "attempt-write",
+    });
+
+    assert.deepEqual(result.observations, [{
+      tool: "write",
+      failed: false,
+      failureFingerprint: undefined,
+      targetPath: path.join(workspaceDir, "created.txt"),
+      mutation: "created",
+    }]);
+  } finally {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
 });

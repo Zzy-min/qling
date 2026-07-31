@@ -285,7 +285,8 @@ export class ContextCompactor {
       (message) =>
         message.synthetic_reason === "runtime_environment" ||
         message.synthetic_reason === "dynamic_context" ||
-        message.synthetic_reason === "state_snapshot"
+        message.synthetic_reason === "state_snapshot" ||
+        message.synthetic_reason === "run_side_effects"
     );
     for (const message of deterministic) {
       if (

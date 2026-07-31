@@ -49,7 +49,8 @@ export type SyntheticReason =
   | "compaction_summary"
   | "recovery_instruction"
   | "date_reminder"
-  | "state_snapshot";
+  | "state_snapshot"
+  | "run_side_effects";
 
 // --- Agent Config ---
 

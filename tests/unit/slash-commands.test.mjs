@@ -86,6 +86,8 @@ function createContext(overrides = {}) {
     daemonSessionApi: overrides.daemonSessionApi,
     statusLine: overrides.statusLine,
     writeClipboard: overrides.writeClipboard,
+    repaintChrome: overrides.repaintChrome,
+    clearConversationView: overrides.clearConversationView,
     setImmediatePrompt: overrides.setImmediatePrompt ?? (() => {}),
     setInputDraft: overrides.setInputDraft ?? (() => {}),
     onRecoveryStateChanged: overrides.onRecoveryStateChanged ?? (() => {}),
@@ -250,6 +252,22 @@ test("slash direct local skill invocation loads skill and built-ins keep priorit
     assert.equal(await handleSlashCommand("/clear", ctx), true);
     assert.doesNotMatch(lines.join("\n"), /Clear Skill/);
   });
+});
+
+test("slash clear resets both agent context and the active conversation view", async () => {
+  let resetCount = 0;
+  let viewClearCount = 0;
+  const { ctx } = createContext({
+    agentLoop: {
+      reset: () => { resetCount++; },
+      checkpointSession: async () => {},
+    },
+    clearConversationView: () => { viewClearCount++; },
+  });
+
+  assert.equal(await handleSlashCommand("/clear", ctx), true);
+  assert.equal(resetCount, 1);
+  assert.equal(viewClearCount, 1);
 });
 
 test("slash help includes loop/tasks/compact", async () => {
