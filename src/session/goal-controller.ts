@@ -1,6 +1,11 @@
 import { Message } from "../types.js";
 import { GoalEvaluator, type GoalEvaluationResult } from "./goal-evaluator.js";
 import { SessionGoalManager, type SessionGoalRunner, type SessionGoalState } from "./session-goal-manager.js";
+import {
+  evaluateOutcomeContract,
+  type EvidenceRecord,
+  type OutcomeContract,
+} from "./outcome-evidence.js";
 
 export interface GoalControllerAfterTurnInput {
   transcript: string;
@@ -8,10 +13,12 @@ export interface GoalControllerAfterTurnInput {
     turnCount: number;
     tokens: number;
   };
+  evidence?: EvidenceRecord[];
+  now?: number;
 }
 
 export interface GoalControllerAfterTurnResult {
-  status: "idle" | "continue" | "achieved" | "cleared";
+  status: "idle" | "continue" | "achieved" | "blocked" | "cleared";
   reason: string | null;
   continuePrompt: string | null;
 }
@@ -43,11 +50,12 @@ export class SessionGoalController {
   async setGoal(
     condition: string,
     stats: { turnCount: number; tokens: number },
-    options: { runner?: SessionGoalRunner; pending?: boolean } = {}
+    options: { runner?: SessionGoalRunner; pending?: boolean; contract?: OutcomeContract } = {}
   ): Promise<SessionGoalState> {
     return this.manager.setGoal(condition, stats, {
       runner: options.runner ?? this.runner,
       pending: options.pending ?? false,
+      ...(options.contract ? { contract: options.contract } : {}),
     });
   }
 
@@ -75,11 +83,52 @@ export class SessionGoalController {
 
     const autoTurnsSpent = Math.max(0, input.stats.turnCount - active.baselineTurns);
     if (autoTurnsSpent > this.maxAutoTurns) {
+      if (process.env.QLING_FEATURES_EVIDENCE_GOALS === "true") {
+        const blocked = await this.manager.markBlocked({
+          reason: `max auto turns reached (${this.maxAutoTurns})`,
+        });
+        return { status: "blocked", reason: blocked.lastReason, continuePrompt: null };
+      }
       const cleared = await this.manager.clearGoal(`max auto turns reached (${this.maxAutoTurns})`);
       return {
         status: "cleared",
         reason: cleared.lastReason,
         continuePrompt: null,
+      };
+    }
+
+    if (active.outcomeContract) {
+      const evidence = input.evidence ?? [];
+      const outcome = evaluateOutcomeContract(active.outcomeContract, evidence, { now: input.now });
+      if (outcome.status === "achieved") {
+        await this.manager.markEvaluation({
+          done: true,
+          reason: outcome.reason,
+          turnCount: input.stats.turnCount,
+          tokens: input.stats.tokens,
+        });
+        await this.manager.attachEvidence(
+          evidence.filter((item) => item.verdict === "pass").map((item) => item.id)
+        );
+        return { status: "achieved", reason: outcome.reason, continuePrompt: null };
+      }
+      if (outcome.status === "blocked") {
+        const blocked = await this.manager.markBlocked({
+          reason: outcome.reason,
+          evidenceIds: evidence.map((item) => item.id),
+        });
+        return { status: "blocked", reason: blocked.lastReason, continuePrompt: null };
+      }
+      const updated = await this.manager.markEvaluation({
+        done: false,
+        reason: outcome.reason,
+        turnCount: input.stats.turnCount,
+        tokens: input.stats.tokens,
+      });
+      return {
+        status: "continue",
+        reason: outcome.reason,
+        continuePrompt: this.buildContinuationPrompt(updated.condition, outcome.reason),
       };
     }
 

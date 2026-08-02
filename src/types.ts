@@ -48,6 +48,7 @@ export type SyntheticReason =
   | "dynamic_context"
   | "compaction_summary"
   | "recovery_instruction"
+  | "efficiency_recovery"
   | "date_reminder"
   | "state_snapshot"
   | "run_side_effects";
@@ -73,6 +74,7 @@ export interface AgentConfig {
     toolRepeatLimit: number;
     timeoutMs: number;
     providerRetryLimit?: number;
+    ownedPaths?: string[];
   };
   logging?: {
     level: "debug" | "info" | "warn" | "error";

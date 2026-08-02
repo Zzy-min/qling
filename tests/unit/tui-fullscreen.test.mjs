@@ -360,11 +360,25 @@ test("fullscreen drag selection copies in-app without disabling keys or mouse ca
 
   renderer.handleMouse({ kind: "down", column: 1, row: 3 });
   renderer.handleMouse({ kind: "drag", column: 5, row: 3 });
+  output.length = 0;
   renderer.handleMouse({ kind: "up", column: 5, row: 3 });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(copied, ["alpha"]);
   assert.equal(renderer.getSelectedText(), "alpha");
+  assert.equal(renderer.selectionAnchor, null);
+  assert.equal(renderer.selectionHead, null);
+  assert.equal(renderer.selectionMoved, false);
+  assert.doesNotMatch(
+    output.join(""),
+    /\x1b\[7m/,
+    "mouse release must clear the visible selection highlight"
+  );
+  assert.match(
+    output.join(""),
+    /alpha/,
+    "mouse release must repaint the selected row without inverse video"
+  );
   assert.match(renderer.snapshot().join("\n"), /已复制 · 5 字符/);
 
   renderer.copySelection();

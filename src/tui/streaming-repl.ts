@@ -420,15 +420,18 @@ export class StreamingREPL {
     try {
       const context = this.createSlashContext();
       const snapshot = await collectStatusLineSnapshot(context);
+      const runtimeSnapshot = (this.agent as any).getRuntimeSnapshot?.() ?? null;
       this.ui.setStatusLine(await buildStatusLine(context));
       (this.ui as any).setChromeStatus?.({
         tokens: snapshot.tokens,
         branch: snapshot.branch,
         workspace: this.agent.getWorkspaceDir(),
-        ready: !this.inputQueue.isProcessing,
+        ready: runtimeSnapshot
+          ? ["idle", "completed"].includes(runtimeSnapshot.state)
+          : !this.inputQueue.isProcessing,
         permissionMode: snapshot.permissionMode,
         sessionMode: snapshot.sessionMode ?? "agent",
-        memoryStatus: "本地",  // 简单指示；未来可从 agent memory store 获取计数
+        memoryStatus: runtimeSnapshot ? `Actor:${runtimeSnapshot.state}` : "本地",
       });
     } catch {
       this.ui.setStatusLine(null);
@@ -464,10 +467,14 @@ export class StreamingREPL {
 
         try {
           this.streamedResponse = "";
-          this.agent.addUserMessage(currentPrompt);
           this.ui.appendState("thinking", "running");
           this.ui.startProgress("agent");
-          const response = await this.agent.run();
+          const response = this.agent.getAgentRuntimeMode() === "actor"
+            ? await this.agent.submitPrompt(currentPrompt)
+            : await (async () => {
+                this.agent.addUserMessage(currentPrompt!);
+                return this.agent.run();
+              })();
           this.ui.stopProgress();
           this.ui.appendState("running", "done");
 
@@ -482,6 +489,13 @@ export class StreamingREPL {
 
           const totalMs = Date.now() - startTime;
           this.ui.appendDone(totalMs);
+
+          // Actor may already have accepted a safe-boundary interjection. Keep the
+          // fixed chrome busy until the actor has drained it, while its own promise
+          // renders the interjected response in causal order.
+          if (this.agent.getAgentRuntimeMode() === "actor") {
+            await this.agent.waitForRuntimeIdle();
+          }
 
           if (this.agent.getRecoveryState()?.status === "paused") {
             currentPrompt = null;
@@ -531,6 +545,7 @@ export class StreamingREPL {
   }
 
   private async handleUserInput(cmd: string): Promise<void> {
+    if (await this.handleImmediateRuntimeCommand(cmd)) return;
     if (await this.handleImmediateQueueCommand(cmd)) return;
     const accepted = await this.inputQueue.enqueue(cmd, (input) => this.handleQueuedUserInput(input));
     if (!accepted || this.closed) return;
@@ -542,6 +557,33 @@ export class StreamingREPL {
     const t = cmd.trim();
     if (t === "/clear" || t === "/reset" || t === "/new") return;
     this.ui.showPrompt();
+  }
+
+  private async handleImmediateRuntimeCommand(cmd: string): Promise<boolean> {
+    const trimmed = cmd.trim();
+    if (!trimmed.toLowerCase().startsWith("/interrupt")) return false;
+    if (this.agent.getAgentRuntimeMode() !== "actor") {
+      this.ui.appendValidation("warn", "/interrupt 仅在 actor runtime 下可用。");
+      return true;
+    }
+    const prompt = trimmed.slice("/interrupt".length).trim();
+    if (!prompt) {
+      this.ui.appendValidation("warn", "用法: /interrupt <要注入当前任务的信息>");
+      return true;
+    }
+    await this.recordLocalInputHistory(trimmed);
+    (this.ui as any).appendUserInput?.(trimmed);
+    this.ui.appendValidation("warn", "已安排在当前安全边界插入任务。");
+    void this.agent.interjectPrompt(prompt).then(async (response) => {
+      if (response.trim() && !this.ui.completeAssistantStream(response)) this.ui.appendFinal(response);
+      await this.agent.checkpointSession();
+      await this.refreshStatusLine();
+    }).catch((error) => {
+      this.ui.cancelAssistantStream();
+      this.ui.appendError(error instanceof Error ? error.message : String(error));
+    });
+    await this.refreshStatusLine();
+    return true;
   }
 
   private async handleImmediateQueueCommand(cmd: string): Promise<boolean> {

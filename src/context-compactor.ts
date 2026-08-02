@@ -5,6 +5,16 @@
 
 import { Message } from "./types.js";
 import * as path from "path";
+import { createHash } from "node:crypto";
+
+export interface CompactionCheckpoint {
+  beforeHash: string;
+  afterHash: string;
+  preservedSyntheticReasons: string[];
+  sourceMessageCount: number;
+  resultMessageCount: number;
+  createdAt: number;
+}
 
 export type ContextSummaryCallback = (input: {
   systemPrompt: string;
@@ -16,6 +26,11 @@ export interface CompactResult {
   messages: Message[];
   status: "compacted" | "skipped" | "failed";
   reason?: string;
+  checkpoint?: CompactionCheckpoint;
+}
+
+function hashMessages(messages: Message[]): string {
+  return createHash("sha256").update(JSON.stringify(messages)).digest("hex");
 }
 
 // --- Token 估算（中文字符 ≈ 2 tokens，英文 ≈ 0.25 tokens）---
@@ -318,7 +333,22 @@ export class ContextCompactor {
     }
 
     result.push(...recentMsgs);
-    return { messages: result, status: "compacted" };
+    const preservedSyntheticReasons = [...new Set(result
+      .map((message) => message.synthetic_reason)
+      .filter((value) => typeof value === "string")
+      .map(String))];
+    return {
+      messages: result,
+      status: "compacted",
+      checkpoint: {
+        beforeHash: hashMessages(messages),
+        afterHash: hashMessages(result),
+        preservedSyntheticReasons,
+        sourceMessageCount: messages.length,
+        resultMessageCount: result.length,
+        createdAt: Date.now(),
+      },
+    };
   }
 
   // 精简超长工具结果

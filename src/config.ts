@@ -120,6 +120,12 @@ export interface QlingConfig {
     dashboard: boolean;
     dynamic_discovery: boolean;
     tool_spec_boost: boolean;
+    harness_prompt: boolean;
+    tool_capabilities: boolean;
+    artifact_store: boolean;
+    evidence_goals: boolean;
+    memory_cards: boolean;
+    controlled_subagents: boolean;
   };
   logging: {
     level: LogLevel;
@@ -289,6 +295,12 @@ export function buildDefaultConfig(): QlingConfig {
       dashboard: false,
       dynamic_discovery: false,
       tool_spec_boost: false,
+      harness_prompt: false,
+      tool_capabilities: false,
+      artifact_store: false,
+      evidence_goals: false,
+      memory_cards: false,
+      controlled_subagents: false,
     },
     logging: {
       level: "info",
@@ -562,6 +574,12 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_FEATURES_DASHBOARD = String(config.features.dashboard);
   process.env.QLING_FEATURES_DYNAMIC_DISCOVERY = String(config.features.dynamic_discovery);
   process.env.QLING_FEATURES_TOOL_SPEC_BOOST = String(config.features.tool_spec_boost);
+  process.env.QLING_FEATURES_HARNESS_PROMPT = String(config.features.harness_prompt);
+  process.env.QLING_FEATURES_TOOL_CAPABILITIES = String(config.features.tool_capabilities);
+  process.env.QLING_FEATURES_ARTIFACT_STORE = String(config.features.artifact_store);
+  process.env.QLING_FEATURES_EVIDENCE_GOALS = String(config.features.evidence_goals);
+  process.env.QLING_FEATURES_MEMORY_CARDS = String(config.features.memory_cards);
+  process.env.QLING_FEATURES_CONTROLLED_SUBAGENTS = String(config.features.controlled_subagents);
 
   // Workflow
   process.env.QLING_WORKFLOW_CHECKPOINT_DIR = config.workflow.checkpoint_dir;

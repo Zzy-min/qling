@@ -192,3 +192,20 @@ test("context-compactor: preserves the runtime side-effect ledger", async () => 
   assert.equal(preserved.length, 1);
   assert.equal(preserved[0].content, ledger.content);
 });
+
+test("context-compactor: emits a verifiable recovery checkpoint", async () => {
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => "A sufficiently detailed recovery summary for the checkpoint.",
+    minSummaryChars: 20,
+  });
+  const source = Array.from({ length: 10 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `message-${index}-${"x".repeat(100)}`,
+  }));
+  const outcome = await compactor.compactDetailed(source, 2);
+  assert.equal(outcome.status, "compacted");
+  assert.match(outcome.checkpoint.beforeHash, /^[a-f0-9]{64}$/);
+  assert.match(outcome.checkpoint.afterHash, /^[a-f0-9]{64}$/);
+  assert.equal(outcome.checkpoint.sourceMessageCount, source.length);
+  assert.equal(outcome.checkpoint.resultMessageCount, outcome.messages.length);
+});

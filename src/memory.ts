@@ -15,6 +15,14 @@ import { EmbeddingClient } from "./memory/embedding.js";
 import * as crypto from "crypto";
 import type { MemoryOperation } from "./memory/consolidation.js";
 import { atomicWriteJson } from "./persistence/atomic-json.js";
+import {
+  MemoryCardIndex,
+  inferMemorySensitivity,
+  type MemoryCard,
+  type MemoryCardKind,
+  type MemoryCardScope,
+  type MemorySearchHit,
+} from "./memory/memory-card-index.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -157,7 +165,7 @@ export class PersistedMemory {
     }
   }
 
-  add(content: string, source: string, importance: number = 0.5): void {
+  add(content: string, source: string, importance: number = 0.5): PersistedEntry {
     const entry: PersistedEntry = {
       id: "mem_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
       content,
@@ -167,6 +175,7 @@ export class PersistedMemory {
     };
     this.entries.push(entry);
     this.entries.sort((a, b) => b.importance - a.importance);
+    return { ...entry };
   }
 
   remove(id: string): boolean {
@@ -587,6 +596,7 @@ export class MemoryStore {
   private config: typeof DEFAULT_CONFIG;
   private workspaceMemoryDir: string;
   private globalMemoryDir: string;
+  private cardIndex: MemoryCardIndex | null = null;
 
   constructor(memoryDir: string, config: Partial<typeof DEFAULT_CONFIG> & { workspaceDir?: string } = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -609,6 +619,12 @@ export class MemoryStore {
     await migrateMisplacedWorkspaceCheckpoint(this.workspaceMemoryDir);
     await this.globalPersisted.init();
     await this.persisted.init();
+    if (process.env.QLING_FEATURES_MEMORY_CARDS === "true") {
+      this.cardIndex = new MemoryCardIndex({ memoryDir: this.workspaceMemoryDir });
+      await this.cardIndex.init();
+      for (const entry of this.persisted.getAll()) this.upsertMemoryCard(entry, "workspace");
+      for (const entry of this.globalPersisted.getAll()) this.upsertMemoryCard(entry, "global");
+    }
   }
 
   setWAL(
@@ -637,6 +653,8 @@ export class MemoryStore {
   async shutdown(): Promise<void> {
     await this.globalPersisted.shutdown();
     await this.persisted.shutdown();
+    this.cardIndex?.close();
+    this.cardIndex = null;
   }
 
   async rebuildSemanticIndex(): Promise<void> {
@@ -650,9 +668,11 @@ export class MemoryStore {
   // --- Persisted（对外 API）---
   add(content: string, source: string, importance: number = 0.5, scope: "global" | "workspace" = "workspace"): void {
     if (scope === "global") {
-      this.globalPersisted.add(content, source, importance);
+      const entry = this.globalPersisted.add(content, source, importance);
+      this.upsertMemoryCard(entry, "global");
     } else {
-      this.persisted.add(content, source, importance);
+      const entry = this.persisted.add(content, source, importance);
+      this.upsertMemoryCard(entry, "workspace");
     }
   }
 
@@ -670,16 +690,19 @@ export class MemoryStore {
       .find((e) => e.source === "user-correction" && e.content.includes(fact.slice(0, 80)));
     if (existing) {
       this.globalPersisted.update(existing.id, { importance: 0.99, content: payload });
+      const refreshed = this.globalPersisted.getAll().find((entry) => entry.id === existing.id);
+      if (refreshed) this.upsertMemoryCard(refreshed, "global");
       await this.globalPersisted.saveToDisk();
       return existing.id;
     }
-    this.globalPersisted.add(payload, "user-correction", 0.99);
+    const created = this.globalPersisted.add(payload, "user-correction", 0.99);
+    this.upsertMemoryCard(created, "global");
     await this.globalPersisted.saveToDisk();
-    const all = this.globalPersisted.getAll();
-    return all[0]?.id ?? null;
+    return created.id;
   }
 
   remove(id: string, scope: "global" | "workspace" = "workspace"): boolean {
+    this.cardIndex?.remove(this.cardId(scope, id));
     if (scope === "global") {
       return this.globalPersisted.remove(id);
     } else {
@@ -688,11 +711,13 @@ export class MemoryStore {
   }
 
   update(id: string, updates: Partial<Pick<PersistedEntry, "content" | "importance">>, scope: "global" | "workspace" = "workspace"): boolean {
-    if (scope === "global") {
-      return this.globalPersisted.update(id, updates);
-    } else {
-      return this.persisted.update(id, updates);
+    const target = scope === "global" ? this.globalPersisted : this.persisted;
+    const updated = target.update(id, updates);
+    if (updated) {
+      const entry = target.getAll().find((candidate) => candidate.id === id);
+      if (entry) this.upsertMemoryCard(entry, scope);
     }
+    return updated;
   }
 
   applyOperations(ops: MemoryOperation[], scope: "global" | "workspace" = "workspace"): void {
@@ -716,6 +741,17 @@ export class MemoryStore {
   }
 
   async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
+    if (this.cardIndex) {
+      return this.cardIndex
+        .search(query, { scopes: ["workspace", "global"], limit })
+        .map((hit) => ({
+          id: hit.card.id,
+          content: hit.card.content,
+          source: `memory-card:${hit.card.kind}:${hit.card.scope}`,
+          createdAt: hit.card.createdAt,
+          importance: hit.card.importance,
+        }));
+    }
     const wsHits = await this.persisted.getRelevant(query, limit);
     const globalHits = await this.globalPersisted.getRelevant(query, limit);
 
@@ -849,6 +885,52 @@ export class MemoryStore {
       workspace: this.persisted.getPersistenceStatus(),
       global: this.globalPersisted.getPersistenceStatus(),
     };
+  }
+
+  searchMemoryCards(query: string, options: { scopes?: MemoryCardScope[]; limit?: number } = {}): MemorySearchHit[] {
+    return this.cardIndex?.search(query, {
+      scopes: options.scopes ?? ["global", "workspace"],
+      limit: options.limit ?? 5,
+    }) ?? [];
+  }
+
+  getMemoryCard(id: string): MemoryCard | null {
+    return this.cardIndex?.get(id) ?? null;
+  }
+
+  getAlwaysVisibleMemoryCards(): MemoryCard[] {
+    return this.cardIndex?.getAlwaysVisible(["global", "workspace"]) ?? [];
+  }
+
+  private upsertMemoryCard(entry: PersistedEntry, scope: "global" | "workspace"): void {
+    if (!this.cardIndex) return;
+    const now = Date.now();
+    this.cardIndex.upsert({
+      id: this.cardId(scope, entry.id),
+      kind: this.inferMemoryKind(entry),
+      scope,
+      content: entry.content,
+      sourceEventIds: [],
+      confidence: Math.max(0.5, entry.importance),
+      importance: entry.importance,
+      sensitivity: inferMemorySensitivity(entry.content),
+      createdAt: entry.createdAt,
+      lastAccessedAt: now,
+    });
+  }
+
+  private cardId(scope: "global" | "workspace", id: string): string {
+    return `${scope}:${id}`;
+  }
+
+  private inferMemoryKind(entry: PersistedEntry): MemoryCardKind {
+    const content = entry.content.toLowerCase();
+    if (entry.source === "user-correction" || /必须|不要|禁止|must|never/.test(content)) return "constraint";
+    if (/偏好|prefer|喜欢/.test(content)) return "preference";
+    if (/失败|error|failed/.test(content)) return "failure";
+    if (/决定|采用|decision/.test(content)) return "decision";
+    if (/practice|最佳实践|正确流程/.test(content)) return "practice";
+    return "fact";
   }
 }
 

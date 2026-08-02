@@ -1,9 +1,10 @@
 import * as fs from "fs/promises";
 import { existsSync } from "fs";
 import * as path from "path";
+import type { OutcomeContract } from "./outcome-evidence.js";
 
-export type SessionGoalStatus = "active" | "achieved" | "cleared";
-export type SessionGoalDecision = "done" | "continue" | "cleared" | null;
+export type SessionGoalStatus = "active" | "achieved" | "blocked" | "canceled" | "cleared";
+export type SessionGoalDecision = "done" | "continue" | "blocked" | "canceled" | "cleared" | null;
 export type SessionGoalRunner = "session" | "daemon";
 
 export interface SessionGoalState {
@@ -20,6 +21,10 @@ export interface SessionGoalState {
   evaluatedTurns: number;
   lastReason: string | null;
   lastDecision: SessionGoalDecision;
+  outcomeContract?: OutcomeContract;
+  evidenceIds?: string[];
+  blockingCondition?: string;
+  attemptedActions?: string[];
 }
 
 export interface SessionGoalManagerOptions {
@@ -29,7 +34,7 @@ export interface SessionGoalManagerOptions {
 }
 
 function cloneGoal(goal: SessionGoalState | null): SessionGoalState | null {
-  return goal ? { ...goal } : null;
+  return goal ? structuredClone(goal) : null;
 }
 
 export class SessionGoalManager {
@@ -52,7 +57,7 @@ export class SessionGoalManager {
   async setGoal(
     condition: string,
     baseline: { turnCount: number; tokens: number },
-    options: { runner?: SessionGoalRunner; pending?: boolean } = {}
+    options: { runner?: SessionGoalRunner; pending?: boolean; contract?: OutcomeContract } = {}
   ): Promise<SessionGoalState> {
     const now = this.clock();
     this.goal = {
@@ -67,6 +72,7 @@ export class SessionGoalManager {
       evaluatedTurns: 0,
       lastReason: "goal_activated",
       lastDecision: null,
+      ...(options.contract ? { outcomeContract: structuredClone(options.contract) } : {}),
     };
     await this.saveGoal();
     return cloneGoal(this.goal)!;
@@ -89,6 +95,44 @@ export class SessionGoalManager {
       goal.status = "achieved";
       goal.achievedAt = now;
     }
+    await this.saveGoal();
+    return cloneGoal(goal)!;
+  }
+
+  async markBlocked(input: {
+    reason: string;
+    evidenceIds?: string[];
+    attemptedActions?: string[];
+  }): Promise<SessionGoalState> {
+    const goal = this.getGoalOrThrow();
+    goal.status = "blocked";
+    goal.pending = false;
+    goal.updatedAt = this.clock();
+    goal.lastReason = input.reason;
+    goal.lastDecision = "blocked";
+    goal.blockingCondition = input.reason;
+    goal.evidenceIds = [...(input.evidenceIds ?? [])];
+    goal.attemptedActions = [...(input.attemptedActions ?? [])];
+    await this.saveGoal();
+    return cloneGoal(goal)!;
+  }
+
+  async attachEvidence(evidenceIds: string[]): Promise<SessionGoalState> {
+    const goal = this.getGoalOrThrow();
+    goal.evidenceIds = [...evidenceIds];
+    goal.updatedAt = this.clock();
+    await this.saveGoal();
+    return cloneGoal(goal)!;
+  }
+
+  async markCanceled(reason: string): Promise<SessionGoalState> {
+    const goal = this.getGoalOrThrow();
+    goal.status = "canceled";
+    goal.pending = false;
+    goal.updatedAt = this.clock();
+    goal.clearedAt = goal.updatedAt;
+    goal.lastReason = reason;
+    goal.lastDecision = "canceled";
     await this.saveGoal();
     return cloneGoal(goal)!;
   }

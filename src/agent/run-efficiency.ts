@@ -5,13 +5,15 @@ export type FileMutation = "created" | "updated";
 export interface ToolExecutionObservation {
   tool: string;
   failed: boolean;
+  actionFingerprint?: string;
   failureFingerprint?: string;
   targetPath?: string;
   mutation?: FileMutation;
 }
 
-export interface EfficiencyStop {
+export interface EfficiencySignal {
   code: "SAME_FAILURE_LIMIT" | "TOTAL_FAILURE_LIMIT";
+  disposition: "redirect";
   reason: string;
   tool?: string;
   fingerprint?: string;
@@ -27,12 +29,13 @@ export interface RunEfficiencyOptions {
 function normalizeText(value: unknown): string {
   return String(value ?? "")
     .toLowerCase()
-    .replace(/\r?\n[\s\S]*/g, "")
+    .replace(/\r?\n/g, " ")
     .replace(/[a-z]:[\\/](?:[^<>:"|?*\r\n]+[\\/])*[^<>:"|?*\r\n]*/gi, "<path>")
     .replace(/(?:\/[^/\s:]+){2,}/g, "<path>")
     .replace(/\b\d+(?:\.\d+)?\b/g, "<n>")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .slice(0, 320);
 }
 
 export function normalizeFailureFingerprint(input: {
@@ -54,7 +57,8 @@ export class RunEfficiencyGuard {
   private readonly totalFailureLimit: number;
   private readonly maxCompactions: number;
   private readonly compactionCooldownTurns: number;
-  private readonly failureCounts = new Map<string, number>();
+  private lastFailureKey: string | null = null;
+  private consecutiveFailureCount = 0;
   private readonly sideEffects = new Map<string, "created" | "updated" | "created_then_updated">();
   private totalFailures = 0;
   private compactions = 0;
@@ -67,7 +71,7 @@ export class RunEfficiencyGuard {
     this.compactionCooldownTurns = Math.max(0, options.compactionCooldownTurns ?? 4);
   }
 
-  recordTools(observations: readonly ToolExecutionObservation[]): EfficiencyStop | null {
+  recordTools(observations: readonly ToolExecutionObservation[]): EfficiencySignal | null {
     for (const observation of observations) {
       if (observation.targetPath && observation.mutation) {
         const target = path.normalize(observation.targetPath);
@@ -79,26 +83,41 @@ export class RunEfficiencyGuard {
         this.sideEffects.set(target, next);
       }
 
-      if (!observation.failed) continue;
+      if (!observation.failed) {
+        this.lastFailureKey = null;
+        this.consecutiveFailureCount = 0;
+        continue;
+      }
       this.totalFailures++;
       const fingerprint =
         observation.failureFingerprint ??
         normalizeFailureFingerprint({ tool: observation.tool, message: "unknown failure" });
-      const count = (this.failureCounts.get(fingerprint) ?? 0) + 1;
-      this.failureCounts.set(fingerprint, count);
+      const failureKey = `${observation.actionFingerprint ?? observation.tool}:${fingerprint}`;
+      if (failureKey === this.lastFailureKey) {
+        this.consecutiveFailureCount++;
+      } else {
+        this.lastFailureKey = failureKey;
+        this.consecutiveFailureCount = 1;
+      }
 
-      if (count >= this.sameFailureLimit) {
+      if (this.consecutiveFailureCount >= this.sameFailureLimit) {
+        const count = this.consecutiveFailureCount;
+        this.consecutiveFailureCount = 0;
+        this.lastFailureKey = null;
         return {
           code: "SAME_FAILURE_LIMIT",
-          reason: `同类失败已出现 ${count} 次，已停止继续试错。`,
+          disposition: "redirect",
+          reason: `相同动作连续失败 ${count} 次；禁止原样重试，请更换参数、工具或策略。`,
           tool: observation.tool,
           fingerprint,
         };
       }
       if (this.totalFailures >= this.totalFailureLimit) {
+        this.totalFailures = 0;
         return {
           code: "TOTAL_FAILURE_LIMIT",
-          reason: `本次运行已达到 ${this.totalFailureLimit} 次工具失败预算，已暂停。`,
+          disposition: "redirect",
+          reason: `近期工具失败累计达到 ${this.totalFailureLimit} 次；请收敛探索范围、汇总证据并切换恢复策略。`,
           tool: observation.tool,
           fingerprint,
         };

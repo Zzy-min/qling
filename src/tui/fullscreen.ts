@@ -282,6 +282,7 @@ export class FullscreenRenderer {
   private selectionHead: SelectionPoint | null = null;
   private selectionDragging = false;
   private selectionMoved = false;
+  private lastSelectedText: string | null = null;
   private selectionFeedback: string | null = null;
   private logicalBodyPlain: string[] = [];
   private screenBodyRows = new Map<number, number>();
@@ -489,7 +490,12 @@ export class FullscreenRenderer {
         this.render();
         return false;
       }
-      const copied = this.copySelection();
+      const text = this.selectedTextFromActiveRange();
+      this.selectionAnchor = null;
+      this.selectionHead = null;
+      this.selectionMoved = false;
+      this.lastSelectedText = text;
+      const copied = this.copySelection(text);
       this.render();
       return copied;
     }
@@ -498,6 +504,10 @@ export class FullscreenRenderer {
   }
 
   getSelectedText(): string | null {
+    return this.selectedTextFromActiveRange() ?? this.lastSelectedText;
+  }
+
+  private selectedTextFromActiveRange(): string | null {
     const anchor = this.selectionAnchor;
     const head = this.selectionHead;
     if (!anchor || !head || !this.selectionMoved) return null;
@@ -516,8 +526,8 @@ export class FullscreenRenderer {
     return selected.join("\n");
   }
 
-  copySelection(): boolean {
-    const text = this.getSelectedText();
+  copySelection(selectedText?: string | null): boolean {
+    const text = selectedText ?? this.getSelectedText();
     if (!text) return false;
     try {
       this.selectionFeedback = `复制中 · ${text.length} 字符`;
@@ -558,6 +568,7 @@ export class FullscreenRenderer {
     this.selectionHead = null;
     this.selectionDragging = false;
     this.selectionMoved = false;
+    this.lastSelectedText = null;
     this.selectionFeedback = null;
   }
 

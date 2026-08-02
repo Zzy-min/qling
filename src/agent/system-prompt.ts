@@ -16,6 +16,7 @@ import type { MemoryStore } from "../memory.js";
 import type { LlmChatResponse } from "../providers/llm-client.js";
 import { SECTION_IDS } from "../pipeline/sections.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
+import { buildPromptEnvelope, renderPromptEnvelope } from "../harness/prompt-envelope.js";
 
 const DYNAMIC_SECTION_IDS = new Set<string>([
   SECTION_IDS.REPOMAP,
@@ -90,8 +91,9 @@ export function buildPromptInspectSnapshot(
   const dynamicChars = messages
     .filter((message) => message.synthetic_reason === "dynamic_context")
     .reduce((sum, message) => sum + message.content.length, 0);
+  const envelopeHash = systemPrompt.match(/<stable_prefix sha256="([a-f0-9]{64})">/)?.[1];
   return {
-    staticHash: createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
+    staticHash: envelopeHash ?? createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
     staticChars: systemPrompt.length,
     runtimeChars,
     dynamicChars,
@@ -133,6 +135,15 @@ export async function assembleSystemPrompt(options: {
     if (relevant.length > 0) {
       memoryStr = relevant.map((e) => "[" + e.source + "] " + e.content).join("\n");
     }
+  }
+  const alwaysVisibleCards = (options.memoryStore as {
+    getAlwaysVisibleMemoryCards?: () => Array<{ kind: string; scope: string; content: string }>;
+  }).getAlwaysVisibleMemoryCards?.() ?? [];
+  if (alwaysVisibleCards.length > 0) {
+    const stableMemory = alwaysVisibleCards
+      .map((card) => `[${card.kind}:${card.scope}] ${card.content}`)
+      .join("\n");
+    memoryStr = [stableMemory, memoryStr].filter(Boolean).join("\n");
   }
 
   // 强制加载 user-rules / AGENTS.md 等（硬约束，非可选检索记忆）
@@ -192,7 +203,55 @@ export async function assembleSystemPrompt(options: {
     options.baseSystemPrompt.trim(),
     staticSections,
   ].filter((p) => p && p.trim().length > 0);
-  return parts.join("\n\n");
+  if (process.env.QLING_FEATURES_HARNESS_PROMPT !== "true") {
+    return parts.join("\n\n");
+  }
+
+  const stableSourceSections = options.sectionRegistry
+    .getAll()
+    .filter(
+      (section) =>
+        section.id !== SECTION_IDS.RULES &&
+        !section.dynamic &&
+        !DYNAMIC_SECTION_IDS.has(section.id)
+    )
+    .map((section) => ({
+      id: section.id,
+      content: `【${section.title}】\n${section.content}`,
+      source: "prompt_registry",
+      priority: section.id === SECTION_IDS.RESTRICTIONS ? 90 : 50,
+    }));
+  if (options.baseSystemPrompt.trim()) {
+    stableSourceSections.unshift({
+      id: "base",
+      content: options.baseSystemPrompt.trim(),
+      source: "agent_config",
+      priority: 100,
+    });
+  }
+  const envelope = buildPromptEnvelope({
+    stableSections: stableSourceSections,
+    scopedRules: [{
+      id: "mandatory_rules",
+      content: rulesBlock,
+      source: "rule_files",
+      priority: 100,
+    }],
+    dynamicContext: dynamicSections,
+    memoryContext: memoryStr,
+    evidenceDigest: options.messages
+      .filter((message) => message.synthetic_reason === "run_side_effects" || message.synthetic_reason === "state_snapshot")
+      .slice(-4)
+      .map((message) => message.content)
+      .join("\n\n"),
+  });
+  upsertSyntheticMessage(
+    options.messages,
+    "dynamic_context",
+    `${buildMandatoryRulesReference(rulesBlock)}\n<prompt_envelope_ref sha256="${envelope.stableHash}" />`,
+    "mandatory-rules-v1"
+  );
+  return renderPromptEnvelope(envelope);
 }
 
 export type ReflectionDecision = "proceed" | "ask" | "block" | "warn";

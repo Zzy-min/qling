@@ -18,7 +18,29 @@ export const recoverCommand: SlashCommand = {
       return;
     }
     const state = agent.getRecoveryState();
+    const actorSnapshot = typeof agent.refreshRuntimeSnapshot === "function"
+      ? await agent.refreshRuntimeSnapshot()
+      : typeof agent.getRuntimeSnapshot === "function" ? agent.getRuntimeSnapshot() : null;
     if (!state) {
+      if (actorSnapshot?.state === "paused") {
+        if (action === "status") {
+          context.writeLine([
+            "Actor 恢复状态",
+            `阶段: ${actorSnapshot.state}`,
+            `原因: ${actorSnapshot.pauseReason ?? "interrupted session"}`,
+            `待执行输入: ${actorSnapshot.promptQueue.length}`,
+            "动作: /recover retry（明确确认后恢复队列）",
+          ].join("\n"));
+          return;
+        }
+        if ((action === "retry" || action === "next") && typeof agent.resumeRuntimeSession === "function") {
+          await agent.resumeRuntimeSession();
+          context.writeLine("Actor 会话已按用户确认恢复，待执行输入将继续运行。");
+          return;
+        }
+        context.writeError("Actor 恢复当前支持 /recover status | retry。");
+        return;
+      }
       context.writeLine("当前没有可恢复或暂停的执行任务。");
       return;
     }
@@ -37,6 +59,9 @@ export const recoverCommand: SlashCommand = {
     let result: { state: any; prompt?: string };
     try {
       result = agent.applyRecoveryAction(action);
+      if ((action === "retry" || action === "next") && actorSnapshot?.state === "paused" && typeof agent.resumeRuntimeSession === "function") {
+        await agent.resumeRuntimeSession();
+      }
     } catch (error) {
       context.writeError(error instanceof Error ? error.message : String(error));
       return;

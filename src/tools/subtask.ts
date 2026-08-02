@@ -31,6 +31,10 @@ import {
 } from "../agent/subtask-parallel.js";
 import { loadRoleCatalog } from "../agents/role-loader.js";
 import { UsageLedger } from "../usage-ledger.js";
+import { randomUUID } from "node:crypto";
+import { getSubagentCoordinator, type SubtaskSpec } from "../agents/coordinator.js";
+import { SubagentWorktreeManager } from "../agents/worktree-manager.js";
+import { isRelativePathOwned, normalizeOwnedPaths } from "../agents/ownership.js";
 
 const SUBTASK_TOOL_POOL = [
   bashTool,
@@ -89,6 +93,11 @@ export const subtaskTool: ToolDefinition = {
         type: "number",
         description: "Max iterations (default 10)",
       },
+      owned_paths: {
+        type: "array",
+        description: "Files or directories exclusively owned by an implement subtask in controlled mode",
+        items: { type: "string" },
+      },
     },
     required: [],
   },
@@ -101,10 +110,14 @@ export const subtaskTool: ToolDefinition = {
 function buildRunnerConfig(
   role: SubAgentRole,
   maxIterations: number,
-  timeoutMs: number
+  timeoutMs: number,
+  workspaceDir?: string,
+  ownedPaths?: string[]
 ) {
   const roots = getRuntimeRootsFromEnv();
-  const tools = filterToolsForRole(SUBTASK_TOOL_POOL, role);
+  const controlledToolNames = new Set(["read", "search", "code_symbols", "lsp", "skill", "write", "patch"]);
+  const tools = filterToolsForRole(SUBTASK_TOOL_POOL, role)
+    .filter((tool) => !(ownedPaths && ownedPaths.length > 0) || controlledToolNames.has(tool.name));
   const apiKey =
     process.env.QLING_LLM_API_KEY ??
     process.env.DEEPSEEK_API_KEY ??
@@ -125,13 +138,14 @@ function buildRunnerConfig(
       model: process.env.QLING_LLM_MODEL ?? "deepseek-chat",
       tools,
       runtime: {
-        workspaceDir: roots.workspaceDir,
+        workspaceDir: workspaceDir ?? roots.workspaceDir,
         fileCacheDir: roots.fileCacheDir,
         fileStateDir: roots.fileStateDir,
         maxSteps: maxIterations,
         parseRetries: 2,
         toolRepeatLimit: 6,
         timeoutMs,
+        ...(ownedPaths && ownedPaths.length > 0 ? { ownedPaths } : {}),
       },
       logging: {
         level: "info" as const,
@@ -151,6 +165,7 @@ export async function runSubtask(args: {
   role?: string;
   max_iterations?: number;
   timeout_ms?: number;
+  owned_paths?: unknown;
 }): Promise<ToolResult> {
   const parallelTasks = parseParallelTasks(args.tasks);
   const singleTask = String(args.task ?? "").trim();
@@ -259,8 +274,67 @@ export async function runSubtask(args: {
 
   // --- 单任务路径 ---
   const role = loadedRole?.baseRole ?? normalizeSubAgentRole(args.role);
-  const { apiKey, tools, parent } = buildRunnerConfig(role, maxIterations, timeoutMs);
+  const controlled = process.env.QLING_FEATURES_CONTROLLED_SUBAGENTS === "true";
+  let ownedPaths = Array.isArray(args.owned_paths)
+    ? args.owned_paths.map(String).map((value) => value.trim()).filter(Boolean)
+    : [];
+  const taskId = `subtask-${randomUUID()}`;
+  const coordinator = getSubagentCoordinator();
+  let worktreePath: string | undefined;
+  let worktreeBranch: string | undefined;
+  let registered = false;
+
+  if (controlled && role === "implement") {
+    if (ownedPaths.length === 0) {
+      return toolError("SUBTASK_OWNERSHIP_REQUIRED", "controlled implement subtasks require owned_paths");
+    }
+    try {
+      ownedPaths = normalizeOwnedPaths(ownedPaths);
+    } catch (error) {
+      return toolError("SUBTASK_INVALID_OWNERSHIP", error instanceof Error ? error.message : String(error));
+    }
+    const roots = getRuntimeRootsFromEnv();
+    const spec: SubtaskSpec = {
+      id: taskId,
+      objective: singleTask,
+      returnContract: "summary, evidence, files changed, validation, unresolved risks",
+      role,
+      readOnly: false,
+      ownedPaths,
+      workspaceMode: "worktree",
+      budget: { wallClockMs: timeoutMs, tokens: maxIterations * 8_000, toolCalls: maxIterations * 6 },
+      allowedCommunication: [],
+      cancellation: "cascade",
+      acceptance: ["changes remain within owned paths", "return evidence and validation results"],
+    };
+    try {
+      coordinator.register(spec);
+      registered = true;
+      const worktree = await new SubagentWorktreeManager({ stateDir: roots.fileStateDir }).create({
+        taskId,
+        workspaceDir: roots.workspaceDir ?? process.cwd(),
+      });
+      worktreePath = worktree.path;
+      worktreeBranch = worktree.branch;
+      coordinator.start(taskId);
+    } catch (error) {
+      if (registered) coordinator.fail(taskId, error instanceof Error ? error.message : String(error));
+      return toolError("SUBTASK_ISOLATION_FAILED", error instanceof Error ? error.message : String(error), {
+        retriable: false,
+        category: "runtime",
+      });
+    }
+  }
+
+  const { apiKey, tools, parent } = buildRunnerConfig(
+    role,
+    maxIterations,
+    timeoutMs,
+    worktreePath,
+    registered ? ownedPaths : undefined
+  );
   if (!apiKey) {
+    if (registered) coordinator.fail(taskId, "missing API key");
     return toolError("SUBTASK_MISSING_API_KEY", "missing API key for subtask agent");
   }
 
@@ -277,20 +351,36 @@ export async function runSubtask(args: {
       tools,
     });
     if (!result.success) {
+      if (registered) coordinator.fail(taskId, result.contractText || result.output);
       return toolError("SUBTASK_FAILED", result.contractText || result.output, {
         retriable: false,
         category: "runtime",
       });
     }
+    if (registered && worktreePath) {
+      const changed = await new SubagentWorktreeManager({ stateDir: getRuntimeRootsFromEnv().fileStateDir })
+        .listChangedFiles(worktreePath);
+      const outside = changed.filter((file) => !isRelativePathOwned(file, ownedPaths));
+      if (outside.length > 0) {
+        coordinator.fail(taskId, `changes outside ownership: ${outside.join(", ")}`);
+        return toolError("SUBTASK_OWNERSHIP_VIOLATION", `subtask changed files outside owned_paths: ${outside.join(", ")}`, {
+          retriable: false,
+          category: "permission",
+        });
+      }
+    }
+    if (registered) coordinator.complete(taskId);
     return {
       ...toolSuccess(result.contractText || result.output),
       meta: {
         usageSnapshot: result.usage,
         usageIsIncomplete: result.usageIsIncomplete,
         ...(result.backgroundTaskId ? { backgroundTaskId: result.backgroundTaskId } : {}),
+        ...(registered ? { taskId, worktreePath, worktreeBranch, ownedPaths } : {}),
       },
     };
   } catch (err) {
+    if (registered) coordinator.fail(taskId, err instanceof Error ? err.message : String(err));
     return toolError("SUBTASK_RUN_FAILED", err instanceof Error ? err.message : String(err), {
       retriable: false,
       category: "runtime",

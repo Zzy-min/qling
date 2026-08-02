@@ -35,6 +35,12 @@ import type {
   ToolResult,
 } from "../types.js";
 import type { UsageLedger, UsageLedgerSnapshot } from "../usage-ledger.js";
+import { createHash } from "node:crypto";
+import { classifyToolInvocation } from "../harness/tool-capability.js";
+import type { RuntimeToolCallRecord } from "../runtime/types.js";
+import { ContentAddressedArtifactStore } from "../harness/artifact-store.js";
+import { getRuntimeRootsFromEnv } from "../runtime-paths.js";
+import { assertOwnedMutationPath } from "../agents/ownership.js";
 
 export type ParseToolArgsResult =
   | { ok: true; value: Record<string, unknown> }
@@ -215,12 +221,14 @@ export interface ToolOrchestratorDeps {
   knowledgeAdapter: KnowledgeAgentAdapter;
   memoryStore: MemoryStore;
   workspaceDir: string;
+  ownedPaths?: string[];
   workflowRuntime: WorkflowRuntime;
   executionEventBus: ExecutionEventBus;
   emit: (event: string, ...args: unknown[]) => void;
   reflectiveThink: (tc: ToolCall) => Promise<{ decision: ReflectionDecision; reason: string }>;
   usageLedger?: UsageLedger;
   dispatchTool?: ToolDispatcher;
+  recordRuntimeTool?: (record: RuntimeToolCallRecord) => Promise<void>;
 }
 
 export interface ExecuteToolsContext {
@@ -255,6 +263,13 @@ export async function executePreparedTools(
 
   for (const prepared of preparedCalls) {
     const tc = prepared.call;
+    const definition = deps.tools.find((tool) => tool.name === tc.name);
+    const capability = classifyToolInvocation({
+      name: tc.name,
+      arguments: tc.arguments,
+      ...(definition ? { definition } : {}),
+    });
+    const argumentsHash = createHash("sha256").update(stableStringify(tc.arguments)).digest("hex");
     const mutationArgs = tc.arguments as { path?: string; file?: string; dry_run?: boolean };
     const mutationTargetRaw =
       tc.name === "write" || tc.name === "patch"
@@ -265,10 +280,55 @@ export async function executePreparedTools(
       : "";
     const mutationExistedBefore = mutationTarget ? existsSync(mutationTarget) : false;
     turnToolCalls++;
+    await deps.recordRuntimeTool?.({
+      toolCallId: tc.id,
+      tool: tc.name,
+      argumentsHash,
+      sideEffect: capability.sideEffect,
+      idempotent: capability.idempotent,
+      status: "running",
+      startedAt: Date.now(),
+    });
+    if (process.env.QLING_FEATURES_TOOL_CAPABILITIES === "true") {
+      deps.emit("tool_capability", {
+        tool: tc.name,
+        sideEffect: capability.sideEffect,
+        risk: capability.risk,
+        permission: capability.permission,
+      });
+    }
     deps.executionEventBus.startTool({ runId, attemptId, toolCallId: tc.id, tool: tc.name });
     deps.emit("tool_start", tc.name, tc.arguments);
     deps.knowledgeAdapter.onToolCall(tc);
     let preflightResult = prepared.immediateResult;
+
+    if (!preflightResult && deps.ownedPaths && deps.ownedPaths.length > 0) {
+      if (tc.name === "bash") {
+        preflightResult = {
+          tool_call_id: tc.id,
+          output: "Error: [SUBTASK_OWNERSHIP_DENIED] bash is disabled for owned-path implement subtasks",
+          is_error: true,
+          error: { code: "SUBTASK_OWNERSHIP_DENIED", message: "bash is disabled under owned_paths", category: "permission" },
+        };
+      } else if (tc.name === "write" || tc.name === "patch") {
+        try {
+          const mutation = tc.arguments as { path?: string; file?: string };
+          await assertOwnedMutationPath({
+            workspaceDir: deps.workspaceDir,
+            target: String(mutation.path ?? mutation.file ?? ""),
+            ownedPaths: deps.ownedPaths,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          preflightResult = {
+            tool_call_id: tc.id,
+            output: `Error: [SUBTASK_OWNERSHIP_DENIED] ${message}`,
+            is_error: true,
+            error: { code: "SUBTASK_OWNERSHIP_DENIED", message, category: "permission" },
+          };
+        }
+      }
+    }
 
     if (!preflightResult && (tc.name === "write" || tc.name === "bash")) {
       const reflection = await deps.reflectiveThink(tc);
@@ -320,6 +380,9 @@ export async function executePreparedTools(
     };
 
     if (!preflightResult) {
+      if (tc.name === "write" || tc.name === "patch") {
+        tc.arguments = { ...tc.arguments, __qling_workspace_dir: deps.workspaceDir };
+      }
       try {
         result = await deps.pipeline.execute(tc, (t) => dispatchTool(t));
       } catch (err) {
@@ -503,9 +566,19 @@ export async function executePreparedTools(
     }
 
     if (result.is_error) turnToolFailures++;
+    await deps.recordRuntimeTool?.({
+      toolCallId: tc.id,
+      tool: tc.name,
+      argumentsHash,
+      sideEffect: capability.sideEffect,
+      idempotent: capability.idempotent,
+      status: result.is_error ? "failed" : "succeeded",
+      completedAt: Date.now(),
+    });
     observations.push({
       tool: tc.name,
       failed: Boolean(result.is_error),
+      actionFingerprint: `${tc.name}:${argumentsHash}`,
       failureFingerprint: result.is_error
         ? normalizeFailureFingerprint({
             tool: tc.name,
@@ -527,12 +600,30 @@ export async function executePreparedTools(
     }
 
     const rawToolContent = JSON.stringify(result);
+    let artifactNote = "";
+    const maxToolChars = resolveToolResultMaxChars();
+    if (
+      process.env.QLING_FEATURES_ARTIFACT_STORE === "true" &&
+      maxToolChars > 0 &&
+      rawToolContent.length > maxToolChars
+    ) {
+      const roots = getRuntimeRootsFromEnv();
+      try {
+        const artifact = await new ContentAddressedArtifactStore(roots.fileStateDir).put(
+          rawToolContent,
+          "application/json"
+        );
+        artifactNote = `\n[artifact ref=artifact://sha256/${artifact.hash} bytes=${artifact.bytes}]`;
+      } catch {
+        artifactNote = "\n[artifact unavailable: local offload failed]";
+      }
+    }
     const hygienicContent = prepareToolResultContent(rawToolContent, {
-      maxChars: resolveToolResultMaxChars(),
+      maxChars: maxToolChars,
     });
     messages.push({
       role: "tool",
-      content: hygienicContent,
+      content: `${hygienicContent}${artifactNote}`,
       tool_call_id: tc.id,
     });
   }

@@ -230,7 +230,7 @@ test("operator pause keeps the active run resumable instead of reporting cancell
   assert.equal(recovery.getRecoveryState().status, "paused");
 });
 
-test("inner loop pauses on the second same-family failure even when command arguments change", async () => {
+test("inner loop distinguishes changed failures and redirects repeated actions without pausing", async () => {
   const bus = new ExecutionEventBus();
   const events = [];
   bus.subscribe((event) => events.push(event));
@@ -294,6 +294,10 @@ test("inner loop pauses on the second same-family failure even when command argu
     buildSystemPrompt: async () => "system",
     chat: async () => {
       chatCalls++;
+      if (chatCalls === 4) {
+        return { content: "diagnosis complete", tool_calls: [] };
+      }
+      const probe = chatCalls === 3 ? 2 : chatCalls;
       return {
         content: "",
         tool_calls: [{
@@ -301,7 +305,7 @@ test("inner loop pauses on the second same-family failure even when command argu
           type: "function",
           function: {
             name: "bash",
-            arguments: JSON.stringify({ cmd: `powershell probe${chatCalls}.ps1` }),
+            arguments: JSON.stringify({ cmd: `powershell probe${probe}.ps1` }),
           },
         }],
       };
@@ -320,11 +324,18 @@ test("inner loop pauses on the second same-family failure even when command argu
   };
 
   const outcome = await runInnerIterationLoop(host);
-  assert.equal(outcome.status, "paused");
-  assert.equal(chatCalls, 2);
-  assert.equal(host.toolFailureTotal, 2);
-  assert.match(outcome.text, /同类失败|失败/);
-  assert.equal(events.filter((event) => event.type === "efficiency_guard").length, 1);
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(outcome.text, "diagnosis complete");
+  assert.equal(chatCalls, 4);
+  assert.equal(host.toolFailureTotal, 3);
+  const guardEvents = events.filter((event) => event.type === "efficiency_guard");
+  assert.equal(guardEvents.length, 1);
+  assert.equal(guardEvents[0].status, "recovering");
+  assert.equal(guardEvents[0].recoveryAction, "change_strategy");
+  assert.match(
+    host.messages.find((message) => message.synthetic_reason === "efficiency_recovery")?.content ?? "",
+    /不得原样重复/
+  );
 });
 
 test("inner loop exposes successful file side effects to the next model turn", async () => {

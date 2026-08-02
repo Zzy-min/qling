@@ -176,8 +176,12 @@ export class Repl {
         console.log("\n🎋 轻灵正在思考...\n");
 
         try {
-          this.agent.addUserMessage(currentPrompt);
-          const response = await this.agent.run();
+          const response = (this.agent as any).getAgentRuntimeMode?.() === "actor"
+            ? await this.agent.submitPrompt(currentPrompt)
+            : await (async () => {
+                this.agent.addUserMessage(currentPrompt!);
+                return this.agent.run();
+              })();
           await this.agent.checkpointSession();
           console.log(`\n${response}\n`);
         } catch (err) {

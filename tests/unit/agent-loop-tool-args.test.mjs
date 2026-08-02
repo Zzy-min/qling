@@ -148,7 +148,7 @@ test("agent-loop: invalid tool arguments become tool error instead of crashing",
   }
 });
 
-test("agent-loop: tool repeat limit blocks repeated identical calls", async () => {
+test("agent-loop: tool repeat limit returns a structured error and allows recovery", async () => {
   const prev = snapshotEnv();
   process.env.QLING_MEMORY_WAL_ENABLED = "false";
   process.env.QLING_METRICS_ENABLED = "false";
@@ -213,11 +213,11 @@ test("agent-loop: tool repeat limit blocks repeated identical calls", async () =
     agent.addUserMessage("run repeat limit test");
     const finalAnswer = await agent.run();
 
-    assert.match(finalAnswer, /执行已暂停/);
-    assert.match(finalAnswer, /repeated_action/);
-    assert.equal(pipelineCalls, 0);
+    assert.equal(finalAnswer, "done-repeat-limit");
+    assert.equal(pipelineCalls, 1);
     const toolMessages = agent.messages.filter((m) => m.role === "tool");
-    assert.equal(toolMessages.length, 0);
+    assert.equal(toolMessages.length, 2);
+    assert.match(toolMessages[1].content, /TOOL_REPEAT_LIMIT_EXCEEDED/);
     assert.equal(events.filter((event) => event.type === "loop_detected").length, 1);
     unsubscribe();
   } finally {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import {
   buildToolSignature,
@@ -141,6 +142,7 @@ test("executePreparedTools reports successful file mutations for the run ledger"
     assert.deepEqual(result.observations, [{
       tool: "write",
       failed: false,
+      actionFingerprint: `write:${createHash("sha256").update(JSON.stringify({ content: "hello", path: "created.txt" })).digest("hex")}`,
       failureFingerprint: undefined,
       targetPath: path.join(workspaceDir, "created.txt"),
       mutation: "created",

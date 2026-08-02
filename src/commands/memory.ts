@@ -52,6 +52,8 @@ function normalizeSubcommand(value: string | undefined): string {
     "show": "show",
     "查看": "show",
     "详情": "show",
+    "why": "why",
+    "为什么": "why",
     "add": "add",
     "添加": "add",
     "delete": "delete",
@@ -187,6 +189,31 @@ export const memoryCommand: SlashCommand = {
         }
       } else {
         context.writeError(`未找到记忆 ID: ${id}`);
+      }
+      return;
+    }
+
+    if (sub === "why") {
+      const query = rest.join(" ").trim();
+      if (!query) {
+        context.writeError("用法: /memory why <id|query>");
+        return;
+      }
+      if (!memoryStore || typeof memoryStore.searchMemoryCards !== "function") {
+        context.writeError("Memory Cards v2 未启用；设置 QLING_FEATURES_MEMORY_CARDS=true 后可查看命中原因。");
+        return;
+      }
+      const exactCard = typeof memoryStore.getMemoryCard === "function" ? memoryStore.getMemoryCard(query) : null;
+      const hits = memoryStore.searchMemoryCards(query, { limit: 5 });
+      const selected = exactCard ? [{ card: exactCard, score: 1, reason: "exact id match" }] : hits;
+      if (selected.length === 0) {
+        context.writeLine(`没有找到可解释的记忆命中: ${query}`);
+        return;
+      }
+      for (const hit of selected) {
+        context.writeLine(`${hit.card.id}  score=${hit.score.toFixed(3)}  scope=${hit.card.scope}`);
+        context.writeLine(`  原因: ${hit.reason}`);
+        context.writeLine(`  来源事件: ${hit.card.sourceEventIds.join(", ") || "无"}`);
       }
       return;
     }

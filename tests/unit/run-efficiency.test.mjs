@@ -7,36 +7,50 @@ import {
 } from "../../dist/agent/run-efficiency.js";
 import { buildMandatoryRulesReference } from "../../dist/agent/system-prompt.js";
 
-test("failure fingerprints ignore volatile commands, paths and numbers", () => {
+test("failure fingerprints keep diagnostic causes while ignoring volatile paths and numbers", () => {
   const first = normalizeFailureFingerprint({
     tool: "bash",
     code: "TOOL_ERROR",
     category: "runtime",
-    message: "Command failed at C:\\Users\\Lenovo\\probe1.ps1 exit 1",
+    message: "exit code: 1\nstderr: SyntaxError: unterminated string literal at C:\\Users\\Lenovo\\probe1.ps1:10",
   });
   const second = normalizeFailureFingerprint({
     tool: "bash",
     code: "TOOL_ERROR",
     category: "runtime",
-    message: "Command failed at C:\\Users\\Lenovo\\probe2.ps1 exit 2",
+    message: "exit code: 2\nstderr: FINDSTR cannot open file at C:\\Users\\Lenovo\\probe2.ps1:20",
   });
-  assert.equal(first, second);
+  assert.notEqual(first, second);
 });
 
-test("efficiency guard pauses after two same-family failures despite changed tool args", () => {
+test("efficiency guard does not merge changed actions that happen to share an error family", () => {
   const guard = new RunEfficiencyGuard();
   assert.equal(
     guard.recordTools([
-      { tool: "bash", failed: true, failureFingerprint: "bash:runtime:command-failed" },
+      { tool: "bash", failed: true, actionFingerprint: "bash:probe-1", failureFingerprint: "bash:runtime:command-failed" },
     ]),
     null
   );
-  assert.match(
+  assert.equal(
     guard.recordTools([
-      { tool: "bash", failed: true, failureFingerprint: "bash:runtime:command-failed" },
-    ])?.reason ?? "",
-    /同类失败/
+      { tool: "bash", failed: true, actionFingerprint: "bash:probe-2", failureFingerprint: "bash:runtime:command-failed" },
+    ]),
+    null
   );
+});
+
+test("efficiency guard redirects an unchanged failing action instead of stopping the task", () => {
+  const guard = new RunEfficiencyGuard();
+  const observation = {
+    tool: "bash",
+    failed: true,
+    actionFingerprint: "bash:same-command",
+    failureFingerprint: "bash:runtime:syntax-error",
+  };
+  assert.equal(guard.recordTools([observation]), null);
+  const signal = guard.recordTools([observation]);
+  assert.equal(signal?.disposition, "redirect");
+  assert.match(signal?.reason ?? "", /更换参数、工具或策略/);
 });
 
 test("efficiency guard does not merge unrelated failures from the same tool", () => {
@@ -64,9 +78,13 @@ test("efficiency guard caps total failures and automatic compactions", () => {
   });
   assert.equal(guard.recordTools([{ tool: "a", failed: true, failureFingerprint: "1" }]), null);
   assert.equal(guard.recordTools([{ tool: "b", failed: true, failureFingerprint: "2" }]), null);
-  assert.match(
-    guard.recordTools([{ tool: "c", failed: true, failureFingerprint: "3" }])?.reason ?? "",
-    /失败预算/
+  const budgetSignal = guard.recordTools([{ tool: "c", failed: true, failureFingerprint: "3" }]);
+  assert.equal(budgetSignal?.disposition, "redirect");
+  assert.match(budgetSignal?.reason ?? "", /收敛探索范围/);
+  assert.equal(
+    guard.recordTools([{ tool: "d", failed: false }]),
+    null,
+    "successful progress should remain accepted after a redirect signal"
   );
   assert.equal(guard.canCompact(1), true);
   guard.recordCompaction(1);

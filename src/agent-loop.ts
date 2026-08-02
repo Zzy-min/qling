@@ -6,6 +6,7 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { createHash } from "node:crypto";
 import { ALL_TOOLS } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry } from "./pipeline/sections.js";
@@ -63,6 +64,12 @@ import {
 import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
 import { RuntimeServices } from "./runtime-services.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
+import { RuntimeEventJournal } from "./runtime/event-journal.js";
+import { SessionActor } from "./runtime/session-actor.js";
+import { resolveAgentRuntimeMode, type AgentRuntimeMode } from "./runtime/mode.js";
+import type { PromptExecutionResult, SessionSnapshot } from "./runtime/types.js";
+import { projectSessionEvents } from "./runtime/session-projector.js";
+import { redactPromptDiagnostics } from "./harness/prompt-envelope.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
 import type { ExecutionEvent, RecoveryState, RunOutcome } from "./execution/types.js";
@@ -199,6 +206,11 @@ export class AgentLoop extends AgentEventEmitter {
   private runTraceStore: RunTraceStore;
   private activeRun: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null = null;
   private runAbortController: AbortController | null = null;
+  private readonly agentRuntimeMode: AgentRuntimeMode = resolveAgentRuntimeMode();
+  private runtimeJournal: RuntimeEventJournal | null = null;
+  private sessionActor: SessionActor | null = null;
+  private sessionActorId: string | null = null;
+  private sessionActorReset: Promise<void> | null = null;
 
   // --- v0.3 Getters (Management) ---
   getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
@@ -206,6 +218,12 @@ export class AgentLoop extends AgentEventEmitter {
   getDiscoveryRegistry(): DiscoveryRegistry { return this.discoveryRegistry; }
   getMissionManager(): MissionManager { return this.missionManager; }
   getRuntimeRootDir(): string { return this.runtimeRootDir; }
+  getAgentRuntimeMode(): AgentRuntimeMode { return this.agentRuntimeMode; }
+  getRuntimeSnapshot(): SessionSnapshot | null { return this.sessionActor?.getSnapshot() ?? null; }
+  async refreshRuntimeSnapshot(): Promise<SessionSnapshot | null> {
+    if (this.agentRuntimeMode !== "actor") return this.getRuntimeSnapshot();
+    return (await this.ensureSessionActor()).getSnapshot();
+  }
   getWorkspaceDir(): string { return this.config.runtime?.workspaceDir ?? process.cwd(); }
   getMessagesSnapshot(): Message[] { return this.messages.map((message) => ({ ...message })); }
   getVerificationCommand(): string | null { return this.verificationCommand; }
@@ -455,6 +473,9 @@ export class AgentLoop extends AgentEventEmitter {
 
   private async init(): Promise<void> {
     await fs.mkdir(this.runtimeRootDir, { recursive: true });
+    if (this.agentRuntimeMode === "actor") {
+      await this.ensureSessionActor();
+    }
     await fs.mkdir(this.memoryDir, { recursive: true });
     await this.missionManager.init();
     await this.loadVerificationCommand();
@@ -740,6 +761,65 @@ export class AgentLoop extends AgentEventEmitter {
     return outcome.text;
   }
 
+  async submitPromptDetailed(
+    prompt: string,
+    priority: "normal" | "interjection" = "normal"
+  ): Promise<PromptExecutionResult> {
+    await this.initPromise;
+    if (this.agentRuntimeMode === "legacy") {
+      this.addUserMessage(prompt);
+      const outcome = await this.runDetailed();
+      return {
+        status:
+          outcome.status === "succeeded"
+            ? "completed"
+            : outcome.status === "exhausted" || outcome.status === "paused"
+              ? "paused"
+              : outcome.status,
+        text: outcome.text,
+      };
+    }
+    const actor = await this.ensureSessionActor();
+    return await actor.dispatch({
+      type: priority === "interjection" ? "interject" : "submit_prompt",
+      prompt,
+    }) as PromptExecutionResult;
+  }
+
+  async submitPrompt(prompt: string, priority: "normal" | "interjection" = "normal"): Promise<string> {
+    const result = await this.submitPromptDetailed(prompt, priority);
+    if (result.status === "failed" || result.status === "canceled") {
+      const error = new Error(result.text) as Error & { code?: string };
+      error.name = result.status === "canceled" ? "AgentRunCanceledError" : "AgentRunFailedError";
+      error.code = result.status === "canceled" ? "RUN_CANCELED" : "RUN_FAILED";
+      throw error;
+    }
+    return result.text;
+  }
+
+  async interjectPrompt(prompt: string): Promise<string> {
+    return this.submitPrompt(prompt, "interjection");
+  }
+
+  async waitForRuntimeIdle(): Promise<void> {
+    await this.sessionActor?.waitForIdle();
+  }
+
+  async resumeRuntimeSession(): Promise<void> {
+    if (this.agentRuntimeMode !== "actor") throw new Error("actor runtime is not enabled");
+    const actor = await this.ensureSessionActor();
+    await actor.dispatch({ type: "resume_session" });
+  }
+
+  async cancelRuntimeTurn(reason = "user_canceled"): Promise<boolean> {
+    if (this.agentRuntimeMode !== "actor" || !this.sessionActor) {
+      return this.cancelActiveRun();
+    }
+    const canceled = this.cancelActiveRun();
+    await this.sessionActor.dispatch({ type: "cancel_turn", reason });
+    return canceled;
+  }
+
   async runDetailed(): Promise<RunOutcome> {
     await this.initPromise;
     if (this.runAbortController) throw new Error("agent run already in progress");
@@ -820,12 +900,16 @@ export class AgentLoop extends AgentEventEmitter {
       knowledgeAdapter: this.knowledgeAdapter,
       memoryStore: this.memoryStore,
       workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
+      ownedPaths: this.config.runtime?.ownedPaths,
       workflowRuntime: this.workflowRuntime,
       executionEventBus: this.executionEventBus,
       recoveryController: this.recoveryController,
       verifier: this.verifier,
       usageLedger: this.usageLedger,
       dispatchTool: this.runtimeServices.dispatchTool,
+      recordRuntimeTool: this.runtimeJournal
+        ? (record: import("./runtime/types.js").RuntimeToolCallRecord) => this.runtimeJournal!.recordToolCall(record)
+        : undefined,
       buildSystemPrompt: () => this.buildSystemPrompt(),
       chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
         this.chat(systemPrompt, overrides ?? {}),
@@ -1107,6 +1191,13 @@ export class AgentLoop extends AgentEventEmitter {
       // ignore init failure in shutdown path
     }
     this.approvalGate.cancelAll();
+    if (this.sessionActor) {
+      await this.sessionActor.close();
+      this.sessionActor = null;
+      this.sessionActorId = null;
+    }
+    this.runtimeJournal?.close();
+    this.runtimeJournal = null;
     if (this.jsonHookRunner) {
       await this.jsonHookRunner.sessionEnd({ sessionId: this.sessionId, status: "shutdown" });
     }
@@ -1276,6 +1367,19 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private hydrateSessionSnapshot(snapshot: SavedSessionSnapshot): SavedSessionSummary {
+    const staleActor = this.sessionActor;
+    const staleJournal = this.runtimeJournal;
+    this.sessionActor = null;
+    this.sessionActorId = null;
+    this.runtimeJournal = null;
+    if (staleActor || staleJournal) {
+      this.sessionActorReset = (async () => {
+        await staleActor?.close();
+        staleJournal?.close();
+      })().finally(() => {
+        this.sessionActorReset = null;
+      });
+    }
     const patch = applySessionSnapshot(snapshot);
     this.messages = patch.messages;
     this.turnCount = patch.turnCount;
@@ -1301,6 +1405,83 @@ export class AgentLoop extends AgentEventEmitter {
       };
     }
     return patch.summary;
+  }
+
+  private async ensureSessionActor(): Promise<SessionActor> {
+    await this.sessionActorReset;
+    if (this.sessionActor && this.sessionActorId === this.sessionId) return this.sessionActor;
+    if (this.sessionActor) await this.sessionActor.close();
+    this.runtimeJournal?.close();
+
+    const journal = new RuntimeEventJournal({
+      stateDir: path.join(this.runtimeRootDir, "runtime"),
+      sessionId: this.sessionId,
+    });
+    await journal.init();
+    const restored = await journal.restore();
+    const interrupted = await journal.inspectInterruptedTools();
+    const initialSnapshot = projectSessionEvents(restored.snapshot, restored.events);
+    if (initialSnapshot.activeRun || interrupted.unknownOutcome.length > 0 || (initialSnapshot.state === "queued" && initialSnapshot.promptQueue.length > 0)) {
+      if (initialSnapshot.activeRun) {
+        const interruptedRun = initialSnapshot.activeRun;
+        const recoveredId = `recovered_${interruptedRun.turnId}`;
+        if (!initialSnapshot.promptQueue.some((item) => item.id === recoveredId)) {
+          initialSnapshot.promptQueue.unshift({
+            id: recoveredId,
+            prompt: interruptedRun.prompt,
+            priority: "normal",
+            queuedAt: interruptedRun.startedAt,
+          });
+        }
+      }
+      initialSnapshot.state = "paused";
+      initialSnapshot.pauseReason = interrupted.unknownOutcome.length > 0
+        ? "unconfirmed_mutating_tool_outcome"
+        : initialSnapshot.activeRun
+          ? "interrupted_active_run"
+          : "recovered_prompt_queue";
+      initialSnapshot.activeRun = null;
+      initialSnapshot.recentEvidence = [
+        ...initialSnapshot.recentEvidence,
+        ...interrupted.unknownOutcome.map((tool) => `unknown_outcome:${tool.tool}:${tool.toolCallId}`),
+      ].slice(-20);
+    }
+    if (interrupted.retryable.length > 0) {
+      initialSnapshot.recentEvidence = [
+        ...initialSnapshot.recentEvidence,
+        ...interrupted.retryable.map((tool) => `retryable_interrupted_tool:${tool.tool}:${tool.toolCallId}`),
+      ].slice(-20);
+    }
+
+    const actor = new SessionActor({
+      sessionId: this.sessionId,
+      journal,
+      initialSnapshot,
+      snapshotEveryEvents: 1,
+      executePrompt: async ({ prompt, signal }) => {
+        const cancel = () => this.cancelActiveRun();
+        signal.addEventListener("abort", cancel, { once: true });
+        try {
+          this.addUserMessage(prompt);
+          const outcome = await this.runDetailed();
+          return {
+            status:
+              outcome.status === "succeeded"
+                ? "completed"
+                : outcome.status === "exhausted" || outcome.status === "paused"
+                  ? "paused"
+                  : outcome.status,
+            text: outcome.text,
+          };
+        } finally {
+          signal.removeEventListener("abort", cancel);
+        }
+      },
+    });
+    this.runtimeJournal = journal;
+    this.sessionActor = actor;
+    this.sessionActorId = this.sessionId;
+    return actor;
   }
 
   /** 自我反思循环 (v0.5 M2) */
@@ -1402,11 +1583,33 @@ export class AgentLoop extends AgentEventEmitter {
     if (kind === "prompt" && !this.loggingConfig.inspectPrompt) return;
     if (kind === "request" && !this.loggingConfig.inspectRequest) return;
     try {
+      const includeContent = process.env.QLING_INSPECT_INCLUDE_CONTENT === "true";
+      const sanitize = (value: unknown, key = ""): unknown => {
+        if (typeof value === "string") {
+          if (/(?:authorization|cookie|token|secret|password|credential|api.?key|database.?url)/i.test(key)) return "[REDACTED]";
+          const redacted = redactPromptDiagnostics(value);
+          if (!includeContent && /^(?:prompt|systemPrompt|content|arguments|input|output)$/i.test(key)) {
+            return { sha256: createHash("sha256").update(redacted).digest("hex"), length: redacted.length };
+          }
+          return redacted;
+        }
+        if (Array.isArray(value)) return value.map((item) => sanitize(item));
+        if (value && typeof value === "object") {
+          if (!includeContent && /^(?:arguments|input|output)$/i.test(key)) {
+            const serialized = redactPromptDiagnostics(JSON.stringify(value));
+            return { sha256: createHash("sha256").update(serialized).digest("hex"), length: serialized.length };
+          }
+          return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([childKey, child]) => [childKey, sanitize(child, childKey)]));
+        }
+        return value;
+      };
+      await fs.mkdir(this.loggingConfig.inspectDumpDir, { recursive: true, mode: 0o700 });
+      await fs.chmod(this.loggingConfig.inspectDumpDir, 0o700).catch(() => undefined);
       const file = path.join(
         this.loggingConfig.inspectDumpDir,
         `${String(this.turnCount).padStart(4, "0")}_${Date.now()}_${kind}.json`
       );
-      await fs.writeFile(file, JSON.stringify(payload, null, 2), "utf-8");
+      await fs.writeFile(file, JSON.stringify(sanitize(payload), null, 2), { encoding: "utf-8", mode: 0o600 });
     } catch {
       // inspect dump failure should not block execution
     }

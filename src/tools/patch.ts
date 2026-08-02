@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 import { readFile, rename, unlink, writeFile } from "fs/promises";
-import { basename, dirname, join, relative } from "path";
+import { basename, dirname, join, relative, resolve } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import {
@@ -150,6 +150,7 @@ export async function runPatch(args: {
   path: string;
   chunks: PatchChunk[];
   dry_run?: boolean;
+  __qling_workspace_dir?: string;
 }): Promise<ToolResult> {
   const inputPath = String(args.path ?? "").trim();
   if (!inputPath) {
@@ -164,6 +165,7 @@ export async function runPatch(args: {
   const dryRun = args.dry_run === true || String((args as { dryRun?: unknown }).dryRun) === "true";
 
   const roots = getRuntimeRootsFromEnv();
+  if (args.__qling_workspace_dir) roots.workspaceDir = resolve(args.__qling_workspace_dir);
   const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
   const profile = resolveSandboxProfile();
   if (isWriteBlockedByProfile(profile)) {

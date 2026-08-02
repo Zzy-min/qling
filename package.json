@@ -88,6 +88,11 @@
     "eval:anchored": "npm run build && node scripts/eval-anchored-edit.mjs",
     "eval:tasks": "npm run build && node scripts/eval-tasks.mjs",
     "eval:llm": "npm run build && node scripts/eval-llm.mjs",
+    "eval:harness": "npm run build && node scripts/eval-harness.mjs",
+    "eval:context": "npm run build && node scripts/eval-context.mjs",
+    "eval:memory": "npm run build && node scripts/eval-memory.mjs",
+    "eval:long-run": "npm run build && node scripts/eval-long-run.mjs",
+    "eval:multi-agent": "npm run build && node scripts/eval-multi-agent.mjs",
     "validate:packaging": "node scripts/validate-packaging.mjs",
     "dep:layers": "node scripts/dep-layers.mjs",
     "dep:layers:json": "node scripts/dep-layers.mjs --json",
@@ -96,7 +101,7 @@
     "sync:scoop-bucket": "node scripts/sync-scoop-bucket.mjs",
     "build:portable-win": "node scripts/build-portable-win.mjs",
     "sync:winget-sha": "node scripts/sync-winget-sha.mjs",
-    "ci:check": "npm run dashboard:test && npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/eval-anchored-edit.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
+    "ci:check": "npm run dashboard:test && npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/eval-anchored-edit.mjs && node scripts/eval-harness.mjs && node scripts/eval-context.mjs && node scripts/eval-memory.mjs && node scripts/eval-long-run.mjs && node scripts/eval-multi-agent.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.2.1",

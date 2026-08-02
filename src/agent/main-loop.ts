@@ -29,7 +29,6 @@ import {
 import { runWriteToolVerification } from "../execution/verification-loop.js";
 import type { LlmChatResponse } from "../providers/llm-client.js";
 import { findLastUserMessageContent } from "./system-prompt.js";
-import { formatRecoveryPause } from "../execution/recovery-messages.js";
 import type { UsageLedger } from "../usage-ledger.js";
 import type { ToolDispatcher } from "../tools/index.js";
 import { RunEfficiencyGuard } from "./run-efficiency.js";
@@ -189,12 +188,14 @@ export interface InnerLoopHost {
   knowledgeAdapter: KnowledgeAgentAdapter;
   memoryStore: MemoryStore;
   workspaceDir: string;
+  ownedPaths?: string[];
   workflowRuntime: WorkflowRuntime;
   executionEventBus: ExecutionEventBus;
   recoveryController: RecoveryController;
   verifier: VerificationAgent;
   usageLedger?: UsageLedger;
   dispatchTool?: ToolDispatcher;
+  recordRuntimeTool?: import("../agent/tool-orchestrator.js").ToolOrchestratorDeps["recordRuntimeTool"];
 
   buildSystemPrompt: () => Promise<string>;
   chat: (systemPrompt: string, overrides?: Record<string, unknown>) => Promise<LlmChatResponse>;
@@ -339,16 +340,6 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     });
     const loop = preparedCalls.find((prepared) => prepared.loopDetected);
     if (loop?.loopDetected) {
-      const failure = classifyFailure(
-        new Error(
-          `repeated action: tool '${loop.call.name}' exceeded repeat limit (${loop.loopDetected.limit})`
-        ),
-        { tool: loop.call.name }
-      );
-      const decision = host.recoveryController.recordFailure(failure, {
-        changed: false,
-        currentStrategy: "stop_repeated_action",
-      });
       host.executionEventBus.emit({
         runId,
         sessionId: host.sessionId,
@@ -356,25 +347,18 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         toolCallId: loop.call.id,
         tool: loop.call.name,
         type: "loop_detected",
-        status: "paused",
+        status: "recovering",
         stage: "tool",
         category: "repeated_action",
-        fingerprint: failure.fingerprint,
-        recoveryAction: "pause",
+        fingerprint: loop.loopDetected.signature,
+        recoveryAction: "change_strategy",
       });
-      host.executionEventBus.completeAttempt(runId, "recovering");
       host.emit("loop_detected", {
         tool: loop.call.name,
         count: loop.loopDetected.count,
         limit: loop.loopDetected.limit,
         signature: loop.loopDetected.signature,
       });
-      return { status: "paused", text: formatRecoveryPause({
-        reason: decision.reason,
-        next: "检查失败上下文后使用 /recover retry|edit|cancel",
-        state: host.getRecoveryState(),
-        verificationStagesSummary: "未执行（重复调用守卫先行暂停）",
-      }) };
     }
     const { turnToolCalls, turnToolFailures, observations } = await executePreparedTools(
       {
@@ -386,12 +370,14 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         knowledgeAdapter: host.knowledgeAdapter,
         memoryStore: host.memoryStore,
         workspaceDir: host.workspaceDir,
+        ownedPaths: host.ownedPaths,
         workflowRuntime: host.workflowRuntime,
         executionEventBus: host.executionEventBus,
         emit: host.emit,
         reflectiveThink: host.reflectiveThink,
         usageLedger: host.usageLedger,
         dispatchTool: host.dispatchTool,
+        recordRuntimeTool: host.recordRuntimeTool,
       },
       {
         preparedCalls,
@@ -401,54 +387,27 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       }
     );
     const efficiencyStop = efficiency.recordTools(observations);
-    if (efficiencyStop) {
-      const failure = classifyFailure(
-        new Error(`repeated action: ${efficiencyStop.reason}`),
-        { tool: efficiencyStop.tool }
+    if (efficiencyStop?.disposition === "redirect") {
+      upsertSyntheticMessage(
+        host.messages,
+        "efficiency_recovery",
+        `<efficiency_recovery>\n${efficiencyStop.reason}\n读取最新工具错误，提出一个有新信息增量的替代动作；不得原样重复刚才的调用。\n</efficiency_recovery>`,
+        "efficiency-recovery-v1"
       );
-      const decision = host.recoveryController.recordFailure(failure, {
-        changed: false,
-        currentStrategy: "stop_repeated_action",
-      });
-      const totals = logTurnTelemetry(
-        { turn: host.turnCount, toolCalls: turnToolCalls, toolFailures: turnToolFailures },
-        {
-          toolCallTotal: host.toolCallTotal,
-          toolFailureTotal: host.toolFailureTotal,
-          compactionCount: host.compactionCount,
-          retryCountTotal: host.retryCountTotal,
-          format: host.loggingFormat,
-        }
-      );
-      host.toolCallTotal = totals.toolCallTotal;
-      host.toolFailureTotal = totals.toolFailureTotal;
       host.executionEventBus.emit({
         runId,
         sessionId: host.sessionId,
         attemptId,
         tool: efficiencyStop.tool,
         type: "efficiency_guard",
-        status: "paused",
+        status: "recovering",
         stage: "tool",
         category: "repeated_action",
         fingerprint: efficiencyStop.fingerprint,
-        recoveryAction: "pause",
+        recoveryAction: "change_strategy",
       });
-      host.executionEventBus.completeAttempt(runId, "recovering");
       host.emit("efficiency_guard", efficiencyStop);
-      const ledger = efficiency.formatSideEffectLedger();
-      return {
-        status: "paused",
-        text:
-          formatRecoveryPause({
-            reason: decision.reason,
-            next: "检查失败上下文后使用 /recover retry|edit|cancel",
-            state: host.getRecoveryState(),
-            verificationStagesSummary: "未执行（效率守卫先行暂停）",
-          }) + (ledger ? `\n\n${ledger}` : ""),
-      };
     }
-
     const verifyOutcome = await runWriteToolVerification(preparedCalls, {
       verificationCommand: host.verificationCommand,
       runCommand: host.runVerificationCommand,

@@ -375,13 +375,18 @@ export class DashboardServer {
       sessions[0]?.sessionTokens ??
       0;
 
+    const actorSnapshot = (this.options.agentLoop as any).getRuntimeSnapshot?.() ?? null;
+    const actorReady = actorSnapshot
+      ? ["idle", "completed", "paused"].includes(actorSnapshot.state)
+      : true;
     const stable = {
       runtime: {
-        ready: true,
+        ready: actorReady,
         sessionId: this.getSessionId(),
         daemonHealthy: this.daemonHealthy,
         daemonSource: this.daemonHealthy ? "daemon" as const : "local" as const,
         permissionMode: this.getPermissionMode(),
+        ...(actorSnapshot ? { actorState: actorSnapshot.state } : {}),
       },
       summary: summaryFor(allTasks),
       tasks,
@@ -389,7 +394,13 @@ export class DashboardServer {
       agentLive: {
         sessionId: this.getSessionId(),
         turnCount: Number((this.options.agentLoop as unknown as { turnCount?: number }).turnCount ?? 0),
-        ready: true,
+        ready: actorReady,
+        ...(actorSnapshot ? {
+          actorState: actorSnapshot.state,
+          activeRunId: actorSnapshot.activeRun?.runId,
+          queuedPrompts: actorSnapshot.promptQueue.length,
+          runtimeBudget: actorSnapshot.budget,
+        } : {}),
       },
       budget: {
         sessionTokens: currentTokens,

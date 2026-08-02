@@ -337,6 +337,36 @@ test("streaming repl handles unknown queue subcommand locally with usage", async
   }
 });
 
+test("streaming repl routes interrupt immediately to actor without entering the serial queue", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-interrupt-"));
+  try {
+    const agent = {
+      ...createAgent(stateDir),
+      getAgentRuntimeMode: () => "actor",
+      interjectPrompt: async (prompt) => `interjected:${prompt}`,
+      checkpointSession: async () => {},
+    };
+    const repl = new StreamingREPL(agent);
+    const ui = createUiRecorder();
+    ui.completeAssistantStream = () => false;
+    ui.appendFinal = (text) => ui.outputs.push(String(text));
+    ui.cancelAssistantStream = () => {};
+    repl.ui = ui;
+    repl.scheduler = { listTasks: async () => [], runDueTasksOnce: async () => {} };
+    repl.goalController = { getGoalStatus: async () => null };
+
+    await repl.handleUserInput("/interrupt keep the current constraint");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(ui.userInputs, ["/interrupt keep the current constraint"]);
+    assert.match(ui.validations.join("\n"), /安全边界/);
+    assert.deepEqual(ui.outputs, ["interjected:keep the current constraint"]);
+    assert.equal(repl.inputQueue.pendingCount, 0);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("streaming repl immediate queue clear removes pending input without leaking body", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-clear-"));
   try {
