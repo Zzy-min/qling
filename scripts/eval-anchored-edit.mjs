@@ -184,6 +184,13 @@ async function main() {
       },
       improvementPoints,
       requiredImprovementPoints: MIN_IMPROVEMENT_POINTS,
+      evidence: {
+        executor: "component",
+        model: "none",
+        verifier: "environment",
+        claim: "Compares deterministic patch engines against exact file-state oracles.",
+        limitations: ["Does not measure an Agent's ability to select or parameterize edits."],
+      },
       byKind: Object.fromEntries(
         [...new Set(results.map((item) => item.fixture.kind))].map((kind) => {
           const matching = results.filter((item) => item.fixture.kind === kind);

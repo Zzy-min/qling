@@ -88,6 +88,8 @@
     "eval:anchored": "npm run build && node scripts/eval-anchored-edit.mjs",
     "eval:tasks": "npm run build && node scripts/eval-tasks.mjs",
     "eval:llm": "npm run build && node scripts/eval-llm.mjs",
+    "eval:agent": "npm run build && node scripts/eval-agent.mjs",
+    "eval:agent-coding": "npm run build && node scripts/eval-agent-coding.mjs",
     "eval:harness": "npm run build && node scripts/eval-harness.mjs",
     "eval:context": "npm run build && node scripts/eval-context.mjs",
     "eval:memory": "npm run build && node scripts/eval-memory.mjs",

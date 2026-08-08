@@ -13,4 +13,4 @@ const outcome = evaluateOutcomeContract(
   [{ id: "e1", claim: "build passes", source: "command", observedAt: Date.now(), verdict: "pass", scope: "workspace", deterministic: true, redacted: false }]
 );
 assert.equal(outcome.status, "achieved");
-console.log(JSON.stringify({ eval: "harness", passed: 4, readRisk: read.risk, gitReadRisk: gitRead.risk, writeRisk: write.risk }));
+console.log(JSON.stringify({ eval: "harness", passed: 4, evidence: { executor: "component", model: "none", verifier: "assertion", claim: "Validates capability classification and deterministic evidence evaluation.", limitations: ["Does not execute tools or an Agent trajectory."] }, readRisk: read.risk, gitReadRisk: gitRead.risk, writeRisk: write.risk }));

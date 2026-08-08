@@ -5,13 +5,20 @@
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { EvalReport, EvalTask, EvalTaskResult } from "./types.js";
+import type {
+  EvalEvidenceProfile,
+  EvalReport,
+  EvalTask,
+  EvalTaskResult,
+} from "./types.js";
 import { buildEvalSmokeTasks } from "./tasks.js";
 
 export interface RunEvalOptions {
   tasks?: EvalTask[];
   /** 保留临时目录（调试） */
   keepTemp?: boolean;
+  /** Structured boundary for what this suite can and cannot prove. */
+  evidence?: EvalEvidenceProfile;
 }
 
 export async function runEvalSuite(options: RunEvalOptions = {}): Promise<EvalReport> {
@@ -67,6 +74,7 @@ export async function runEvalSuite(options: RunEvalOptions = {}): Promise<EvalRe
     skip,
     results,
     durationMs: Date.now() - started,
+    ...(options.evidence ? { evidence: options.evidence } : {}),
   };
 }
 
@@ -81,6 +89,15 @@ export function formatEvalReport(
     "-----------------------------------------",
     `summary: pass=${report.pass} fail=${report.fail} skip=${report.skip} total=${report.total} (${report.durationMs}ms)`,
   ];
+  if (report.evidence) {
+    lines.push(
+      `evidence: executor=${report.evidence.executor} model=${report.evidence.model} verifier=${report.evidence.verifier}`,
+      `claim: ${report.evidence.claim}`,
+    );
+    for (const limitation of report.evidence.limitations) {
+      lines.push(`limitation: ${limitation}`);
+    }
+  }
   for (const r of report.results) {
     const icon = r.status === "pass" ? "PASS" : r.status === "skip" ? "SKIP" : "FAIL";
     lines.push(`[${icon}] ${r.id} — ${r.title} (${r.durationMs}ms)`);
