@@ -33,6 +33,7 @@ import type { UsageLedger } from "../usage-ledger.js";
 import type { ToolDispatcher } from "../tools/index.js";
 import { RunEfficiencyGuard } from "./run-efficiency.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
+import { resolveCostBudgetSignal } from "../cost-budget.js";
 
 export interface TurnTelemetry {
   turn: number;
@@ -301,6 +302,24 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
 
     if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
       await host.workflowRuntime.updateContext(host.messages);
+    }
+
+    const costBudget = resolveCostBudgetSignal({
+      promptTokens: host.counters.sessionPromptTokens,
+      completionTokens: host.counters.sessionCompletionTokens,
+    });
+    if (costBudget.exhausted) {
+      const text =
+        `费用预算暂停：本轮估算模型费用 ¥${costBudget.estimatedCostCny.toFixed(3)}` +
+        `，已达到继续执行阈值 ¥${costBudget.maxCostCny?.toFixed(2)}。` +
+        "当前会话未追加新的模型调用；提高预算后可用 /recover retry 继续。";
+      host.recoveryController.pauseActiveRun();
+      host.emit("cost_budget_exhausted", {
+        estimatedCostCny: costBudget.estimatedCostCny,
+        maxCostCny: costBudget.maxCostCny,
+      });
+      host.executionEventBus.completeAttempt(runId, "recovering");
+      return { status: "paused", text };
     }
 
     const response = await host.chat(systemPrompt);

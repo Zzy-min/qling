@@ -331,7 +331,21 @@ export async function runBash(args: {
   });
 }
 
-function buildSafeEnv(envAllowlist: string[], envInject: Record<string, string>): NodeJS.ProcessEnv {
+const PROTECTED_TOOL_ENV_PREFIXES = [
+  "QLING_LLM_",
+  "QLING_MCP_",
+  "QLING_TELEGRAM_",
+  "QLING_SLACK_",
+  "QLING_DISCORD_",
+];
+
+export function isProtectedToolEnvKey(key: string): boolean {
+  const upper = key.toUpperCase();
+  return PROTECTED_TOOL_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix)) ||
+    /(?:^|_)(?:API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)(?:_|$)/.test(upper);
+}
+
+export function buildSafeEnv(envAllowlist: string[], envInject: Record<string, string>): NodeJS.ProcessEnv {
   const safe: NodeJS.ProcessEnv = {};
   const baseKeys = new Set([
     "PATH",
@@ -349,14 +363,14 @@ function buildSafeEnv(envAllowlist: string[], envInject: Record<string, string>)
   ]);
 
   for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith("QLING_") || baseKeys.has(key.toUpperCase())) {
+    if (!isProtectedToolEnvKey(key) && (key.startsWith("QLING_") || baseKeys.has(key.toUpperCase()))) {
       safe[key] = value;
     }
   }
 
   for (const key of envAllowlist) {
     const normalized = key.trim();
-    if (!isSafeEnvKey(normalized)) continue;
+    if (!isSafeEnvKey(normalized) || isProtectedToolEnvKey(normalized)) continue;
     if (process.env[normalized] !== undefined) {
       safe[normalized] = process.env[normalized];
     }
@@ -364,7 +378,7 @@ function buildSafeEnv(envAllowlist: string[], envInject: Record<string, string>)
 
   for (const [key, value] of Object.entries(envInject)) {
     const normalized = key.trim();
-    if (!isSafeEnvKey(normalized)) continue;
+    if (!isSafeEnvKey(normalized) || isProtectedToolEnvKey(normalized)) continue;
     safe[normalized] = String(value);
   }
 

@@ -91,18 +91,21 @@ export const ALL_TOOLS: ToolDefinition[] = [
 
 export interface ToolRegistryBuildOptions {
   staticEnabled?: Record<string, boolean>;
+  allowedNames?: ReadonlySet<string>;
   runtimeInjected?: ToolDefinition[];
   channelContextual?: ToolDefinition[];
 }
 
 export function buildToolRegistry(options: ToolRegistryBuildOptions = {}): ToolDefinition[] {
   const staticEnabled = options.staticEnabled ?? {};
-  const staticLayer = ALL_TOOLS.filter((t) => staticEnabled[t.name] !== false);
+  const allowedNames = options.allowedNames;
+  const isAllowed = (name: string) => !allowedNames || allowedNames.has(name);
+  const staticLayer = ALL_TOOLS.filter((t) => staticEnabled[t.name] !== false && isAllowed(t.name));
   const merged = [...staticLayer, ...(options.runtimeInjected ?? []), ...(options.channelContextual ?? [])];
 
   const byName = new Map<string, ToolDefinition>();
   for (const tool of merged) {
-    byName.set(tool.name, tool);
+    if (isAllowed(tool.name)) byName.set(tool.name, tool);
   }
   return Array.from(byName.values());
 }
@@ -138,6 +141,7 @@ export type ToolDispatcher = (toolCall: ToolCall) => Promise<ToolResult>;
 
 export interface ToolDispatcherOptions {
   mcpRegistry?: MCPRegistry | null | (() => MCPRegistry | null);
+  allowedNames?: ReadonlySet<string>;
 }
 
 export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolDispatcher {
@@ -145,6 +149,15 @@ export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolD
     ? options.mcpRegistry()
     : options.mcpRegistry ?? null;
   return async (toolCall: ToolCall): Promise<ToolResult> => {
+    if (options.allowedNames && !options.allowedNames.has(toolCall.name)) {
+      return {
+        ...toolError("TOOL_NOT_ALLOWED", `tool '${toolCall.name}' is not allowed in this session`, {
+          retriable: false,
+          category: "permission",
+        }),
+        tool_call_id: toolCall.id,
+      };
+    }
     const registry = resolveRegistry();
     // MCP tool routing is bound to this dispatcher instance.
     if (isMCPTool(toolCall.name) && registry) {

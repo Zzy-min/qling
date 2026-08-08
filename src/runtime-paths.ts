@@ -1,5 +1,6 @@
 import * as os from "os";
 import * as path from "path";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface RuntimeRoots {
   workspaceDir: string | null;
@@ -15,6 +16,16 @@ export type WriteSandboxMode = "workspace" | "roots" | "off";
 const HOME = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
 const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
+const runtimeRootsContext = new AsyncLocalStorage<RuntimeRoots>();
+
+/** Bind tool path resolution to one Agent runtime without mutating process.env. */
+export function runWithRuntimeRoots<T>(roots: RuntimeRoots, operation: () => T): T {
+  return runtimeRootsContext.run({
+    workspaceDir: roots.workspaceDir ? path.resolve(roots.workspaceDir) : null,
+    fileCacheDir: path.resolve(roots.fileCacheDir),
+    fileStateDir: path.resolve(roots.fileStateDir),
+  }, operation);
+}
 
 /** 默认拒绝写入的敏感文件名模式（小写比较） */
 const SENSITIVE_BASENAME_EXACT = new Set([
@@ -34,6 +45,8 @@ const SENSITIVE_BASENAME_EXACT = new Set([
 const SENSITIVE_BASENAME_SUFFIXES = [".pem", ".key", ".p12", ".pfx"];
 
 export function getRuntimeRootsFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeRoots {
+  const scoped = env === process.env ? runtimeRootsContext.getStore() : undefined;
+  if (scoped) return { ...scoped };
   const state = path.resolve(env.QLING_FILE_STATE_DIR ?? DEFAULT_STATE_DIR);
   const cache = path.resolve(env.QLING_FILE_CACHE_DIR ?? path.join(state, "cache"));
   const ws = env.QLING_WORKSPACE_DIR?.trim();
@@ -174,4 +187,3 @@ function isSubPath(target: string, base: string): boolean {
   const rel = path.relative(base, target);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
-

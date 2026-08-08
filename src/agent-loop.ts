@@ -459,6 +459,8 @@ export class AgentLoop extends AgentEventEmitter {
       model: this.config.model,
       workspaceDir: this.config.runtime?.workspaceDir ?? null,
       stateDir: this.runtimeRootDir,
+      fileCacheDir: this.config.runtime?.fileCacheDir ?? this.runtimeRootDir,
+      toolAllowlist: this.config.runtime?.toolAllowlist ?? null,
     });
     this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
@@ -664,12 +666,18 @@ export class AgentLoop extends AgentEventEmitter {
           }
           this.runtimeServices.setMcpRegistry(registry);
           const results = await registry.connectAll();
-          const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools());
+          const allowedNames = this.config.runtime?.toolAllowlist
+            ? new Set(this.config.runtime.toolAllowlist)
+            : null;
+          const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools())
+            .filter((tool) => !allowedNames || allowedNames.has(tool.name));
           if (mcpTools.length > 0) {
             const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
             this.config.tools = [
               ...this.config.tools,
-              ...(exposure === "search" ? MCP_CATALOG_TOOLS : mcpTools),
+              ...(exposure === "search"
+                ? MCP_CATALOG_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name))
+                : mcpTools),
             ];
             console.error("[MCP] Connected " + results.filter((r) => r.status === "connected").length + " servers, " + mcpTools.length + " tools");
           }

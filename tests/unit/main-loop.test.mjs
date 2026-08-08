@@ -14,6 +14,34 @@ import {
 import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
 import { RecoveryController } from "../../dist/execution/recovery-controller.js";
 import { ContextCompactor } from "../../dist/context-compactor.js";
+import {
+  canStartBudgetedTask,
+  estimateModelCostCny,
+  resolveCostBudgetSignal,
+} from "../../dist/cost-budget.js";
+
+test("cost budget uses conservative cache-miss CNY prices", () => {
+  assert.equal(
+    estimateModelCostCny(
+      { promptTokens: 1_000_000, completionTokens: 500_000 },
+      { inputPerMillion: 1, outputPerMillion: 2 }
+    ),
+    2
+  );
+  assert.deepEqual(
+    resolveCostBudgetSignal(
+      { promptTokens: 2_000_000, completionTokens: 1_000_000 },
+      {
+        QLING_COST_INPUT_CNY_PER_MILLION: "1",
+        QLING_COST_OUTPUT_CNY_PER_MILLION: "2",
+        QLING_RUN_MAX_COST_CNY: "4",
+      }
+    ),
+    { estimatedCostCny: 4, maxCostCny: 4, exhausted: true }
+  );
+  assert.equal(canStartBudgetedTask(45, 4, 50), true);
+  assert.equal(canStartBudgetedTask(47, 4, 50), false);
+});
 
 test("applyProviderUsage only accumulates official usage", () => {
   const base = {
@@ -228,6 +256,67 @@ test("operator pause keeps the active run resumable instead of reporting cancell
   assert.equal(outcome.status, "paused");
   assert.equal(outcome.runId, activeRun.runId);
   assert.equal(recovery.getRecoveryState().status, "paused");
+});
+
+test("cost budget pauses before another model call without appending a dangling tool call", async () => {
+  const previous = process.env.QLING_RUN_MAX_COST_CNY;
+  process.env.QLING_RUN_MAX_COST_CNY = "4";
+  const bus = new ExecutionEventBus();
+  bus.startRun({ runId: "run-cost", sessionId: "cost-session" });
+  const recovery = new RecoveryController();
+  recovery.startRun({ runId: "run-cost", sessionId: "cost-session", originalTask: "expensive task" });
+  let chatCalled = false;
+  const messages = [{ role: "user", content: "expensive task" }];
+  try {
+    const outcome = await runInnerIterationLoop({
+      messages,
+      turnCount: 0,
+      sessionId: "cost-session",
+      maxIterations: 2,
+      toolRepeatLimit: 2,
+      parseRetries: 0,
+      verificationCommand: null,
+      counters: {
+        sessionTokens: 4_000_000,
+        sessionPromptTokens: 4_000_000,
+        sessionCompletionTokens: 0,
+        tokenUsageSource: "provider",
+      },
+      compactionCount: 0,
+      toolCallTotal: 0,
+      toolFailureTotal: 0,
+      retryCountTotal: 0,
+      loggingFormat: "json",
+      activeRunId: "run-cost",
+      compactor: new ContextCompactor(10_000_000, "test"),
+      pipeline: {},
+      tools: [],
+      guardConfig: { enabled: false },
+      channel: null,
+      approvalGate: {},
+      knowledgeAdapter: {},
+      memoryStore: {},
+      workspaceDir: process.cwd(),
+      workflowRuntime: {},
+      executionEventBus: bus,
+      recoveryController: recovery,
+      verifier: {},
+      buildSystemPrompt: async () => "system",
+      chat: async () => { chatCalled = true; return { content: "must not run" }; },
+      emit() {},
+      runVerificationCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+      getRecoveryState: () => recovery.getRecoveryState(),
+      reflectiveThink: async () => ({ decision: "proceed", reason: "" }),
+      checkAutoDream: async () => {},
+    });
+    assert.equal(outcome.status, "paused");
+    assert.equal(chatCalled, false);
+    assert.equal(messages.length, 1);
+    assert.equal(recovery.getRecoveryState().status, "paused");
+  } finally {
+    if (previous === undefined) delete process.env.QLING_RUN_MAX_COST_CNY;
+    else process.env.QLING_RUN_MAX_COST_CNY = previous;
+  }
 });
 
 test("inner loop distinguishes changed failures and redirects repeated actions without pausing", async () => {

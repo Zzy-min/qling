@@ -75,6 +75,7 @@ export interface AgentConfig {
     timeoutMs: number;
     providerRetryLimit?: number;
     ownedPaths?: string[];
+    toolAllowlist?: string[];
   };
   logging?: {
     level: "debug" | "info" | "warn" | "error";

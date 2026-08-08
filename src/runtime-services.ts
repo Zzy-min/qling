@@ -2,12 +2,15 @@ import type { MemoryStore } from "./memory.js";
 import type { MCPRegistry } from "./mcp/registry.js";
 import type { LlmHttpClient } from "./providers/llm-client.js";
 import { createToolDispatcher, type ToolDispatcher } from "./tools/index.js";
+import { runWithRuntimeRoots } from "./runtime-paths.js";
 
 export interface RuntimeConfigSnapshot {
   provider: string;
   model: string;
   workspaceDir: string | null;
   stateDir: string;
+  fileCacheDir: string;
+  toolAllowlist: string[] | null;
 }
 
 /** Agent-owned services. No mutable process-wide registry participates in dispatch. */
@@ -22,7 +25,15 @@ export class RuntimeServices {
     config: RuntimeConfigSnapshot
   ) {
     this.config = Object.freeze({ ...config });
-    this.dispatchTool = createToolDispatcher({ mcpRegistry: () => this.registry });
+    const dispatch = createToolDispatcher({
+      mcpRegistry: () => this.registry,
+      allowedNames: config.toolAllowlist ? new Set(config.toolAllowlist) : undefined,
+    });
+    this.dispatchTool = (toolCall) => runWithRuntimeRoots({
+      workspaceDir: config.workspaceDir,
+      fileCacheDir: config.fileCacheDir,
+      fileStateDir: config.stateDir,
+    }, () => dispatch(toolCall));
   }
 
   setMcpRegistry(registry: MCPRegistry | null): void {
