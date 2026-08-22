@@ -276,6 +276,25 @@ test("SWE-bench source candidate excludes observed QDP probes without broad test
   );
 });
 
+test("SWE-bench source candidate excludes the observed standalone QDP probe only", () => {
+  const patch = [
+    "diff --git a/tmptest_qdp_standalone.py b/tmptest_qdp_standalone.py",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/tmptest_qdp_standalone.py",
+    "@@ -0,0 +1 @@",
+    "+print('standalone qdp probe')",
+  ].join("\n");
+  assert.deepEqual(
+    diagnosticArtifactPathspecExclusions(["tmptest_qdp_standalone.py"], patch),
+    ["tmptest_qdp_standalone.py"],
+  );
+  assert.deepEqual(
+    diagnosticArtifactPathspecExclusions(["tmptest_qdp_backend.py"], patch.replaceAll("tmptest_qdp_standalone.py", "tmptest_qdp_backend.py")),
+    [],
+  );
+});
+
 test("SWE-bench source candidate excludes an untracked root dependency test shim", () => {
   const patch = [
     "diff --git a/np_shim.py b/np_shim.py",

@@ -119,7 +119,7 @@ export function diagnosticArtifactPathspecExclusions(files: readonly string[], p
     // Exact observed scratch files only. Prefixes such as `_sim_*.py`, `_smoke_*.py`,
     // or `zz_*` would drop legitimate private production modules from the official candidate.
     const observedSwebenchScratch = !normalized.includes("/")
-      && /^(?:_runner\.py|_t\.txt|_checkenv\.py|_sim_rst\.py|_smoke_rst\.py|_test_qdp\.py|_test_regex\.py|zz_repro\.py|zz_out\.txt)$/i.test(normalized);
+      && /^(?:_runner\.py|_t\.txt|_checkenv\.py|_sim_rst\.py|_smoke_rst\.py|_test_qdp\.py|_test_regex\.py|tmptest_qdp_standalone\.py|zz_repro\.py|zz_out\.txt)$/i.test(normalized);
     const dependencyTestShim = !normalized.includes("/")
       && /_shim\.py$/i.test(normalized)
       && /test-only\s+shim/i.test(content)
