@@ -37,6 +37,43 @@ export interface OfficialGraderPendingEvidence {
   };
 }
 
+export interface SwebenchModelRoute {
+  provider: string;
+  endpoint: string;
+  model: string;
+}
+
+export function isSupportedSwebenchModelRoute(route: SwebenchModelRoute): boolean {
+  const provider = route.provider.trim().toLowerCase();
+  const model = route.model.trim().toLowerCase();
+  if (model !== "deepseek-chat" && model !== "deepseek-v4-flash") return false;
+  if (provider === "deepseek") return true;
+  if (provider !== "openai") return false;
+
+  try {
+    const endpoint = new URL(route.endpoint);
+    const pathname = endpoint.pathname.replace(/\/+$/, "");
+    return endpoint.protocol === "https:"
+      && endpoint.hostname.toLowerCase() === "chatapi.weixin.qq.com"
+      && endpoint.username === ""
+      && endpoint.password === ""
+      && endpoint.search === ""
+      && endpoint.hash === ""
+      && pathname === "/openai/v1";
+  } catch {
+    return false;
+  }
+}
+
+export function buildSwebenchAgentEnvironment(
+  base: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    QLING_FEATURES_SEMANTIC_MEMORY: "false",
+  };
+}
+
 export function isOfficialGraderPendingCandidate(evidence: OfficialGraderPendingEvidence): boolean {
   const checkpoint = evidence.checkpoint;
   const progressState = checkpoint?.progressState;
@@ -82,7 +119,7 @@ export function diagnosticArtifactPathspecExclusions(files: readonly string[], p
     // Exact observed scratch files only. Prefixes such as `_sim_*.py`, `_smoke_*.py`,
     // or `zz_*` would drop legitimate private production modules from the official candidate.
     const observedSwebenchScratch = !normalized.includes("/")
-      && /^(?:_runner\.py|_t\.txt|_checkenv\.py|_sim_rst\.py|_smoke_rst\.py|zz_repro\.py|zz_out\.txt)$/i.test(normalized);
+      && /^(?:_runner\.py|_t\.txt|_checkenv\.py|_sim_rst\.py|_smoke_rst\.py|_test_qdp\.py|_test_regex\.py|zz_repro\.py|zz_out\.txt)$/i.test(normalized);
     const dependencyTestShim = !normalized.includes("/")
       && /_shim\.py$/i.test(normalized)
       && /test-only\s+shim/i.test(content)

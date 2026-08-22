@@ -243,6 +243,39 @@ test("SWE-bench source candidate excludes root environment, simulation, and smok
   );
 });
 
+test("SWE-bench source candidate excludes observed QDP probes without broad test prefixes", () => {
+  const patch = [
+    "diff --git a/_test_qdp.py b/_test_qdp.py",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/_test_qdp.py",
+    "@@ -0,0 +1 @@",
+    "+print('qdp probe')",
+    "diff --git a/_test_regex.py b/_test_regex.py",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/_test_regex.py",
+    "@@ -0,0 +1 @@",
+    "+print('regex probe')",
+  ].join("\n");
+  assert.deepEqual(
+    diagnosticArtifactPathspecExclusions(["_test_qdp.py", "_test_regex.py"], patch),
+    ["_test_qdp.py", "_test_regex.py"],
+  );
+  assert.deepEqual(
+    diagnosticArtifactPathspecExclusions(["_test_backend.py"], [
+      "diff --git a/_test_backend.py b/_test_backend.py",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/_test_backend.py",
+      "@@ -0,0 +1,2 @@",
+      "+def validate_backend(value):",
+      "+    return value is not None",
+    ].join("\n")),
+    [],
+  );
+});
+
 test("SWE-bench source candidate excludes an untracked root dependency test shim", () => {
   const patch = [
     "diff --git a/np_shim.py b/np_shim.py",
@@ -379,4 +412,46 @@ test("SWE-bench prediction normalizes Windows patch transport to LF", () => {
     latestVerificationVerdict: "pass",
     patch: windowsPatch,
   }).modelPatch, normalized);
+});
+
+test("SWE-bench model route accepts the official Weixin Coding Plan OpenAI endpoint", () => {
+  assert.equal(typeof swebenchPrediction.isSupportedSwebenchModelRoute, "function");
+  assert.equal(swebenchPrediction.isSupportedSwebenchModelRoute?.({
+    provider: "openai",
+    endpoint: "https://chatapi.weixin.qq.com/openai/v1",
+    model: "Deepseek-v4-flash",
+  }), true);
+  assert.equal(swebenchPrediction.isSupportedSwebenchModelRoute?.({
+    provider: "deepseek",
+    endpoint: "https://api.deepseek.com",
+    model: "deepseek-chat",
+  }), true);
+});
+
+test("SWE-bench model route rejects untrusted OpenAI-compatible endpoints", () => {
+  assert.equal(typeof swebenchPrediction.isSupportedSwebenchModelRoute, "function");
+  for (const endpoint of [
+    "https://api.openai.com/v1",
+    "https://chatapi.weixin.qq.com.evil.example/openai/v1",
+    "http://chatapi.weixin.qq.com/openai/v1",
+    "https://chatapi.weixin.qq.com/openai/v2",
+  ]) {
+    assert.equal(swebenchPrediction.isSupportedSwebenchModelRoute?.({
+      provider: "openai",
+      endpoint,
+      model: "Deepseek-v4-flash",
+    }), false, endpoint);
+  }
+});
+
+test("SWE-bench agent isolation disables unsupported semantic embeddings", () => {
+  assert.equal(typeof swebenchPrediction.buildSwebenchAgentEnvironment, "function");
+  const base = {
+    QLING_FEATURES_SEMANTIC_MEMORY: "true",
+    QLING_LLM_MODEL: "Deepseek-v4-flash",
+  };
+  const isolated = swebenchPrediction.buildSwebenchAgentEnvironment?.(base);
+  assert.equal(isolated?.QLING_FEATURES_SEMANTIC_MEMORY, "false");
+  assert.equal(isolated?.QLING_LLM_MODEL, "Deepseek-v4-flash");
+  assert.equal(base.QLING_FEATURES_SEMANTIC_MEMORY, "true");
 });
