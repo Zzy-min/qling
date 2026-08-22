@@ -295,6 +295,27 @@ test("SWE-bench source candidate excludes the observed standalone QDP probe only
   );
 });
 
+test("SWE-bench source candidate excludes exact observed nested QDP probes", () => {
+  const probes = [
+    "astropy/io/ascii/_qdp_regex_test.py",
+    "astropy/io/ascii/_qdp_test_repro.py",
+    "astropy/io/ascii/_qdp_test_repro.qdp",
+  ];
+  const patch = probes.map((file) => [
+    `diff --git a/${file} b/${file}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ b/${file}`,
+    "@@ -0,0 +1 @@",
+    "+diagnostic probe",
+  ].join("\n")).join("\n");
+  assert.deepEqual(diagnosticArtifactPathspecExclusions(probes, patch), probes);
+  assert.deepEqual(
+    diagnosticArtifactPathspecExclusions(["astropy/io/ascii/_qdp_parser.py"], patch),
+    [],
+  );
+});
+
 test("SWE-bench source candidate excludes an untracked root dependency test shim", () => {
   const patch = [
     "diff --git a/np_shim.py b/np_shim.py",

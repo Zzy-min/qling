@@ -120,11 +120,12 @@ export function diagnosticArtifactPathspecExclusions(files: readonly string[], p
     // or `zz_*` would drop legitimate private production modules from the official candidate.
     const observedSwebenchScratch = !normalized.includes("/")
       && /^(?:_runner\.py|_t\.txt|_checkenv\.py|_sim_rst\.py|_smoke_rst\.py|_test_qdp\.py|_test_regex\.py|tmptest_qdp_standalone\.py|zz_repro\.py|zz_out\.txt)$/i.test(normalized);
+    const observedNestedSwebenchScratch = /^(?:astropy\/io\/ascii\/_qdp_regex_test\.py|astropy\/io\/ascii\/_qdp_test_repro\.py|astropy\/io\/ascii\/_qdp_test_repro\.qdp)$/i.test(normalized);
     const dependencyTestShim = !normalized.includes("/")
       && /_shim\.py$/i.test(normalized)
       && /test-only\s+shim/i.test(content)
       && /(?:restore aliases removed|setattr\s*\(\s*np\s*,)/i.test(content);
-    return observedSwebenchScratch || dependencyTestShim || isDiagnosticArtifact(file, content);
+    return observedSwebenchScratch || observedNestedSwebenchScratch || dependencyTestShim || isDiagnosticArtifact(file, content);
   });
 }
 
