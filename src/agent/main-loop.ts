@@ -23,15 +23,20 @@ import type { FailureClassification, RecoveryState, RunOutcome } from "../execut
 import { classifyFailure } from "../execution/failure-classifier.js";
 import {
   executePreparedTools,
+  fingerprintToolAction,
   prepareToolCalls,
   type ReflectionDecision,
 } from "./tool-orchestrator.js";
 import { runWriteToolVerification } from "../execution/verification-loop.js";
 import type { LlmChatResponse } from "../providers/llm-client.js";
+import { assertSessionLeaseToken } from "../runtime/session-lease.js";
 import { findLastUserMessageContent } from "./system-prompt.js";
 import type { UsageLedger } from "../usage-ledger.js";
+import type { RunCheckpoint, RunCheckpointStore } from "../runtime/run-checkpoint.js";
 import type { ToolDispatcher } from "../tools/index.js";
 import { RunEfficiencyGuard } from "./run-efficiency.js";
+import type { ProgressState } from "./run-efficiency.js";
+import type { ProjectProfile } from "../runtime/project-profile.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
 import { repairHistory } from "../context-history-repair.js";
 import { resolveCostBudgetSignal } from "../cost-budget.js";
@@ -169,6 +174,7 @@ export interface InnerLoopHost {
   messages: Message[];
   turnCount: number;
   sessionId: string;
+  sessionLeaseToken?: string;
   maxIterations: number;
   toolRepeatLimit: number;
   parseRetries: number;
@@ -190,6 +196,7 @@ export interface InnerLoopHost {
   knowledgeAdapter: KnowledgeAgentAdapter;
   memoryStore: MemoryStore;
   workspaceDir: string;
+  fileStateDir: string;
   ownedPaths?: string[];
   workflowRuntime: WorkflowRuntime;
   executionEventBus: ExecutionEventBus;
@@ -198,14 +205,33 @@ export interface InnerLoopHost {
   usageLedger?: UsageLedger;
   dispatchTool?: ToolDispatcher;
   recordRuntimeTool?: import("../agent/tool-orchestrator.js").ToolOrchestratorDeps["recordRuntimeTool"];
+  checkpointStore?: RunCheckpointStore;
+  initialProgressState?: ProgressState;
+  deterministicVerificationAvailable?: boolean;
+  requireWorkspaceMutation?: boolean;
+  projectProfile?: ProjectProfile;
 
   buildSystemPrompt: () => Promise<string>;
   chat: (systemPrompt: string, overrides?: Record<string, unknown>) => Promise<LlmChatResponse>;
   emit: (event: string, ...args: unknown[]) => void;
-  runVerificationCommand: (cmd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+  runVerificationCommand: (cmd: string, runtime?: "native" | "wsl") => Promise<{ code: number; stdout: string; stderr: string }>;
   getRecoveryState: () => RecoveryState | null;
   reflectiveThink: (tc: ToolCall) => Promise<{ decision: ReflectionDecision; reason: string }>;
   checkAutoDream: () => Promise<void>;
+}
+
+async function saveCheckpointSafely(
+  host: InnerLoopHost,
+  input: Omit<RunCheckpoint, "workspaceDiffArtifact" | "workspaceDiffFingerprint" | "workspaceCaptureAvailable" | "workspaceCaptureError" | "repositoryHead" | "repositoryTree" | "changedFileHashes" | "savedAt">
+): Promise<boolean> {
+  if (!host.checkpointStore) return false;
+  try {
+    await host.checkpointStore.save(input);
+    return true;
+  } catch (error) {
+    host.emit("checkpoint_failed", error instanceof Error ? error.message : String(error));
+    return false;
+  }
 }
 
 /**
@@ -219,7 +245,7 @@ export type InnerLoopOutcome =
 
 export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerLoopOutcome> {
   const toolSignatureCounts = new Map<string, number>();
-  const efficiency = new RunEfficiencyGuard();
+  const efficiency = new RunEfficiencyGuard({ initialState: host.initialProgressState });
   let autoCompactSuppressed = false;
   let compactionBudgetNotified = false;
 
@@ -343,6 +369,64 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     }
 
     if (!tool_calls || tool_calls.length === 0) {
+      const progressState = efficiency.getProgressState();
+      if ((progressState.pendingSideEffectIds?.length ?? 0) > 0) {
+        upsertSyntheticMessage(
+          host.messages,
+          "efficiency_recovery",
+          `<efficiency_recovery>后台任务 ${progressState.pendingSideEffectIds!.join(", ")} 尚未确认完成。运行中的任务请调用 bg_wait/bg_kill；恢复后为 unknown_outcome 的任务必须由用户明确批准 bg_reconcile，随后检查副作用并完成确定性验证。</efficiency_recovery>`,
+          "background-side-effect-required-v3"
+        );
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        continue;
+      }
+      const deliverableMutationPaths = (progressState.activeMutationPaths ?? [])
+        .filter((mutationPath) => mutationPath && !mutationPath.startsWith("<"));
+      if (host.requireWorkspaceMutation && (!progressState.activeMutationId || deliverableMutationPaths.length === 0)) {
+        upsertSyntheticMessage(
+          host.messages,
+          "efficiency_recovery",
+          "<efficiency_recovery>当前编码任务尚未产生工作区交付变更。诊断脚本和 state artifact 不属于成果；必须直接修改目标源码或配置文件，再运行确定性验证。优先使用 read_anchored → patch_anchored，不能以分析总结代替补丁。</efficiency_recovery>",
+          "workspace-mutation-required-v1",
+        );
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        continue;
+      }
+      if (progressState.activeMutationId && progressState.latestVerificationVerdict !== "pass") {
+        if (!(host.deterministicVerificationAvailable ?? Boolean(host.verificationCommand))) {
+          const text = `验证环境未就绪：修改 ${progressState.activeMutationId} 尚无可用的确定性验证器。请配置 /verify、补充项目测试命令或明确调整交付契约后恢复。`;
+          host.recoveryController.pauseActiveRun();
+          host.executionEventBus.completeAttempt(runId, "recovering");
+          return { status: "paused", text };
+        }
+        upsertSyntheticMessage(
+          host.messages,
+          "efficiency_recovery",
+          `<efficiency_recovery>修改 ${progressState.activeMutationId} 尚无通过的确定性验证。请调用 verify，或修正当前验证失败；不能直接宣告完成。</efficiency_recovery>`,
+          "verification-required-v3"
+        );
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        continue;
+      }
+      const durableBackgroundTasks = (await import("../runtime/background-tasks.js"))
+        .getBackgroundTaskRegistry(host.fileStateDir)
+        .listUnsettledOwned({
+          workspaceDir: host.workspaceDir,
+          sessionId: host.sessionId,
+          leaseToken: host.sessionLeaseToken,
+        });
+      if (durableBackgroundTasks.length > 0) {
+        const taskIds = durableBackgroundTasks.map((task) => task.taskId);
+        host.recoveryController.pauseActiveRun();
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        return {
+          status: "paused",
+          text: `后台副作用尚未完成耐久结算：${taskIds.join(", ")}。请先等待、终止或确认 unknown_outcome 后再恢复。`,
+        };
+      }
+      if (host.sessionLeaseToken) {
+        assertSessionLeaseToken(host.fileStateDir, host.sessionId, host.sessionLeaseToken);
+      }
       host.knowledgeAdapter.onAssistantMessage(content);
       await host.checkAutoDream();
       await host.knowledgeAdapter.onTurnEnd(host.turnCount);
@@ -368,6 +452,34 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       toolRepeatLimit: host.toolRepeatLimit,
       signatureCounts: toolSignatureCounts,
     });
+    const activeBeforeTools = efficiency.getProgressState().activeMutationId;
+    if (activeBeforeTools) {
+      for (const prepared of preparedCalls) {
+        if (prepared.call.name !== "verify" || prepared.immediateResult) continue;
+        const commandId = String(prepared.call.arguments.commandId ?? "");
+        prepared.call.arguments = {
+          ...prepared.call.arguments,
+          verifierId: commandId,
+          mutationId: activeBeforeTools,
+          scope: efficiency.getActiveMutationPaths(),
+        };
+      }
+    }
+    for (const prepared of preparedCalls) {
+      const actionFingerprint = fingerprintToolAction(prepared.call);
+      if (!prepared.immediateResult && efficiency.isActionBlocked(actionFingerprint)) {
+        prepared.immediateResult = {
+          tool_call_id: prepared.call.id,
+          output: `Error: [EFFICIENCY_ACTION_BLOCKED] ${prepared.call.name} 的相同参数已连续失败；必须修改参数或策略。`,
+          is_error: true,
+          error: {
+            code: "EFFICIENCY_ACTION_BLOCKED",
+            message: "action fingerprint is blocked after repeated failures",
+            category: "guard",
+          },
+        };
+      }
+    }
     const loop = preparedCalls.find((prepared) => prepared.loopDetected);
     if (loop?.loopDetected) {
       host.executionEventBus.emit({
@@ -400,6 +512,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         knowledgeAdapter: host.knowledgeAdapter,
         memoryStore: host.memoryStore,
         workspaceDir: host.workspaceDir,
+        fileStateDir: host.fileStateDir,
         ownedPaths: host.ownedPaths,
         workflowRuntime: host.workflowRuntime,
         executionEventBus: host.executionEventBus,
@@ -414,15 +527,35 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         messages: host.messages,
         runId,
         attemptId,
+        sessionId: host.sessionId,
+        sessionLeaseToken: host.sessionLeaseToken,
       }
     );
-    const efficiencyStop = efficiency.recordTools(observations);
+    const failureSignal = efficiency.recordTools(observations);
+    const progressSignal = efficiency.recordObservationProgress(observations);
+    const efficiencyStop = failureSignal ?? progressSignal;
     if (efficiencyStop?.disposition === "redirect") {
+      const recoveryInstruction = (() => {
+        switch (efficiencyStop.directive.action) {
+          case "correct_parameters":
+            return efficiencyStop.directive.suggestedTools?.length
+              ? `结构化编辑参数无效；不要创建或执行临时修复脚本。先用 ${efficiencyStop.directive.suggestedTools.join(" → ")} 直接修改交付文件；原工具仍可在修正参数后使用。`
+              : `参数指纹 ${efficiencyStop.directive.blockedFingerprint} 已暂时禁止；先读取错误并修改参数，不得原样重试。`;
+          case "replan_repository":
+            return `停止随机浏览；用 repo_map/repo_query/impact_analysis 重新定位根因，并保留已有变更与验证证据。${efficiencyStop.directive.rootCauseId ? ` 查询当前根因时传入 root_cause_id=${efficiencyStop.directive.rootCauseId}。` : ""}`;
+          case "narrow_recovery":
+            return `当前仅使用窄恢复工具集：${efficiencyStop.directive.allowedTools.join(", ")}。先检查环境、工作树和最近修改。`;
+          case "verify_or_finish":
+            return `修改 ${efficiencyStop.directive.mutationId} 已进入验证阶段；先重新对照原始用户任务，检查同一输入语义的所有解析/转换分支和哨兵值，再运行确定性验证。诊断辅助文件不属于交付成果，结束前应删除；只修正当前失败或完成必要交付检查。`;
+          case "checkpoint":
+            return `生成可恢复检查点：${efficiencyStop.directive.reason}`;
+        }
+      })();
       upsertSyntheticMessage(
         host.messages,
         "efficiency_recovery",
-        `<efficiency_recovery>\n${efficiencyStop.reason}\n读取最新工具错误，提出一个有新信息增量的替代动作；不得原样重复刚才的调用。\n</efficiency_recovery>`,
-        "efficiency-recovery-v1"
+        `<efficiency_recovery>\n${efficiencyStop.reason}\n${recoveryInstruction}\n效率守卫只改变策略，不终止任务。\n</efficiency_recovery>`,
+        "efficiency-recovery-v3"
       );
       host.executionEventBus.emit({
         runId,
@@ -434,12 +567,89 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         stage: "tool",
         category: "repeated_action",
         fingerprint: efficiencyStop.fingerprint,
-        recoveryAction: "change_strategy",
+        recoveryAction: efficiencyStop.directive.action,
       });
       host.emit("efficiency_guard", efficiencyStop);
     }
+    {
+      const state = efficiency.getProgressState();
+      const reconciledTaskIds = state.reconciledSideEffectIds ?? [];
+      const completedTaskIds = observations
+        .map((observation) => observation.backgroundTaskCompleted)
+        .filter((taskId): taskId is string => Boolean(taskId));
+      const checkpointSaved = host.checkpointStore && host.usageLedger
+        ? await saveCheckpointSafely(host, {
+        sequence: host.turnCount,
+        phase: state.phase,
+        progressState: state,
+        ...(state.recoveryEpisode ? { recoveryEpisode: state.recoveryEpisode } : {}),
+        usage: host.usageLedger.snapshot(),
+        toolMetrics: {
+          calls: host.toolCallTotal + turnToolCalls,
+          failures: host.toolFailureTotal + turnToolFailures,
+          policyRedirects: observations.filter((item) => item.redirected).length,
+        },
+      })
+        : false;
+      const failedReconciliations: string[] = [];
+      const failedAccounting: string[] = [];
+      const finalizedReconciliations: string[] = [];
+      if (checkpointSaved && (reconciledTaskIds.length > 0 || completedTaskIds.length > 0)) {
+        // A later run in the same session may be accounting for a task left by
+        // a canceled run. Completion is session-scoped; cancellation itself is
+        // still performed with an exact run owner in AgentLoop.
+        const owner = { workspaceDir: host.workspaceDir, sessionId: host.sessionId, leaseToken: host.sessionLeaseToken };
+        const registry = (await import("../runtime/background-tasks.js")).getBackgroundTaskRegistry(host.fileStateDir);
+        for (const taskId of completedTaskIds) {
+          try { registry.markAccountingSettled(taskId, owner); }
+          catch (error) {
+            failedAccounting.push(taskId);
+            host.emit("background_accounting_finalize_failed", taskId, error instanceof Error ? error.message : String(error));
+          }
+        }
+        for (const taskId of reconciledTaskIds) {
+          try {
+            registry.completeUnknownOutcomeReconciliation(taskId, owner);
+            finalizedReconciliations.push(taskId);
+          }
+          catch (error) {
+            failedReconciliations.push(taskId);
+            host.emit("background_reconciliation_finalize_failed", taskId, error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
+      if (finalizedReconciliations.length > 0) {
+        efficiency.recordTools(finalizedReconciliations.map((taskId) => ({
+          tool: "bg_reconcile",
+          failed: false,
+          actionFingerprint: `bg_reconcile:finalized:${taskId}`,
+          backgroundTaskReconciliationFinalized: taskId,
+        })));
+      }
+      if (reconciledTaskIds.length > 0 && (!checkpointSaved || failedReconciliations.length > 0)) {
+        const blockedIds = checkpointSaved ? failedReconciliations : reconciledTaskIds;
+        efficiency.recordTools(blockedIds.map((taskId) => ({
+          tool: "bg_reconcile",
+          failed: false,
+          actionFingerprint: `bg_reconcile:persist:${taskId}`,
+          backgroundTaskStarted: taskId,
+        })));
+      }
+      if (completedTaskIds.length > 0 && (!checkpointSaved || failedAccounting.length > 0)) {
+        const blockedIds = checkpointSaved ? failedAccounting : completedTaskIds;
+        efficiency.recordTools(blockedIds.map((taskId) => ({
+          tool: "bg_wait",
+          failed: false,
+          actionFingerprint: `background_accounting:persist:${taskId}`,
+          backgroundTaskStarted: taskId,
+        })));
+      }
+    }
     const verifyOutcome = await runWriteToolVerification(preparedCalls, {
       verificationCommand: host.verificationCommand,
+      projectProfile: host.projectProfile,
+      workspaceDir: host.workspaceDir,
+      observations,
       runCommand: host.runVerificationCommand,
       recoveryController: host.recoveryController,
       executionEventBus: host.executionEventBus,
@@ -452,7 +662,23 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     if (verifyOutcome.kind === "pause") {
       return { status: "paused", text: verifyOutcome.text };
     }
+    if (verifyOutcome.kind === "audit") {
+      upsertSyntheticMessage(
+        host.messages,
+        "verification_audit",
+        `<verification_audit>\n${verifyOutcome.text}\n</verification_audit>`,
+        "post-mutation-audit-v1",
+      );
+    }
     if (verifyOutcome.kind === "recover") {
+      efficiency.recordTools([{
+        tool: "verify",
+        failed: true,
+        progressKind: "verification_delta",
+        evidenceFingerprint: `verification:failed:${verifyOutcome.failureMessage}`,
+        verificationVerdict: "fail",
+        failureFingerprint: verifyOutcome.failureMessage,
+      }]);
       host.messages.push({ role: "user", content: verifyOutcome.userMessage });
       host.emit(
         "repair",
@@ -461,7 +687,41 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         verifyOutcome.strategyAttempts
       );
       host.executionEventBus.completeAttempt(runId, "recovering");
+      if (host.checkpointStore && host.usageLedger) {
+        const state = efficiency.getProgressState();
+        await saveCheckpointSafely(host, { sequence: host.turnCount, phase: state.phase, progressState: state, ...(state.recoveryEpisode ? { recoveryEpisode: state.recoveryEpisode } : {}), usage: host.usageLedger.snapshot(), toolMetrics: { calls: host.toolCallTotal + turnToolCalls, failures: host.toolFailureTotal + turnToolFailures, policyRedirects: observations.filter((item) => item.redirected).length }, latestVerification: { verdict: "fail", fingerprint: verifyOutcome.failureMessage } });
+      }
       continue;
+    }
+    if (verifyOutcome.kind === "pass") {
+      const auditIndex = host.messages.findIndex(
+        (message) => message.synthetic_reason === "verification_audit",
+      );
+      if (auditIndex >= 0) host.messages.splice(auditIndex, 1);
+      const activeMutationId = efficiency.getProgressState().activeMutationId;
+      const finishSignal = efficiency.recordObservationProgress([{
+        tool: "verify",
+        failed: false,
+        progressKind: "verification_delta",
+        evidenceFingerprint: `verification:passed:${verifyOutcome.summary}`,
+        verificationVerdict: "pass",
+        mutationId: activeMutationId,
+        verifierId: "runtime:auto",
+        verificationBaseFingerprint: verifyOutcome.verificationBaseFingerprint,
+        workspaceFingerprint: verifyOutcome.workspaceFingerprint,
+      }]);
+      if (finishSignal?.directive.action === "verify_or_finish") {
+        upsertSyntheticMessage(
+          host.messages,
+          "efficiency_recovery",
+          `<efficiency_recovery>\n${finishSignal.reason}\n修改 ${finishSignal.directive.mutationId} 已通过验证；完成必要交付检查或结束任务。\n</efficiency_recovery>`,
+          "efficiency-recovery-v3"
+        );
+      }
+      if (host.checkpointStore && host.usageLedger) {
+        const state = efficiency.getProgressState();
+        await saveCheckpointSafely(host, { sequence: host.turnCount, phase: state.phase, progressState: state, usage: host.usageLedger.snapshot(), toolMetrics: { calls: host.toolCallTotal + turnToolCalls, failures: host.toolFailureTotal + turnToolFailures, policyRedirects: observations.filter((item) => item.redirected).length }, latestVerification: { verdict: "pass", fingerprint: verifyOutcome.summary } });
+      }
     }
 
     await host.checkAutoDream();

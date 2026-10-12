@@ -46,9 +46,11 @@ export interface Message {
 export type SyntheticReason =
   | "runtime_environment"
   | "dynamic_context"
+  | "project_preflight"
   | "compaction_summary"
   | "recovery_instruction"
   | "efficiency_recovery"
+  | "verification_audit"
   | "date_reminder"
   | "state_snapshot"
   | "run_side_effects"

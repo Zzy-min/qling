@@ -194,6 +194,12 @@ export class SpeculativeClassifier {
   classify(toolCall: ToolCall): ClassifierResult {
     const def = this.toolDefs.find((t) => t.name === toolCall.name);
 
+    // Unknown-outcome reconciliation is an operator acknowledgment, not a
+    // reusable session permission. It must ask even when normal mode is allow.
+    if (toolCall.name === "bg_reconcile") {
+      return { label: "ask", reason: "acknowledging an unknown background outcome requires explicit operator approval" };
+    }
+
     // bash 类工具才需要分类
     if (toolCall.name !== "bash") {
       return { label: "safe" };
@@ -256,6 +262,7 @@ export const PLAN_MODE_DENY_TOOLS = [
   "patch",
   "bash",
   "bg_kill",
+  "bg_reconcile",
   "subtask",
   "browser_fetch",
   "browser_act",
@@ -265,6 +272,7 @@ export const PLAN_MODE_DENY_TOOLS = [
 export const PLAN_MODE_HARD_DENY_TOOLS = [
   "bash",
   "bg_kill",
+  "bg_reconcile",
   "subtask",
   "browser_fetch",
   "browser_act",
@@ -444,7 +452,7 @@ export class HookManager {
       }
       if (permResult.decision === "ask") {
         // G3.3：会话 grant → 跳过 ask
-        if (getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
+        if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
           await appendGuardAudit(this.guardConfig, {
             tool: ctx.toolName,
             action: "allow",
@@ -504,7 +512,7 @@ export class HookManager {
     }
 
     if (classification.label === "ask") {
-      if (getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
+      if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
         // grant 覆盖 classifier ask（危险 deny 仍拦截）
       } else {
         return {
@@ -521,7 +529,7 @@ export class HookManager {
       const result = await handler(ctx);
       if (result.decision === "deny") return result;
       if (result.decision === "ask") {
-        if (getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) continue;
+        if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) continue;
         return result;
       }
     }

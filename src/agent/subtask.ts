@@ -17,6 +17,7 @@ import {
 } from "../agents/roles.js";
 import type { UsageLedgerSnapshot } from "../usage-ledger.js";
 import { getBackgroundTaskRegistry } from "../runtime/background-tasks.js";
+import { getRuntimeExecutionIdentity } from "../runtime-paths.js";
 
 export interface SubtaskConfig {
   task: string;
@@ -139,6 +140,10 @@ export class SubtaskRunner {
           }),
           onCancel: () => subAgent.shutdown(),
           timeoutMs: Math.max(timeout, 10 * 60 * 1000),
+          owner: {
+            workspaceDir: this.parentConfig.runtime?.workspaceDir ?? process.cwd(),
+            ...getRuntimeExecutionIdentity(),
+          },
         });
         backgroundTaskId = task.taskId;
         backgrounded = true;

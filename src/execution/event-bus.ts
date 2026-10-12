@@ -53,11 +53,11 @@ export class ExecutionEventBus {
     return this.emit({ runId, sessionId: this.runSessions.get(runId), attemptId, type: "attempt_completed", status });
   }
 
-  startTool(input: { runId: string; attemptId: string; toolCallId: string; tool: string }): ExecutionEvent {
+  startTool(input: { runId: string; attemptId: string; toolCallId: string; tool: string; toolTarget?: string }): ExecutionEvent {
     return this.emit({ ...input, sessionId: this.runSessions.get(input.runId), type: "tool_started", status: "running", stage: "tool" });
   }
 
-  completeTool(input: { runId: string; attemptId: string; toolCallId: string; tool: string; failed?: boolean }): ExecutionEvent | undefined {
+  completeTool(input: { runId: string; attemptId: string; toolCallId: string; tool: string; failed?: boolean; policyRedirect?: boolean }): ExecutionEvent | undefined {
     if (this.terminalTools.has(input.toolCallId)) return undefined;
     this.terminalTools.add(input.toolCallId);
     return this.emit({
@@ -69,6 +69,7 @@ export class ExecutionEventBus {
       type: "tool_completed",
       status: input.failed ? "failed" : "succeeded",
       stage: "tool",
+      ...(input.policyRedirect ? { policyRedirect: true } : {}),
     });
   }
 

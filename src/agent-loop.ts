@@ -66,6 +66,8 @@ import { RuntimeServices } from "./runtime-services.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
 import { RuntimeEventJournal } from "./runtime/event-journal.js";
 import { SessionActor } from "./runtime/session-actor.js";
+import { SessionLease } from "./runtime/session-lease.js";
+import { getBackgroundTaskRegistry } from "./runtime/background-tasks.js";
 import { resolveAgentRuntimeMode, type AgentRuntimeMode } from "./runtime/mode.js";
 import type { PromptExecutionResult, SessionSnapshot } from "./runtime/types.js";
 import { projectSessionEvents } from "./runtime/session-projector.js";
@@ -92,6 +94,7 @@ import {
   buildPromptInspectSnapshot,
   reflectiveThink,
 } from "./agent/system-prompt.js";
+import { selectToolsForRequest } from "./harness/tool-capability.js";
 import {
   runInnerIterationLoop,
   runOuterAgentLoop,
@@ -206,11 +209,13 @@ export class AgentLoop extends AgentEventEmitter {
   private runTraceStore: RunTraceStore;
   private activeRun: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null = null;
   private runAbortController: AbortController | null = null;
+  private readonly backgroundTerminationPromises = new Set<Promise<void>>();
   private readonly agentRuntimeMode: AgentRuntimeMode = resolveAgentRuntimeMode();
   private runtimeJournal: RuntimeEventJournal | null = null;
   private sessionActor: SessionActor | null = null;
   private sessionActorId: string | null = null;
   private sessionActorReset: Promise<void> | null = null;
+  private sessionLease: SessionLease | null = null;
 
   // --- v0.3 Getters (Management) ---
   getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
@@ -240,6 +245,7 @@ export class AgentLoop extends AgentEventEmitter {
   } {
     const state = this.recoveryController.applyAction(action);
     if ((action === "cancel" || action === "edit") && this.activeRun) {
+      this.scheduleBackgroundTermination(this.activeRun.runId);
       this.executionEventBus.completeRun(this.activeRun.runId, "canceled");
       this.activeRun = null;
     }
@@ -821,15 +827,19 @@ export class AgentLoop extends AgentEventEmitter {
 
   async cancelRuntimeTurn(reason = "user_canceled"): Promise<boolean> {
     if (this.agentRuntimeMode !== "actor" || !this.sessionActor) {
-      return this.cancelActiveRun();
+      const canceled = this.cancelActiveRun();
+      await this.waitForBackgroundTerminations();
+      return canceled;
     }
     const canceled = this.cancelActiveRun();
     await this.sessionActor.dispatch({ type: "cancel_turn", reason });
+    await this.waitForBackgroundTerminations();
     return canceled;
   }
 
   async runDetailed(): Promise<RunOutcome> {
     await this.initPromise;
+    this.ensureSessionLease();
     if (this.runAbortController) throw new Error("agent run already in progress");
     const controller = new AbortController();
     this.runAbortController = controller;
@@ -862,9 +872,34 @@ export class AgentLoop extends AgentEventEmitter {
   cancelActiveRun(): boolean {
     const controller = this.runAbortController;
     if (!controller || controller.signal.aborted) return false;
+    const runId = this.activeRun?.runId;
     controller.abort();
     this.approvalGate.cancelAll();
+    if (runId) this.scheduleBackgroundTermination(runId);
     return true;
+  }
+
+  private scheduleBackgroundTermination(runId: string): void {
+    const pending = (async () => {
+      const { getBackgroundTaskRegistry } = await import("./runtime/background-tasks.js");
+      await getBackgroundTaskRegistry(this.runtimeRootDir).terminateOwned({
+        workspaceDir: this.getWorkspaceDir(),
+        sessionId: this.sessionId,
+        runId,
+        leaseToken: this.sessionLease?.token,
+      });
+    })().catch((error) => {
+      this.emit("background_cancel_failed", runId, error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+      this.backgroundTerminationPromises.delete(pending);
+    });
+    this.backgroundTerminationPromises.add(pending);
+  }
+
+  private async waitForBackgroundTerminations(): Promise<void> {
+    while (this.backgroundTerminationPromises.size > 0) {
+      await Promise.allSettled([...this.backgroundTerminationPromises]);
+    }
   }
 
   pauseActiveRun(): boolean {
@@ -878,6 +913,105 @@ export class AgentLoop extends AgentEventEmitter {
 
   private async executeRunInternal(): Promise<InnerLoopOutcome> {
     await this.initPromise;
+    const workspaceDir = this.config.runtime?.workspaceDir || process.cwd();
+    const checkpointStore = this.activeRun ? new (await import("./runtime/run-checkpoint.js")).RunCheckpointStore({
+      stateDir: this.config.runtime?.fileStateDir ?? this.runtimeRootDir,
+      workspaceDir,
+      runId: this.activeRun.runId,
+    }) : undefined;
+    const restoredCheckpoint = await checkpointStore?.loadLatest() ?? null;
+    let restoredProgressState = restoredCheckpoint?.progressState;
+    let checkpointUnknownOutcome: string[] | null = null;
+    const backgroundModule = await import("./runtime/background-tasks.js");
+    const backgroundRegistry = backgroundModule.getBackgroundTaskRegistry(this.runtimeRootDir);
+    // Unsettled outcomes survive run cancellation and are inherited by the
+    // next run in this session. They cannot leak across workspace/session.
+    const backgroundOwner = { workspaceDir, sessionId: this.sessionId, leaseToken: this.sessionLease?.token };
+    const ownedBackgroundTasks = backgroundRegistry.listUnsettledOwned(backgroundOwner);
+    const durablyReconciled = new Set(restoredProgressState?.reconciledSideEffectIds ?? []);
+    for (const task of ownedBackgroundTasks) {
+      if (task.status !== "reconciliation_pending" || !durablyReconciled.has(task.taskId) || !restoredProgressState?.activeMutationId) continue;
+      try { backgroundRegistry.completeUnknownOutcomeReconciliation(task.taskId, backgroundOwner); }
+      catch { /* keep it pending below so the operator can retry idempotently */ }
+    }
+    const backgroundUnknownOutcomeIds = ownedBackgroundTasks
+      .filter((task) => {
+        const current = backgroundRegistry.get(task.taskId);
+        return current?.accountingStatus !== "settled"
+          || current?.status === "running"
+          || current?.status === "unknown_outcome"
+          || current?.status === "reconciliation_pending";
+      })
+      .map((task) => task.taskId);
+    if (restoredCheckpoint) {
+      const assessment = await checkpointStore!.assessWorkspace(restoredCheckpoint);
+      this.turnCount = Math.max(this.turnCount, restoredCheckpoint.sequence);
+      this.sessionPromptTokens = Math.max(this.sessionPromptTokens, restoredCheckpoint.usage.promptTokens);
+      this.sessionCompletionTokens = Math.max(this.sessionCompletionTokens, restoredCheckpoint.usage.completionTokens);
+      this.sessionTokens = Math.max(this.sessionTokens, restoredCheckpoint.usage.totalTokens);
+      this.toolCallTotal = Math.max(this.toolCallTotal, restoredCheckpoint.toolMetrics.calls);
+      this.toolFailureTotal = Math.max(this.toolFailureTotal, restoredCheckpoint.toolMetrics.failures);
+      this.emit(assessment.consistent ? "checkpoint_restored" : "checkpoint_unknown_outcome", {
+        sequence: restoredCheckpoint.sequence,
+        mismatches: assessment.mismatches,
+      });
+      if (!assessment.consistent) checkpointUnknownOutcome = assessment.mismatches;
+      if (!assessment.consistent && restoredProgressState) {
+        restoredProgressState = {
+          ...restoredProgressState,
+          phase: "repair",
+          latestVerificationVerdict: "blocked",
+          recoveryEpisode: restoredProgressState.recoveryEpisode
+            ? { ...restoredProgressState.recoveryEpisode, phase: "repair", reason: "request_timeout" }
+            : undefined,
+        };
+      }
+    }
+    if (backgroundUnknownOutcomeIds.length > 0) {
+      const initial = restoredProgressState ?? { sequence: restoredCheckpoint?.sequence ?? 0, phase: "explore" as const };
+      restoredProgressState = {
+        ...initial,
+        pendingSideEffectIds: [...new Set([...(initial.pendingSideEffectIds ?? []), ...backgroundUnknownOutcomeIds])].sort(),
+      };
+    }
+    if (checkpointUnknownOutcome) {
+      if (checkpointStore && restoredCheckpoint) {
+        const activeMutationId = restoredProgressState?.activeMutationId
+          ?? restoredCheckpoint.recoveryEpisode?.mutationId
+          ?? `unknown-outcome-${this.activeRun?.runId ?? "run"}`;
+        const blockedIdentity = await (await import("./runtime/project-profile.js")).resolveProjectProfileIdentity(workspaceDir);
+        const activeMutationWorkspaceFingerprint = `${blockedIdentity.revision}:${blockedIdentity.dirtyFingerprint}`;
+        const blockedProgressState = {
+          sequence: restoredCheckpoint.sequence + 1,
+          phase: "repair" as const,
+          activeRootCauseId: restoredProgressState?.activeRootCauseId,
+          activeMutationId,
+          activeMutationWorkspaceFingerprint,
+          latestVerificationVerdict: "blocked" as const,
+          pendingSideEffectIds: restoredProgressState?.pendingSideEffectIds ?? backgroundUnknownOutcomeIds,
+        };
+        await checkpointStore.replaceWithBlockedBaseline({
+          sequence: blockedProgressState.sequence,
+          phase: "repair",
+          progressState: blockedProgressState,
+          usage: restoredCheckpoint.usage,
+          toolMetrics: restoredCheckpoint.toolMetrics,
+          latestVerification: {
+            verdict: "blocked",
+            fingerprint: `unknown_outcome:${checkpointUnknownOutcome.join("|")}`,
+          },
+        }, `workspace mismatch: ${checkpointUnknownOutcome.join(", ")}`);
+      }
+      this.recoveryController.pauseActiveRun();
+      return {
+        status: "paused",
+        text: `恢复暂停：checkpoint 后工作区状态发生变化（${checkpointUnknownOutcome.join(", ")}），写操作结果为 unknown_outcome。请确认工作区或重新验证后再继续。`,
+      };
+    }
+    const projectProfile = await (await import("./runtime/project-profile.js")).inspectProjectProfileCached({
+      workspaceDir,
+      requestedRuntime: (process.env.QLING_CODE_RUNTIME as "auto" | "native" | "wsl" | undefined) ?? "auto",
+    });
     const counters: TokenCounters = {
       sessionTokens: this.sessionTokens,
       sessionPromptTokens: this.sessionPromptTokens,
@@ -888,6 +1022,7 @@ export class AgentLoop extends AgentEventEmitter {
       messages: this.messages,
       turnCount: this.turnCount,
       sessionId: this.sessionId,
+      sessionLeaseToken: this.sessionLease?.token,
       maxIterations: this.config.maxIterations,
       toolRepeatLimit: Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6),
       parseRetries: this.config.runtime?.parseRetries ?? 0,
@@ -907,7 +1042,8 @@ export class AgentLoop extends AgentEventEmitter {
       approvalGate: this.approvalGate,
       knowledgeAdapter: this.knowledgeAdapter,
       memoryStore: this.memoryStore,
-      workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
+      workspaceDir,
+      fileStateDir: this.runtimeRootDir,
       ownedPaths: this.config.runtime?.ownedPaths,
       workflowRuntime: this.workflowRuntime,
       executionEventBus: this.executionEventBus,
@@ -918,11 +1054,23 @@ export class AgentLoop extends AgentEventEmitter {
       recordRuntimeTool: this.runtimeJournal
         ? (record: import("./runtime/types.js").RuntimeToolCallRecord) => this.runtimeJournal!.recordToolCall(record)
         : undefined,
+      checkpointStore,
+      initialProgressState: restoredProgressState ?? (restoredCheckpoint ? {
+        sequence: restoredCheckpoint.sequence,
+        phase: restoredCheckpoint.phase,
+        activeRootCauseId: restoredCheckpoint.recoveryEpisode?.rootCauseId,
+        activeMutationId: restoredCheckpoint.recoveryEpisode?.mutationId,
+        latestVerificationVerdict: "blocked",
+        recoveryEpisode: restoredCheckpoint.recoveryEpisode,
+      } : undefined),
+      deterministicVerificationAvailable: Boolean(this.verificationCommand || projectProfile.testCommands.length > 0),
+      requireWorkspaceMutation: /^(?:1|true|yes|on)$/i.test(String(process.env.QLING_REQUIRE_WORKSPACE_MUTATION ?? "")),
+      projectProfile,
       buildSystemPrompt: () => this.buildSystemPrompt(),
       chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
         this.chat(systemPrompt, overrides ?? {}),
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
-      runVerificationCommand: (cmd: string) => this.runVerificationCommand(cmd),
+      runVerificationCommand: (cmd: string, runtime?: "native" | "wsl") => this.runVerificationCommand(cmd, runtime),
       getRecoveryState: () => this.getRecoveryState(),
       reflectiveThink: (tc: ToolCall) => this.reflectiveThink(tc),
       checkAutoDream: () => this.checkAutoDream(),
@@ -1071,6 +1219,10 @@ export class AgentLoop extends AgentEventEmitter {
     return this.sessionId;
   }
 
+  getSessionLeaseToken(): string | undefined {
+    return this.sessionLease?.token;
+  }
+
   getPermissionMode(): "allow" | "deny" | "ask" {
     return this.hookManager.getPermissionDefaultDecision();
   }
@@ -1175,26 +1327,57 @@ export class AgentLoop extends AgentEventEmitter {
     const fromId = this.sessionId;
     // 先落盘源会话，避免分叉丢未保存变更
     await this.checkpointSession();
+    const previousCreatedAt = this.sessionCreatedAt;
+    const previousLease = this.sessionLease;
+    const nextSessionId = "session-" + Date.now();
+    const nextLease = this.acquireSessionLease(nextSessionId, this.getWorkspaceDir());
 
-    this.sessionId = "session-" + Date.now();
-    this.sessionCreatedAt = new Date().toISOString();
-    this.pipeline.setSessionId(this.sessionId);
-    this.memoryStore.resetSession();
-    this.sectionRegistry.clearCache();
+    try {
+      await this.prepareSessionSwitch();
+      this.sessionId = nextSessionId;
+      this.sessionCreatedAt = new Date().toISOString();
+      this.pipeline.setSessionId(this.sessionId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      this.sessionLease = nextLease;
 
-    const saveName = resolveForkName(nameHint ? [nameHint] : undefined, this.sessionId);
-    await this.sessionRegistry.save(this.captureSessionSnapshot(saveName));
+      const saveName = resolveForkName(nameHint ? [nameHint] : undefined, this.sessionId);
+      await this.sessionRegistry.save(this.captureSessionSnapshot(saveName));
+      if (previousLease && previousLease !== nextLease) previousLease.release();
 
-    const summary = this.getSessionSummary();
-    return {
-      ...summary,
-      name: saveName,
-      forkedFrom: fromId,
-    };
+      const summary = this.getSessionSummary();
+      return {
+        ...summary,
+        name: saveName,
+        forkedFrom: fromId,
+      };
+    } catch (error) {
+      this.sessionId = fromId;
+      this.sessionCreatedAt = previousCreatedAt;
+      this.pipeline.setSessionId(fromId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      this.sessionLease = previousLease;
+      if (nextLease && nextLease !== previousLease) nextLease.release();
+      throw error;
+    }
   }
 
   async shutdown(): Promise<void> {
     this.cancelActiveRun();
+    await this.waitForBackgroundTerminations();
+    try {
+      const { getBackgroundTaskRegistry } = await import("./runtime/background-tasks.js");
+      await getBackgroundTaskRegistry(this.runtimeRootDir).terminateOwned({
+        workspaceDir: this.getWorkspaceDir(),
+        sessionId: this.sessionId,
+        leaseToken: this.sessionLease?.token,
+      });
+    } catch (error) {
+      this.emit("background_cancel_failed", this.activeRun?.runId ?? "session", error instanceof Error ? error.message : String(error));
+    }
+    this.sessionLease?.release();
+    this.sessionLease = null;
     try {
       await this.initPromise;
     } catch {
@@ -1322,10 +1505,12 @@ export class AgentLoop extends AgentEventEmitter {
   // --- Session Persistence ---
 
   async checkpointSession(): Promise<string> {
+    this.ensureSessionLease();
     return this.sessionRegistry.save(this.captureSessionSnapshot(this.sessionId));
   }
 
   async saveSession(name?: string): Promise<string> {
+    this.ensureSessionLease();
     const sessionName = name ?? defaultSessionSaveName();
     return this.sessionRegistry.save(this.captureSessionSnapshot(sessionName));
   }
@@ -1348,7 +1533,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (!snapshot) {
       return null;
     }
-    return this.hydrateSessionSnapshot(snapshot);
+    return await this.hydrateSessionSnapshot(snapshot);
   }
 
   async restoreLatestSession(): Promise<SavedSessionSummary | null> {
@@ -1356,7 +1541,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (!snapshot) {
       return null;
     }
-    return this.hydrateSessionSnapshot(snapshot);
+    return await this.hydrateSessionSnapshot(snapshot);
   }
 
 
@@ -1376,49 +1561,131 @@ export class AgentLoop extends AgentEventEmitter {
     });
   }
 
-  private hydrateSessionSnapshot(snapshot: SavedSessionSnapshot): SavedSessionSummary {
+  private async hydrateSessionSnapshot(snapshot: SavedSessionSnapshot): Promise<SavedSessionSummary> {
+    const patch = applySessionSnapshot(snapshot);
+    const previous = {
+      messages: this.messages,
+      turnCount: this.turnCount,
+      sessionTokens: this.sessionTokens,
+      sessionPromptTokens: this.sessionPromptTokens,
+      sessionCompletionTokens: this.sessionCompletionTokens,
+      tokenUsageSource: this.tokenUsageSource,
+      compactionCount: this.compactionCount,
+      activeRun: this.activeRun,
+      recoveryState: this.getRecoveryState(),
+      sessionId: this.sessionId,
+      sessionCreatedAt: this.sessionCreatedAt,
+      config: this.config,
+      lease: this.sessionLease,
+    };
+    const targetWorkspaceDir = patch.workspaceDir ?? this.getWorkspaceDir();
+    const targetLease = this.acquireSessionLease(patch.sessionId, targetWorkspaceDir);
+
+    try {
+      await this.prepareSessionSwitch();
+      this.messages = patch.messages;
+      this.turnCount = patch.turnCount;
+      this.sessionTokens = patch.sessionTokens;
+      this.sessionPromptTokens = patch.sessionPromptTokens;
+      this.sessionCompletionTokens = patch.sessionCompletionTokens;
+      this.tokenUsageSource = patch.tokenUsageSource;
+      this.compactionCount = patch.compactionCount;
+      this.activeRun = patch.activeRun;
+      this.recoveryController.restoreState(patch.recoveryState);
+      this.sessionId = patch.sessionId;
+      this.sessionCreatedAt = patch.sessionCreatedAt;
+      this.pipeline.setSessionId(this.sessionId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      if (this.config.runtime) {
+        this.config = {
+          ...this.config,
+          runtime: {
+            ...this.config.runtime,
+            workspaceDir: targetWorkspaceDir,
+          },
+        };
+      }
+      this.hookManager.setWorkspaceDir(targetWorkspaceDir);
+      this.sessionLease = targetLease;
+      if (previous.lease && previous.lease !== targetLease) previous.lease.release();
+      return patch.summary;
+    } catch (error) {
+      this.messages = previous.messages;
+      this.turnCount = previous.turnCount;
+      this.sessionTokens = previous.sessionTokens;
+      this.sessionPromptTokens = previous.sessionPromptTokens;
+      this.sessionCompletionTokens = previous.sessionCompletionTokens;
+      this.tokenUsageSource = previous.tokenUsageSource;
+      this.compactionCount = previous.compactionCount;
+      this.activeRun = previous.activeRun;
+      this.recoveryController.restoreState(previous.recoveryState);
+      this.sessionId = previous.sessionId;
+      this.sessionCreatedAt = previous.sessionCreatedAt;
+      this.config = previous.config;
+      this.hookManager.setWorkspaceDir(this.getWorkspaceDir());
+      this.pipeline.setSessionId(previous.sessionId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      this.sessionLease = previous.lease;
+      if (targetLease && targetLease !== previous.lease) targetLease.release();
+      throw error;
+    }
+  }
+
+  private ensureSessionLease(): void {
+    if (this.sessionLease?.sessionId === this.sessionId) {
+      this.sessionLease.assertOwned();
+      return;
+    }
+    this.sessionLease = this.acquireSessionLease(this.sessionId, this.getWorkspaceDir());
+  }
+
+  private acquireSessionLease(sessionId: string, workspaceDir: string): SessionLease | null {
+    if (process.env.QLING_FEATURES_RELIABILITY_V2 !== "true") return null;
+    if (this.sessionLease?.sessionId === sessionId) {
+      this.sessionLease.assertOwned();
+      return this.sessionLease;
+    }
+    return SessionLease.acquire({
+      stateDir: this.runtimeRootDir,
+      sessionId,
+      workspaceDir,
+    });
+  }
+
+  private assertSessionSwitchSafe(): void {
+    if (process.env.QLING_FEATURES_RELIABILITY_V2 !== "true") return;
+    this.sessionLease?.assertOwned();
+    const unsettled = getBackgroundTaskRegistry(this.runtimeRootDir).listUnsettledOwned({
+      workspaceDir: this.getWorkspaceDir(),
+      sessionId: this.sessionId,
+      leaseToken: this.sessionLease?.token,
+    });
+    if (unsettled.length > 0) {
+      throw new Error(`当前会话仍有未结算后台任务，不能切换或分叉：${unsettled.map((task) => task.taskId).join(", ")}`);
+    }
+  }
+
+  private async prepareSessionSwitch(): Promise<void> {
+    if (this.runAbortController || this.activeRun) {
+      throw new Error("当前前台任务尚未结束，不能切换或分叉会话");
+    }
+    await this.waitForBackgroundTerminations();
     const staleActor = this.sessionActor;
-    const staleJournal = this.runtimeJournal;
     this.sessionActor = null;
     this.sessionActorId = null;
+    if (staleActor) await staleActor.close();
+    await this.sessionActorReset;
+    this.sessionActorReset = null;
+    this.runtimeJournal?.close();
     this.runtimeJournal = null;
-    if (staleActor || staleJournal) {
-      this.sessionActorReset = (async () => {
-        await staleActor?.close();
-        staleJournal?.close();
-      })().finally(() => {
-        this.sessionActorReset = null;
-      });
-    }
-    const patch = applySessionSnapshot(snapshot);
-    this.messages = patch.messages;
-    this.turnCount = patch.turnCount;
-    this.sessionTokens = patch.sessionTokens;
-    this.sessionPromptTokens = patch.sessionPromptTokens;
-    this.sessionCompletionTokens = patch.sessionCompletionTokens;
-    this.tokenUsageSource = patch.tokenUsageSource;
-    this.compactionCount = patch.compactionCount;
-    this.activeRun = patch.activeRun;
-    this.recoveryController.restoreState(patch.recoveryState);
-    this.sessionId = patch.sessionId;
-    this.sessionCreatedAt = patch.sessionCreatedAt;
-    this.pipeline.setSessionId(this.sessionId);
-    this.memoryStore.resetSession();
-    this.sectionRegistry.clearCache();
-    if (this.config.runtime) {
-      this.config = {
-        ...this.config,
-        runtime: {
-          ...this.config.runtime,
-          workspaceDir: patch.workspaceDir ?? this.config.runtime.workspaceDir,
-        },
-      };
-    }
-    return patch.summary;
+    this.assertSessionSwitchSafe();
   }
 
   private async ensureSessionActor(): Promise<SessionActor> {
     await this.sessionActorReset;
+    this.ensureSessionLease();
     if (this.sessionActor && this.sessionActorId === this.sessionId) return this.sessionActor;
     if (this.sessionActor) await this.sessionActor.close();
     this.runtimeJournal?.close();
@@ -1519,6 +1786,13 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<LlmChatResponse> {
+    const requestTools = process.env.QLING_FEATURES_RELIABILITY_V2 === "true"
+      ? selectToolsForRequest(
+          this.config.tools,
+          this.messages.slice(-6).map((message) => message.content).join("\n"),
+          8
+        )
+      : this.config.tools;
     const promptLayers = buildPromptInspectSnapshot(systemPrompt, this.messages);
     await this.maybeDumpInspect("prompt", {
       turn: this.turnCount,
@@ -1530,7 +1804,8 @@ export class AgentLoop extends AgentEventEmitter {
       model: this.config.model,
       systemPrompt,
       messageCount: this.messages.length,
-      toolCount: this.config.tools.length,
+      toolCount: requestTools.length,
+      totalToolCount: this.config.tools.length,
       overrides,
     });
 
@@ -1538,7 +1813,7 @@ export class AgentLoop extends AgentEventEmitter {
       model: this.config.model,
       systemPrompt,
       messages: this.messages,
-      tools: this.config.tools,
+      tools: requestTools,
       overrides,
       signal: this.runAbortController?.signal,
       stream: Boolean(this.config.experimental?.streaming),
@@ -1564,8 +1839,8 @@ export class AgentLoop extends AgentEventEmitter {
     this.verificationCommand = await loadVerificationCommandFile(this.getWorkspaceDir());
   }
 
-  runVerificationCommand(cmd: string): Promise<{ code: number; stdout: string; stderr: string }> {
-    return runShellCommand(cmd, this.getWorkspaceDir());
+  runVerificationCommand(cmd: string, runtime: "native" | "wsl" = "native"): Promise<{ code: number; stdout: string; stderr: string }> {
+    return runShellCommand(cmd, this.getWorkspaceDir(), runtime);
   }
 
   private async checkAutoDream(): Promise<void> {

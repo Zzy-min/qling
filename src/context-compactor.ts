@@ -125,6 +125,11 @@ function detectConflicts(messages: Message[]): ConflictPair[] {
 
 // --- 防毒检测 ---
 function detectPoison(message: Message): string[] {
+  // User instructions and runtime-generated synthetic messages belong to the
+  // control plane. Treating their own wording as retrieved-data injection
+  // creates a persistent false positive after compaction. Tool observations
+  // are the untrusted data plane until Message carries a finer trust label.
+  if (message.role !== "tool" || message.synthetic_reason) return [];
   const findings: string[] = [];
   for (const pattern of POISON_PATTERNS) {
     if (pattern.test(message.content)) {
@@ -342,7 +347,8 @@ export class ContextCompactor {
         message.synthetic_reason === "runtime_environment" ||
         message.synthetic_reason === "dynamic_context" ||
         message.synthetic_reason === "state_snapshot" ||
-        message.synthetic_reason === "run_side_effects"
+        message.synthetic_reason === "run_side_effects" ||
+        message.synthetic_reason === "verification_audit"
     );
     for (const message of deterministic) {
       if (
