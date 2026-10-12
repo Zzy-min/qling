@@ -51,7 +51,8 @@ export type SyntheticReason =
   | "efficiency_recovery"
   | "date_reminder"
   | "state_snapshot"
-  | "run_side_effects";
+  | "run_side_effects"
+  | "history_repair";
 
 // --- Agent Config ---
 

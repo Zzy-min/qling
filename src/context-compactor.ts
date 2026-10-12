@@ -4,6 +4,7 @@
 // ============================================================
 
 import { Message } from "./types.js";
+import { repairHistory, type HistoryRepairReport } from "./context-history-repair.js";
 import * as path from "path";
 import { createHash } from "node:crypto";
 
@@ -27,6 +28,14 @@ export interface CompactResult {
   status: "compacted" | "skipped" | "failed";
   reason?: string;
   checkpoint?: CompactionCheckpoint;
+  /** 摘要来源：llm=模型摘要，local=确定性本地回退，none=无需摘要。 */
+  summarySource?: "llm" | "local" | "none";
+  /** 会话级连续摘要失败次数（LLM 返回空串或短于阈值）。 */
+  consecutiveFailures?: number;
+  /** 熔断器是否已打开（达到 QLING_COMPACTION_BREAKER 后跳过 LLM）。 */
+  breakerOpen?: boolean;
+  /** 压缩结果上执行的发送前历史修复报告。 */
+  historyRepair?: HistoryRepairReport;
 }
 
 function hashMessages(messages: Message[]): string {
@@ -52,6 +61,11 @@ function estimateMessageTokens(msg: Message): number {
     }
   }
   return count;
+}
+
+function resolveIntEnv(name: string, fallback: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
 }
 
 // --- 冲突检测模式（Lesson 12: Context Pruning）---
@@ -152,6 +166,9 @@ export class ContextCompactor {
   private summarizer?: ContextSummaryCallback;
   private minSummaryChars: number;
   private maxSummaryAttempts: number;
+  private breakerThreshold: number;
+  /** 会话级连续摘要失败计数；成功一次（LLM 摘要达标）后清零。 */
+  private consecutiveFailures = 0;
 
   constructor(
     maxTokens = 6000,
@@ -160,6 +177,7 @@ export class ContextCompactor {
       summarizer?: ContextSummaryCallback;
       minSummaryChars?: number;
       maxSummaryAttempts?: number;
+      breakerThreshold?: number;
     } = {}
   ) {
     this.maxTokens = maxTokens;
@@ -167,10 +185,29 @@ export class ContextCompactor {
     this.summarizer = options.summarizer;
     this.minSummaryChars = Math.max(20, options.minSummaryChars ?? 500);
     this.maxSummaryAttempts = Math.max(1, Math.min(3, options.maxSummaryAttempts ?? 3));
+    this.breakerThreshold = Math.max(1, options.breakerThreshold ?? resolveIntEnv("QLING_COMPACTION_BREAKER", 3));
   }
 
   setSummarizer(summarizer: ContextSummaryCallback): void {
     this.summarizer = summarizer;
+  }
+
+  /** 会话级熔断状态（供调用方观测/测试）。 */
+  getCompactionState(): { consecutiveFailures: number; breakerOpen: boolean; breakerThreshold: number } {
+    return {
+      consecutiveFailures: this.consecutiveFailures,
+      breakerOpen: this.isBreakerOpen(),
+      breakerThreshold: this.breakerThreshold,
+    };
+  }
+
+  /** 会话重置时清零连续失败计数，恢复 LLM 摘要尝试。 */
+  resetBreaker(): void {
+    this.consecutiveFailures = 0;
+  }
+
+  private isBreakerOpen(): boolean {
+    return this.consecutiveFailures >= this.breakerThreshold;
   }
 
   // 检查是否需要压缩
@@ -260,12 +297,16 @@ export class ContextCompactor {
       .join("\n\n");
 
     const theme = options.theme?.trim();
-    const summary = await this.summarize(oldText, theme);
+    const summaryResult = await this.summarize(oldText, theme);
+    const summary = summaryResult.text;
     if (!summary.trim() && oldText.trim()) {
       return {
         messages: [...messages],
         status: "failed",
         reason: "summary generation returned no usable content",
+        summarySource: summaryResult.source,
+        consecutiveFailures: this.consecutiveFailures,
+        breakerOpen: this.isBreakerOpen(),
       };
     }
 
@@ -333,19 +374,27 @@ export class ContextCompactor {
     }
 
     result.push(...recentMsgs);
-    const preservedSyntheticReasons = [...new Set(result
+    // 压缩可能截断 tool 链（recent 边界、骨架化、摘要注入），发送前再做一次
+    // 历史修复，保证 assistant.tool_calls 与 tool 结果严格配对。
+    const repaired = repairHistory(result);
+    const finalMessages = repaired.messages;
+    const preservedSyntheticReasons = [...new Set(finalMessages
       .map((message) => message.synthetic_reason)
       .filter((value) => typeof value === "string")
       .map(String))];
     return {
-      messages: result,
+      messages: finalMessages,
       status: "compacted",
+      summarySource: summaryResult.source,
+      consecutiveFailures: this.consecutiveFailures,
+      breakerOpen: this.isBreakerOpen(),
+      historyRepair: repaired.report,
       checkpoint: {
         beforeHash: hashMessages(messages),
-        afterHash: hashMessages(result),
+        afterHash: hashMessages(finalMessages),
         preservedSyntheticReasons,
         sourceMessageCount: messages.length,
-        resultMessageCount: result.length,
+        resultMessageCount: finalMessages.length,
         createdAt: Date.now(),
       },
     };
@@ -380,15 +429,20 @@ export class ContextCompactor {
   }
 
   // 使用当前 provider 的回调；不可用时走确定性本地摘要。
-  private async summarize(text: string, theme?: string): Promise<string> {
-    if (!text.trim()) return "";
+  // 摘要过短（< minSummaryChars）或抛错计入会话级连续失败；达到熔断阈值后
+  // 直接跳过 LLM，改走确定性本地摘要，避免反复浪费 provider 调用。
+  private async summarize(
+    text: string,
+    theme?: string
+  ): Promise<{ text: string; source: "llm" | "local" | "none" }> {
+    if (!text.trim()) return { text: "", source: "none" };
     let system = SUMMARY_PROMPT;
     if (theme?.trim()) {
       system +=
         `\n\n特别要求：优先保留与「${theme.trim()}」相关的事实、结论、路径与未决问题；` +
         `与主题无关的工具流水可更大幅度压缩。`;
     }
-    if (this.summarizer) {
+    if (this.summarizer && !this.isBreakerOpen()) {
       for (let attempt = 0; attempt < this.maxSummaryAttempts; attempt++) {
         const limit = Math.max(1000, Math.floor(12000 / Math.pow(2, attempt)));
         try {
@@ -399,13 +453,18 @@ export class ContextCompactor {
               maxTokens: 700,
             })
           ).trim();
-          if (summary.length >= this.minSummaryChars) return summary;
+          if (summary.length >= this.minSummaryChars) {
+            this.consecutiveFailures = 0;
+            return { text: summary, source: "llm" };
+          }
         } catch {
-          // Continue through bounded fallback attempts.
+          // 计为一次失败，继续有界重试。
         }
+        this.consecutiveFailures++;
+        if (this.isBreakerOpen()) break;
       }
     }
-    return this.buildLocalFallbackSummary(text, theme);
+    return { text: this.buildLocalFallbackSummary(text, theme), source: "local" };
   }
 
   private buildLocalFallbackSummary(text: string, theme?: string): string {

@@ -1006,6 +1006,7 @@ export class AgentLoop extends AgentEventEmitter {
         this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model, {
           minSummaryChars: Number(process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS) || 500,
           maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
+          breakerThreshold: Number(process.env.QLING_COMPACTION_BREAKER) || 3,
         });
       }
     }
@@ -1059,6 +1060,7 @@ export class AgentLoop extends AgentEventEmitter {
     this.usageLedger.reset();
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
+    this.compactor.resetBreaker();
   }
 
   setChannel(channel: Channel): void {

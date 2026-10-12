@@ -39,6 +39,8 @@ export interface GuardConfig {
       tool_pattern: string;
       decision: "allow" | "deny" | "ask";
       reason?: string;
+      /** 参数级 glob（bash 为单段命令）；缺省 decision 的规则按 deny 解析 */
+      arg_pattern?: string;
     }>;
   };
 }
@@ -825,18 +827,32 @@ function parseNumber(raw: string | undefined, fallback: number): number {
 
 function parsePermissionRules(
   raw: string | undefined,
-  fallback: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string }>
-): Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string }> {
+  fallback: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string }>
+): Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string }> {
   if (!raw) return fallback;
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (r) =>
-          typeof r === "object" &&
-          typeof r.tool_pattern === "string" &&
-          ["allow", "deny", "ask"].includes(r.decision)
-      );
+      const out: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string }> = [];
+      for (const r of parsed) {
+        if (!r || typeof r !== "object") continue;
+        if (typeof r.tool_pattern !== "string" || !r.tool_pattern.trim()) continue;
+        // 安全默认（CWE-1188）：缺省/非法 decision 解析为 deny，而不是丢弃后落到默认 mode
+        const decision: "allow" | "deny" | "ask" =
+          r.decision === "allow" || r.decision === "ask" || r.decision === "deny"
+            ? r.decision
+            : "deny";
+        const rule: { tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string } = {
+          tool_pattern: r.tool_pattern,
+          decision,
+        };
+        if (typeof r.reason === "string" && r.reason.trim()) rule.reason = r.reason;
+        if (typeof r.arg_pattern === "string" && r.arg_pattern.trim()) {
+          rule.arg_pattern = r.arg_pattern;
+        }
+        out.push(rule);
+      }
+      return out;
     }
   } catch {
     // ignore

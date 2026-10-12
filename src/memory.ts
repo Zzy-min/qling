@@ -120,6 +120,96 @@ export async function migrateMisplacedWorkspaceCheckpoint(memoryDir: string): Pr
   return true;
 }
 
+// --- MMR 多样性重排（PersistedMemory 检索，避免近重复记忆占满 top-k）---
+
+/** 用户纠错标记（来源或内容约定，仓库统一口径）。 */
+function isCorrectionEntry(entry: Pick<PersistedEntry, "source" | "content">): boolean {
+  return entry.source === "user-correction"
+    || entry.content.includes("[用户纠错")
+    || entry.content.includes("必须遵守");
+}
+
+/** 解析 QLING_MEMORY_MMR_LAMBDA：0–1；缺省或非法回退 0.7；1 表示关闭 MMR。 */
+function resolveMmrLambda(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return 0.7;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 1) return 0.7;
+  return value;
+}
+
+/**
+ * 相似度分词：拉丁字符按 [^\p{L}\p{N}_] 切词并小写；
+ * CJK（汉字）追加字符 bigram，避免中文整句被当成单个 token 而失效。
+ */
+function similarityTokens(value: string): Set<string> {
+  const normalized = value.toLowerCase();
+  const tokens = new Set(
+    normalized.split(/[^\p{L}\p{N}_]+/u).filter((token) => token.length > 0)
+  );
+  for (const run of normalized.match(/\p{Script=Han}+/gu) ?? []) {
+    if (run.length < 2) {
+      tokens.add(run);
+      continue;
+    }
+    for (let index = 0; index + 2 <= run.length; index++) {
+      tokens.add(run.slice(index, index + 2));
+    }
+  }
+  return tokens;
+}
+
+function jaccardSimilarity(left: string, right: string): number {
+  const a = similarityTokens(left);
+  const b = similarityTokens(right);
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const token of a) if (b.has(token)) intersection++;
+  return intersection / (a.size + b.size - intersection);
+}
+
+interface ScoredMemoryEntry {
+  entry: PersistedEntry;
+  score: number;
+}
+
+/**
+ * 最大边际相关（MMR）重排：先保底选出纠错记忆，再对剩余名额做多样性选择。
+ * lambda>=1、n<=1 或 limit<=0 时不做重排，直接按原顺序截断。
+ */
+function mmrRerank(
+  scored: ScoredMemoryEntry[],
+  limit: number,
+  lambda: number
+): ScoredMemoryEntry[] {
+  if (limit <= 0) return [];
+  if (scored.length <= 1 || lambda >= 1) return scored.slice(0, limit);
+  const selected: ScoredMemoryEntry[] = [];
+  const remaining: ScoredMemoryEntry[] = [];
+  for (const candidate of scored) {
+    if (selected.length < limit && isCorrectionEntry(candidate.entry)) selected.push(candidate);
+    else remaining.push(candidate);
+  }
+  while (selected.length < limit && remaining.length > 0) {
+    let bestIndex = 0;
+    let bestMmr = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < remaining.length; index++) {
+      const candidate = remaining[index];
+      let maxSimilarity = 0;
+      for (const chosen of selected) {
+        const similarity = jaccardSimilarity(candidate.entry.content, chosen.entry.content);
+        if (similarity > maxSimilarity) maxSimilarity = similarity;
+      }
+      const mmr = lambda * candidate.score - (1 - lambda) * maxSimilarity;
+      if (mmr > bestMmr) {
+        bestMmr = mmr;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+  return selected;
+}
+
 // --- PersistedMemory（长期存储，WAL 模式可选）---
 
 export class PersistedMemory {
@@ -233,10 +323,7 @@ export class PersistedMemory {
     const keywordResults = this.entries.map((e) => {
       let score = e.importance;
       // 用户纠错几乎不衰减，避免「记不住还犯错」
-      const isCorrection =
-        e.source === "user-correction" ||
-        e.content.includes("[用户纠错") ||
-        e.content.includes("必须遵守");
+      const isCorrection = isCorrectionEntry(e);
       const ageHours = (now - e.createdAt) / (1000 * 60 * 60);
       score *= isCorrection ? Math.pow(0.98, ageHours / 24) : Math.pow(0.9, ageHours / 24);
       if (isCorrection) score += 0.5;
@@ -310,10 +397,11 @@ export class PersistedMemory {
        merged.set(p.id, { entry: p, score: 2.0 });
     });
 
-    return Array.from(merged.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
-      .map((s) => s.entry);
+    const ranked = Array.from(merged.values()).sort((a, b) => b.score - a.score);
+    const lambda = resolveMmrLambda(process.env.QLING_MEMORY_MMR_LAMBDA);
+    // 取 limit*3 候选做 MMR，再截取 limit（lambda=1 时等价于改动前的纯相关度排序）。
+    const candidates = ranked.slice(0, limit * 3);
+    return mmrRerank(candidates, limit, lambda).map((s) => s.entry);
   }
 
   async syncCognitiveIndex(entries: PersistedEntry[]): Promise<void> {
@@ -766,9 +854,7 @@ export class MemoryStore {
     // Global memories get a weight multiplier of 0.7
     let globalCorrectionCount = 0;
     globalHits.forEach((entry, idx) => {
-      const isCorrection = entry.source === "user-correction"
-        || entry.content.includes("[用户纠错")
-        || entry.content.includes("必须遵守");
+      const isCorrection = isCorrectionEntry(entry);
       if (isCorrection && globalCorrectionCount++ >= 3) return;
       const score = (limit - idx) * 0.7;
       const key = "global:" + entry.id;

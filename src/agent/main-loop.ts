@@ -33,6 +33,7 @@ import type { UsageLedger } from "../usage-ledger.js";
 import type { ToolDispatcher } from "../tools/index.js";
 import { RunEfficiencyGuard } from "./run-efficiency.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
+import { repairHistory } from "../context-history-repair.js";
 import { resolveCostBudgetSignal } from "../cost-budget.js";
 
 export interface TurnTelemetry {
@@ -299,6 +300,16 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     }
 
     const systemPrompt = await host.buildSystemPrompt();
+
+    // 发送前历史修复：确保 assistant.tool_calls 与 tool 结果严格配对，避免
+    // provider "tool_use_id 不匹配" 的整轮 400。
+    {
+      const repair = repairHistory(host.messages);
+      if (repair.report.changed) {
+        host.messages.splice(0, host.messages.length, ...repair.messages);
+        host.emit("history_repair", repair.report);
+      }
+    }
 
     if (process.env.QLING_FEATURES_WORKFLOW_RUNTIME === "true") {
       await host.workflowRuntime.updateContext(host.messages);

@@ -27,6 +27,7 @@ import {
   isPlanArtifactPath,
 } from "../plan/plan-artifacts.js";
 import { getPermissionGrantStore } from "../guard/permission-grants.js";
+import { splitShell, unwrap } from "../guard/shell-split.js";
 
 // --- 0. 动态工具选择器（<30 工具限制 + 场景路由）---
 
@@ -105,7 +106,7 @@ export class DynamicToolSelector {
 
 // --- 1. Dangerous Pattern Registry ---
 
-const BUILT_IN_DANGEROUS_PATTERNS = [
+export const BUILT_IN_DANGEROUS_PATTERNS: RegExp[] = [
   // 文件删除
   /\brm\s+-rf\s+\//,
   /\bdel\s+\/[sfq]\b/i,
@@ -140,18 +141,49 @@ function matchDangerousPatterns(
   cmd: string,
   patterns: (string | RegExp)[]
 ): string[] {
+  return analyzeDangerousCommand(cmd, patterns).matched;
+}
+
+/**
+ * 按 shell 分段匹配危险模式：
+ * - 每个 segment 去包装（sudo/env/…）后空格拼接作为匹配主体；
+ * - 字符串模式按**字面量包含**匹配（修复 `"rm -rf /*"` 被当正则的问题）；
+ * - RegExp 模式保持正则（额外对原始命令串测试，保留 `| sh` 类管道规则）；
+ * - complex=true 时命中任意危险模式 → 上层降级为 ask。
+ */
+export function analyzeDangerousCommand(
+  cmd: string,
+  patterns: (string | RegExp)[] = []
+): { matched: string[]; complex: boolean } {
+  const raw = typeof cmd === "string" ? cmd : String(cmd ?? "");
   const allPatterns: (string | RegExp)[] = [
     ...BUILT_IN_DANGEROUS_PATTERNS,
     ...patterns,
   ];
+  if (!raw.trim()) return { matched: [], complex: false };
+
+  const { segments, complex } = splitShell(raw);
+  const subjects = segments.map((seg) => unwrap(seg).join(" "));
+  if (subjects.length === 0) subjects.push(raw.trim());
+  // 字面量模式额外对整串测试：保证 fork bomb 等依赖运算符的字面量仍可命中；
+  // RegExp 模式也保留整串测试（如 `| sh` 管道规则）。
+  const literalSubjects = [...subjects, raw];
+  const regexSubjects = literalSubjects;
+
   const matched: string[] = [];
   for (const p of allPatterns) {
-    const re = typeof p === "string" ? new RegExp(p) : p;
-    if (re.test(cmd)) {
-      matched.push(typeof p === "string" ? p : String(p));
+    if (typeof p === "string") {
+      if (p && literalSubjects.some((subject) => subject.includes(p))) {
+        matched.push(p);
+      }
+      continue;
+    }
+    p.lastIndex = 0;
+    if (regexSubjects.some((subject) => subject.length > 0 && p.test(subject))) {
+      matched.push(String(p));
     }
   }
-  return matched;
+  return { matched, complex };
 }
 
 // --- 2. Speculative Classifier（3.2 节）---
@@ -170,12 +202,14 @@ export class SpeculativeClassifier {
     const cmd = String(toolCall.arguments.command ?? "");
     if (!cmd) return { label: "safe" };
 
-    const matched = matchDangerousPatterns(
+    const { matched, complex } = analyzeDangerousCommand(
       cmd,
       def?.dangerousPatterns ?? []
     );
 
     if (matched.length > 0) {
+      // 安全优先：只要整串/任一分段/任一分段 unwrap 后命中危险模式，一律拒绝。
+      // complex 只能把原本 safe 的结果升级为 ask，绝不能把 dangerous 降级为 ask。
       return {
         label: "dangerous",
         reason: `匹配危险模式: ${matched.join(", ")}`,
@@ -183,14 +217,16 @@ export class SpeculativeClassifier {
       };
     }
 
-    // 读操作风险低
+    // 读操作风险低；复杂语法下「只读」无法静态确认，严格度升级为 ask（只升不降）
     if (
       def?.readOnly ||
       /^\s*(ls|git\s+(status|log|diff)|cat|head|tail|grep|find|wc|echo|pwd)\s/.test(
         cmd
       )
     ) {
-      return { label: "safe" };
+      return complex
+        ? { label: "ask", reason: "复杂 shell 语法，只读判断不可靠，需人工确认" }
+        : { label: "safe" };
     }
 
     // 写/删除操作需要询问（仅明确危险的操作才拦截）
@@ -201,6 +237,11 @@ export class SpeculativeClassifier {
       /\b(del|rmdir|rm\s+-rf|mkfs|truncate\s+-s\s+0)\b/.test(cmd)
     ) {
       return { label: "ask" };
+    }
+
+    // 复杂语法无法静态判定：原本 safe 的升级为 ask
+    if (complex) {
+      return { label: "ask", reason: "复杂 shell 语法，需人工确认" };
     }
 
     return { label: "safe" };
@@ -380,7 +421,7 @@ export class HookManager {
 
     // 1. Permission matrix check (highest priority)
     if (this.permissionMatrix && this.guardConfig) {
-      const permResult = this.permissionMatrix.evaluate(ctx.toolName);
+      const permResult = this.permissionMatrix.evaluate(ctx.toolName, ctx.arguments);
       // Plan 产物写入：即使规则列表里还有 write deny，也放行
       if (
         this.planMode &&
@@ -403,7 +444,7 @@ export class HookManager {
       }
       if (permResult.decision === "ask") {
         // G3.3：会话 grant → 跳过 ask
-        if (getPermissionGrantStore().hasAllow(ctx.toolName)) {
+        if (getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
           await appendGuardAudit(this.guardConfig, {
             tool: ctx.toolName,
             action: "allow",
@@ -463,7 +504,7 @@ export class HookManager {
     }
 
     if (classification.label === "ask") {
-      if (getPermissionGrantStore().hasAllow(ctx.toolName)) {
+      if (getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
         // grant 覆盖 classifier ask（危险 deny 仍拦截）
       } else {
         return {
@@ -480,7 +521,7 @@ export class HookManager {
       const result = await handler(ctx);
       if (result.decision === "deny") return result;
       if (result.decision === "ask") {
-        if (getPermissionGrantStore().hasAllow(ctx.toolName)) continue;
+        if (getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) continue;
         return result;
       }
     }
