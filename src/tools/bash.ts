@@ -9,10 +9,28 @@ import { spawn, execFileSync } from "child_process";
 import { stat } from "fs/promises";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { toolError, toolSuccess } from "./error-utils.js";
-import { getRuntimeRootsFromEnv, resolveToolPath } from "../runtime-paths.js";
+import { getRuntimeExecutionIdentity, getRuntimeRootsFromEnv, resolveToolPath } from "../runtime-paths.js";
 
 const MAX_COMMAND_LENGTH = 5000;
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1MB per stream
+
+export function resolveBashLaunch(input: {
+  platform: NodeJS.Platform;
+  runtime: string | undefined;
+  command: string;
+  cwd: string;
+}): { shell: string; shellArgs: string[] } {
+  if (input.platform === "win32" && input.runtime === "wsl") {
+    const match = input.cwd.match(/^([A-Za-z]):[\\/](.*)$/);
+    const wslCwd = match
+      ? `/mnt/${match[1].toLowerCase()}/${match[2].replace(/\\/g, "/")}`
+      : input.cwd.replace(/\\/g, "/");
+    return { shell: "wsl.exe", shellArgs: ["--cd", wslCwd, "sh", "-lc", input.command] };
+  }
+  return input.platform === "win32"
+    ? { shell: "cmd.exe", shellArgs: ["/c", input.command] }
+    : { shell: "/bin/sh", shellArgs: ["-c", input.command] };
+}
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -148,6 +166,24 @@ export async function runBash(args: {
   const roots = getRuntimeRootsFromEnv();
   const cwdInput = String(args.cwd ?? ".").trim();
   const cwd = resolveToolPath(cwdInput, roots, "workspace");
+  let selectedRuntime = process.env.QLING_CODE_RUNTIME;
+  if (
+    process.platform === "win32" &&
+    selectedRuntime === "auto" &&
+    process.env.QLING_FEATURES_RELIABILITY_V2 === "true"
+  ) {
+    const { inspectProjectProfileCached } = await import("../runtime/project-profile.js");
+    selectedRuntime = (await inspectProjectProfileCached({
+      workspaceDir: roots.workspaceDir ?? cwd,
+      requestedRuntime: "auto",
+    })).runtime;
+  }
+  const launch = resolveBashLaunch({
+    platform: process.platform,
+    runtime: selectedRuntime,
+    command,
+    cwd,
+  });
   const { isBashCwdAllowed, resolveSandboxProfile } = await import(
     "../runtime/sandbox-profile.js"
   );
@@ -164,7 +200,12 @@ export async function runBash(args: {
       return toolError("BASH_INVALID_CWD", `${cwd} is not a directory`);
     }
   } catch {
-    return toolError("BASH_CWD_NOT_FOUND", `cwd not found: ${cwd}`);
+    const workspace = roots.workspaceDir ?? process.cwd();
+    return toolError(
+      "BASH_CWD_NOT_FOUND",
+      `cwd not found: ${cwd}. workspace: ${workspace}. ` +
+      "If the command belongs to the active project, omit cwd or use a path inside workspace; no fallback was executed."
+    );
   }
 
   if (background) {
@@ -180,10 +221,17 @@ export async function runBash(args: {
         command,
         cwd,
         env: buildSafeEnv(args.env_allowlist ?? [], args.env_inject ?? {}),
+        executable: launch.shell,
+        executableArgs: launch.shellArgs,
+        runtime: selectedRuntime === "wsl" ? "wsl" : "native",
+        owner: {
+          workspaceDir: getRuntimeRootsFromEnv().workspaceDir ?? cwd,
+          ...getRuntimeExecutionIdentity(),
+        },
         timeoutSec,
       });
-      return toolSuccess(
-        [
+      return {
+        ...toolSuccess([
           "background: started",
           `task_id: ${task.taskId}`,
           `status: ${task.status}`,
@@ -192,8 +240,9 @@ export async function runBash(args: {
           `command: ${task.command}`,
           `max_lifetime_sec: ${timeoutSec === 0 ? "none" : timeoutSec}`,
           "use bg_wait / bg_kill or /tasks wait|kill with this task_id",
-        ].join("\n")
-      );
+        ].join("\n")),
+        meta: { backgroundTaskId: task.taskId },
+      };
     } catch (err) {
       return toolError(
         "BASH_BACKGROUND_START_FAILED",
@@ -206,10 +255,7 @@ export async function runBash(args: {
 
   return new Promise((resolve) => {
     const timeout = timeoutSec * 1000;
-    const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
-    const shellArgs = process.platform === "win32" ? ["/c", command] : ["-c", command];
-
-    const proc = spawn(shell, shellArgs, {
+    const proc = spawn(launch.shell, launch.shellArgs, {
       cwd,
       env: buildSafeEnv(args.env_allowlist ?? [], args.env_inject ?? {}),
       stdio: ["ignore", "pipe", "pipe"],

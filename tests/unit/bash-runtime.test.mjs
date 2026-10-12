@@ -1,7 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSafeEnv, isProtectedToolEnvKey } from "../../dist/tools/bash.js";
+import { buildSafeEnv, isProtectedToolEnvKey, resolveBashLaunch } from "../../dist/tools/bash.js";
+
+test("Windows WSL runtime executes in the translated isolated workspace", () => {
+  const launch = resolveBashLaunch({ platform: "win32", runtime: "wsl", command: "python -m pytest", cwd: "C:\\work\\repo" });
+  assert.equal(launch.shell, "wsl.exe");
+  assert.deepEqual(launch.shellArgs, ["--cd", "/mnt/c/work/repo", "sh", "-lc", "python -m pytest"]);
+});
+
+test("native runtime preserves existing shell behavior", () => {
+  assert.deepEqual(resolveBashLaunch({ platform: "win32", runtime: "native", command: "npm test", cwd: "C:\\repo" }), { shell: "cmd.exe", shellArgs: ["/c", "npm test"] });
+  assert.deepEqual(resolveBashLaunch({ platform: "linux", runtime: "auto", command: "npm test", cwd: "/repo" }), { shell: "/bin/sh", shellArgs: ["-c", "npm test"] });
+});
 
 test("bash subprocesses never inherit provider or integration credentials", () => {
   const previous = {

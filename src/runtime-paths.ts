@@ -8,6 +8,12 @@ export interface RuntimeRoots {
   fileStateDir: string;
 }
 
+export interface RuntimeExecutionIdentity {
+  sessionId?: string;
+  runId?: string;
+  leaseToken?: string;
+}
+
 export type DefaultRootKind = "workspace" | "file_cache" | "file_state";
 
 /** write/patch 沙箱：默认仅工作区 */
@@ -17,6 +23,7 @@ const HOME = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
 const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
 const runtimeRootsContext = new AsyncLocalStorage<RuntimeRoots>();
+const runtimeExecutionContext = new AsyncLocalStorage<RuntimeExecutionIdentity>();
 
 /** Bind tool path resolution to one Agent runtime without mutating process.env. */
 export function runWithRuntimeRoots<T>(roots: RuntimeRoots, operation: () => T): T {
@@ -25,6 +32,14 @@ export function runWithRuntimeRoots<T>(roots: RuntimeRoots, operation: () => T):
     fileCacheDir: path.resolve(roots.fileCacheDir),
     fileStateDir: path.resolve(roots.fileStateDir),
   }, operation);
+}
+
+export function runWithRuntimeExecutionIdentity<T>(identity: RuntimeExecutionIdentity, operation: () => T): T {
+  return runtimeExecutionContext.run({ ...identity }, operation);
+}
+
+export function getRuntimeExecutionIdentity(): RuntimeExecutionIdentity {
+  return { ...(runtimeExecutionContext.getStore() ?? {}) };
 }
 
 /** 默认拒绝写入的敏感文件名模式（小写比较） */
