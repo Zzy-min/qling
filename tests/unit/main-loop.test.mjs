@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,6 +12,9 @@ import {
   logTurnTelemetry,
   runInnerIterationLoop,
   runOuterAgentLoop,
+  createThrottledSessionCheckpoint,
+  resolveCheckpointMinIntervalMs,
+  canWriteMidTurnCheckpoint,
 } from "../../dist/agent/main-loop.js";
 import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
 import { RecoveryController } from "../../dist/execution/recovery-controller.js";
@@ -922,4 +926,145 @@ test("unknown background outcome exits through approval, durable checkpoint, ful
     rmSync(workspaceDir, { recursive: true, force: true });
     rmSync(stateDir, { recursive: true, force: true });
   }
+});
+
+test("session checkpoint interval defaults to 2000ms and does not block the caller", async () => {
+  const previous = process.env.QLING_CHECKPOINT_MIN_INTERVAL_MS;
+  delete process.env.QLING_CHECKPOINT_MIN_INTERVAL_MS;
+  try {
+    assert.equal(resolveCheckpointMinIntervalMs(), 2000);
+  } finally {
+    if (previous === undefined) delete process.env.QLING_CHECKPOINT_MIN_INTERVAL_MS;
+    else process.env.QLING_CHECKPOINT_MIN_INTERVAL_MS = previous;
+  }
+
+  const warnings = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  let phase = "idle";
+  const clock = { now: 0 };
+  const scheduled = [];
+  const scheduler = createThrottledSessionCheckpoint({
+    minIntervalMs: 2000,
+    now: () => clock.now,
+    warningState: { warned: false },
+    warn: (message) => warnings.push(message),
+    schedule: (callback, delayMs) => {
+      scheduled.push({ callback, delayMs });
+      return { cancel() { scheduled.length = 0; } };
+    },
+    save: () => {
+      calls += 1;
+      phase = "started";
+      if (calls === 1) return gate.then(() => { phase = "finished"; });
+      return Promise.reject(new Error("disk full"));
+    },
+  });
+
+  scheduler.afterToolBatch();
+  assert.equal(calls, 1);
+  assert.equal(phase, "started");
+  scheduler.afterToolBatch();
+  assert.equal(calls, 1);
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].delayMs, 2000);
+
+  clock.now = 2000;
+  scheduled[0].callback();
+  assert.equal(calls, 2);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /disk full/);
+
+  clock.now = 4000;
+  scheduler.afterToolBatch();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(calls, 3);
+  assert.equal(warnings.length, 1);
+  release();
+  await gate;
+  assert.equal(phase, "finished");
+});
+
+test("mid-turn checkpoint skips an empty or relative stateDir and does not create cwd/sessions", async () => {
+  assert.equal(canWriteMidTurnCheckpoint(""), false);
+  assert.equal(canWriteMidTurnCheckpoint("   "), false);
+  assert.equal(canWriteMidTurnCheckpoint("."), false);
+  assert.equal(canWriteMidTurnCheckpoint("sessions"), false);
+  assert.equal(canWriteMidTurnCheckpoint(undefined), false);
+  assert.equal(canWriteMidTurnCheckpoint(path.resolve(os.tmpdir())), true);
+
+  const sessionsDir = path.join(process.cwd(), "sessions");
+  const before = await readdir(sessionsDir).then((names) => names.sort()).catch((error) => {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  let writes = 0;
+  const bus = new ExecutionEventBus();
+  const recovery = new RecoveryController();
+  const messages = [{ role: "user", content: "checkpoint should not touch cwd" }];
+  const outcome = await runInnerIterationLoop({
+    messages,
+    turnCount: 0,
+    sessionId: "empty-state-dir",
+    maxIterations: 2,
+    toolRepeatLimit: 2,
+    parseRetries: 0,
+    verificationCommand: null,
+    counters: { sessionTokens: 0, sessionPromptTokens: 0, sessionCompletionTokens: 0, tokenUsageSource: "unknown" },
+    compactionCount: 0,
+    toolCallTotal: 0,
+    toolFailureTotal: 0,
+    retryCountTotal: 0,
+    loggingFormat: "json",
+    compactor: new ContextCompactor(1_000_000, "test"),
+    pipeline: { async execute(call) { return { tool_call_id: call.id, output: "ok" }; } },
+    tools: [],
+    guardConfig: { enabled: false },
+    channel: null,
+    approvalGate: {},
+    knowledgeAdapter: { onToolCall() {}, onToolResult() {}, onAssistantMessage() {}, async onTurnEnd() {} },
+    memoryStore: { link() {}, addConversationTurn() {}, addPractice() {} },
+    workspaceDir: os.tmpdir(),
+    fileStateDir: process.cwd(),
+    workflowRuntime: {},
+    executionEventBus: bus,
+    recoveryController: recovery,
+    verifier: {},
+    buildSystemPrompt: async () => "system",
+    chat: async () => {
+      if (messages.some((message) => message.role === "tool")) return { content: "done", tool_calls: [] };
+      return {
+        content: "",
+        tool_calls: [{
+          id: "call-empty-state",
+          type: "function",
+          function: { name: "read", arguments: JSON.stringify({ path: "README.md" }) },
+        }],
+      };
+    },
+    emit() {},
+    runVerificationCommand: async () => ({ code: 0, stdout: "", stderr: "" }),
+    getRecoveryState: () => {
+      try { return recovery.getRecoveryState(); } catch { return null; }
+    },
+    reflectiveThink: async () => ({ decision: "proceed", reason: "" }),
+    checkAutoDream: async () => {},
+    checkpointStateDir: "",
+    checkpointSession: async () => {
+      writes += 1;
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(path.join(sessionsDir, "should-not-exist.json"), "{}");
+    },
+  });
+  assert.equal(outcome.status, "succeeded");
+  assert.equal(writes, 0);
+  const after = await readdir(sessionsDir).then((names) => names.sort()).catch((error) => {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  assert.deepEqual(after, before);
 });

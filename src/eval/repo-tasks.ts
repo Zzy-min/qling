@@ -6,8 +6,10 @@
 
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { join } from "path";
+import { execFileSync } from "child_process";
 import type { EvalTask, EvalTaskContext, EvalTaskOutcome } from "./types.js";
 import { writeFileAtomic } from "../tools/patch.js";
+import { spillMcpResult } from "../mcp/registry.js";
 
 async function writeTree(
   root: string,
@@ -272,6 +274,51 @@ export function buildEvalRepoTasks(): EvalTask[] {
           "CJK path write ok",
           "CJK path write failed"
         );
+      },
+    },
+    {
+      id: "fixture-mcp-spill-pointer",
+      title: "MCP 超限输出落盘 + 路径指针 + node 回读",
+      run: async ({ workspaceDir }) => {
+        const dumpDir = join(workspaceDir, "mcp-spill");
+        const payload = JSON.stringify({
+          items: Array.from({ length: 400 }, (_, i) => ({ id: i, blob: "y".repeat(300) })),
+        });
+        const spilled = await spillMcpResult(
+          { tool_call_id: "mcp__demo__big", output: payload, is_error: false },
+          { maxBytes: 20 * 1024, dumpDir, callId: "demo__big" }
+        );
+        const spillPath = typeof spilled.meta?.spillPath === "string" ? spilled.meta.spillPath : "";
+        const inlineHasPath = spillPath.length > 0 && spilled.output.includes(spillPath);
+        const inlineHasHint = spilled.output.includes("jq") && spilled.output.includes("node");
+        const onDisk = spillPath ? await readFile(spillPath, "utf8") : "";
+        let field = "";
+        if (spillPath) {
+          try {
+            field = execFileSync(
+              process.execPath,
+              [
+                "-e",
+                `process.stdout.write(String(JSON.parse(require('fs').readFileSync(${JSON.stringify(
+                  spillPath
+                )},'utf8')).items[7].id))`,
+              ],
+              { encoding: "utf8" }
+            ).trim();
+          } catch {
+            field = "<read-failed>";
+          }
+        }
+        const ok =
+          spilled.meta?.truncated === true &&
+          inlineHasPath &&
+          inlineHasHint &&
+          onDisk === payload &&
+          field === "7";
+        return {
+          ok,
+          detail: `bytes=${payload.length} spill=${spillPath.length > 0} diskMatch=${onDisk === payload} field=${field}`,
+        };
       },
     },
   ];

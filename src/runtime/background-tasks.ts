@@ -65,6 +65,7 @@ export type BackgroundTaskEvent =
 
 const MAX_TASKS_RETAINED = 50;
 const MAX_OUTPUT_BYTES = 512 * 1024;
+const HEAD_KEEP_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIFETIME_MS = 30 * 60 * 1000; // 30 min
 const MAX_CONCURRENT_RUNNING = 8;
 
@@ -97,10 +98,126 @@ export function isBackgroundTaskOwnedBy(task: BackgroundTask, owner: BackgroundT
   return true;
 }
 
-function truncateBytes(text: string, maxBytes: number): string {
+function omissionMarker(omitted: number): string {
+  return `…[省略 ${Math.max(0, omitted)} 字节]…`;
+}
+
+function utf8PrefixLength(buf: Buffer, maxBytes: number): number {
+  let end = Math.min(Math.max(0, maxBytes), buf.byteLength);
+  while (end > 0 && end < buf.byteLength && (buf[end] & 0xc0) === 0x80) end -= 1;
+  return end;
+}
+
+function expectedUtf8Length(lead: number): number {
+  if ((lead & 0x80) === 0) return 1;
+  if ((lead & 0xe0) === 0xc0) return 2;
+  if ((lead & 0xf0) === 0xe0) return 3;
+  if ((lead & 0xf8) === 0xf0) return 4;
+  return 1;
+}
+
+function trimPartialUtf8End(buf: Buffer): Buffer {
+  if (buf.byteLength === 0) return buf;
+  let index = buf.byteLength - 1;
+  while (index >= 0 && (buf[index] & 0xc0) === 0x80) index -= 1;
+  if (index < 0) return Buffer.alloc(0);
+  if (index + expectedUtf8Length(buf[index]) > buf.byteLength) return buf.subarray(0, index);
+  return buf;
+}
+
+function skipPartialUtf8Start(buf: Buffer, start: number): number {
+  let index = Math.max(0, start);
+  while (index < buf.byteLength && (buf[index] & 0xc0) === 0x80) index += 1;
+  return index;
+}
+
+/** Head 64KB + omission marker + tail. The returned byte length never exceeds maxBytes. */
+export function truncateBytes(text: string, maxBytes: number): string {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) return "";
   const buf = Buffer.from(text, "utf8");
   if (buf.byteLength <= maxBytes) return text;
-  return buf.subarray(0, maxBytes).toString("utf8") + `\n[truncated at ${maxBytes} bytes]`;
+
+  const headBudget = Math.min(HEAD_KEEP_BYTES, maxBytes);
+  let head = trimPartialUtf8End(buf.subarray(0, utf8PrefixLength(buf, headBudget)));
+  let omitted = buf.byteLength - head.byteLength;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const markerBytes = Buffer.byteLength(omissionMarker(omitted));
+    if (head.byteLength + markerBytes >= maxBytes) {
+      head = trimPartialUtf8End(buf.subarray(0, utf8PrefixLength(buf, Math.max(0, maxBytes - markerBytes))));
+      omitted = buf.byteLength - head.byteLength;
+      continue;
+    }
+    const tailBudget = maxBytes - head.byteLength - markerBytes;
+    let tailStart = Math.max(head.byteLength, buf.byteLength - tailBudget);
+    tailStart = skipPartialUtf8Start(buf, tailStart);
+    const tail = buf.subarray(tailStart);
+    const actualOmitted = buf.byteLength - head.byteLength - tail.byteLength;
+    const rendered = head.toString("utf8") + omissionMarker(actualOmitted) + tail.toString("utf8");
+    if (actualOmitted > 0 && Buffer.byteLength(rendered) <= maxBytes) return rendered;
+    omitted = actualOmitted;
+  }
+
+  const fallbackMarker = omissionMarker(buf.byteLength);
+  const fallbackHead = trimPartialUtf8End(
+    buf.subarray(0, utf8PrefixLength(buf, Math.max(0, maxBytes - Buffer.byteLength(fallbackMarker)))),
+  );
+  const fallback = fallbackHead.toString("utf8") + omissionMarker(buf.byteLength - fallbackHead.byteLength);
+  if (Buffer.byteLength(fallback) <= maxBytes) return fallback;
+  return buf.subarray(0, utf8PrefixLength(buf, maxBytes)).toString("utf8");
+}
+
+/** Bounded capture so a live stream can keep its tail without storing the whole output. */
+class BoundedOutput {
+  private head = Buffer.alloc(0);
+  private tail = Buffer.alloc(0);
+  private omitted = 0;
+  private readonly headBudget: number;
+  private readonly tailBudget: number;
+
+  constructor(private readonly maxBytes: number) {
+    this.headBudget = Math.min(HEAD_KEEP_BYTES, Math.max(0, maxBytes));
+    this.tailBudget = Math.max(0, maxBytes - this.headBudget);
+  }
+
+  push(chunk: Buffer): void {
+    if (chunk.byteLength === 0) return;
+    let rest = chunk;
+    if (this.head.byteLength < this.headBudget) {
+      const take = Math.min(this.headBudget - this.head.byteLength, rest.byteLength);
+      this.head = Buffer.concat([this.head, rest.subarray(0, take)]);
+      rest = rest.subarray(take);
+    }
+    if (rest.byteLength === 0) return;
+    this.tail = Buffer.concat([this.tail, rest]);
+    if (this.tail.byteLength > this.tailBudget) {
+      const drop = this.tail.byteLength - this.tailBudget;
+      this.omitted += drop;
+      this.tail = this.tail.subarray(drop);
+    }
+  }
+
+  text(): string {
+    if (this.omitted === 0) {
+      return truncateBytes(Buffer.concat([this.head, this.tail]).toString("utf8"), this.maxBytes);
+    }
+    const head = trimPartialUtf8End(this.head);
+    let start = skipPartialUtf8Start(this.tail, 0);
+    let dropped = this.omitted + (this.head.byteLength - head.byteLength) + start;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const markerBytes = Buffer.byteLength(omissionMarker(dropped));
+      const tail = this.tail.subarray(start);
+      if (head.byteLength + markerBytes + tail.byteLength <= this.maxBytes) {
+        const rendered = head.toString("utf8") + omissionMarker(dropped) + tail.toString("utf8");
+        if (Buffer.byteLength(rendered) <= this.maxBytes) return rendered;
+      }
+      const overflow = head.byteLength + markerBytes + tail.byteLength - this.maxBytes;
+      const next = skipPartialUtf8Start(this.tail, start + Math.max(1, overflow));
+      dropped += next - start;
+      start = next;
+      if (start >= this.tail.byteLength) break;
+    }
+    return truncateBytes(head.toString("utf8"), this.maxBytes);
+  }
 }
 
 export class BackgroundTaskRegistry extends EventEmitter {
@@ -280,39 +397,17 @@ export class BackgroundTaskRegistry extends EventEmitter {
       throw error;
     }
 
-    let stdout = "";
-    let stderr = "";
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
+    const stdoutCap = new BoundedOutput(MAX_OUTPUT_BYTES);
+    const stderrCap = new BoundedOutput(MAX_OUTPUT_BYTES);
     let settled = false;
 
-    const append = (
-      current: string,
-      bytes: number,
-      chunk: Buffer
-    ): { text: string; bytes: number } => {
-      if (bytes >= MAX_OUTPUT_BYTES) return { text: current, bytes };
-      const remaining = MAX_OUTPUT_BYTES - bytes;
-      if (chunk.byteLength <= remaining) {
-        return { text: current + chunk.toString(), bytes: bytes + chunk.byteLength };
-      }
-      return {
-        text: current + chunk.subarray(0, remaining).toString() + `\n[truncated at ${MAX_OUTPUT_BYTES} bytes]`,
-        bytes: MAX_OUTPUT_BYTES,
-      };
-    };
-
     proc.stdout?.on("data", (chunk: Buffer) => {
-      const next = append(stdout, stdoutBytes, chunk);
-      stdout = next.text;
-      stdoutBytes = next.bytes;
-      this.patchOutput(taskId, stdout, stderr);
+      stdoutCap.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      this.patchOutput(taskId, stdoutCap.text(), stderrCap.text());
     });
     proc.stderr?.on("data", (chunk: Buffer) => {
-      const next = append(stderr, stderrBytes, chunk);
-      stderr = next.text;
-      stderrBytes = next.bytes;
-      this.patchOutput(taskId, stdout, stderr);
+      stderrCap.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      this.patchOutput(taskId, stdoutCap.text(), stderrCap.text());
     });
 
     let lifeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -337,7 +432,7 @@ export class BackgroundTaskRegistry extends EventEmitter {
       current.error = error;
       current.endedAt = Date.now();
       current.updatedAt = current.endedAt;
-      current.output = this.mergeOutput(stdout, stderr);
+      current.output = this.mergeOutput(stdoutCap.text(), stderrCap.text());
       this.tasks.set(taskId, current);
       this.resolveWaiters(taskId, current);
       this.emitEvent({ type: "finished", task: { ...current } });

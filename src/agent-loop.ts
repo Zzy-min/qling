@@ -28,7 +28,7 @@ import type { MCPServerConfig } from "./types.js";
 import { VerificationAgent } from "./pipeline/verification.js";
 import { ContextCompactor } from "./context-compactor.js";
 import { KnowledgeAgentAdapter } from "./knowledge-agent.js";
-import type { AgentConfig, Message, ToolCall } from "./types.js";
+import type { AgentConfig, Message, ToolCall, ToolDefinition } from "./types.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
 import { WorkflowBuilder } from "./workflow-types.js";
 import { DiscoveryRegistry } from "./discovery-registry.js";
@@ -74,11 +74,17 @@ import { projectSessionEvents } from "./runtime/session-projector.js";
 import { redactPromptDiagnostics } from "./harness/prompt-envelope.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
+import { reconcileInterruptedSession } from "./session/interrupted-run.js";
 import type { ExecutionEvent, RecoveryState, RunOutcome } from "./execution/types.js";
 import { UsageLedger } from "./usage-ledger.js";
 import type { UsageLedgerSnapshot } from "./usage-ledger.js";
 import { installJsonHooks, type JsonHookRunner } from "./hooks/json-hooks.js";
 import { loadRoleCatalog } from "./agents/role-loader.js";
+import {
+  filterToolsForRole,
+  normalizeSubAgentRole,
+  roleAllowlistIncludesMcp,
+} from "./agents/roles.js";
 import {
   formatRecoveryInstruction,
   formatRecoveryPause,
@@ -96,6 +102,7 @@ import {
 } from "./agent/system-prompt.js";
 import { selectToolsForRequest } from "./harness/tool-capability.js";
 import {
+  canWriteMidTurnCheckpoint,
   runInnerIterationLoop,
   runOuterAgentLoop,
   type InnerLoopOutcome,
@@ -171,6 +178,8 @@ export class AgentLoop extends AgentEventEmitter {
   private config: AgentConfig;
   private turnCount = 0;
   private runtimeRootDir: string;
+  /** Raw file-state directory before path.resolve, so "" / "." cannot become cwd. */
+  private requestedFileStateDir: string;
   private memoryDir: string;
   private loggingConfig: NonNullable<AgentConfig["logging"]>;
 
@@ -358,6 +367,10 @@ export class AgentLoop extends AgentEventEmitter {
     if (!apiKey) {
       throw new MissingApiKeyError();
     }
+    this.requestedFileStateDir =
+      config.runtime?.fileStateDir ??
+      process.env.QLING_FILE_STATE_DIR ??
+      DEFAULT_QLING_DIR;
     this.runtimeRootDir = path.resolve(
       config.runtime?.fileStateDir ??
         process.env.QLING_FILE_STATE_DIR ??
@@ -404,6 +417,13 @@ export class AgentLoop extends AgentEventEmitter {
       experimental: {
         streaming: config.experimental?.streaming ?? false,
       },
+      subagent: config.subagent
+        ? {
+            parentSessionId: config.subagent.parentSessionId,
+            role: config.subagent.role,
+            mcpRegistry: config.subagent.mcpRegistry,
+          }
+        : undefined,
     };
     if (EXPLICIT_ENABLE_VALUES.has(String(process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT ?? "").toLowerCase())) {
       this.config.tools = [...this.config.tools, ...ANCHORED_EDIT_TOOLS];
@@ -468,6 +488,11 @@ export class AgentLoop extends AgentEventEmitter {
       fileCacheDir: this.config.runtime?.fileCacheDir ?? this.runtimeRootDir,
       toolAllowlist: this.config.runtime?.toolAllowlist ?? null,
     });
+    this.runtimeServices.setParentScope(() => ({
+      sessionId: this.sessionId,
+      hookRunner: this.jsonHookRunner,
+      mcpRegistry: this.runtimeServices.getMcpRegistry(),
+    }));
     this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
 
@@ -492,6 +517,7 @@ export class AgentLoop extends AgentEventEmitter {
       stateDir: this.runtimeRootDir,
       workspaceDir: this.getWorkspaceDir(),
       sessionId: this.sessionId,
+      emitSessionStart: !this.config.subagent,
     });
 
     // v0.3 Sync dynamic discovery
@@ -649,48 +675,11 @@ export class AgentLoop extends AgentEventEmitter {
       this.otelTraceBridge = null;
     }
 
-    // MCP initialization
-    const mcpServersRaw = process.env.QLING_MCP_SERVERS;
-    if (mcpServersRaw) {
-      try {
-        const mcpConnTimeoutRaw = Number(process.env.QLING_MCP_CONNECTION_TIMEOUT_MS ?? "10000");
-        const mcpCallTimeoutRaw = Number(process.env.QLING_MCP_CALL_TIMEOUT_MS ?? "30000");
-        const mcpConnTimeout =
-          Number.isFinite(mcpConnTimeoutRaw) && mcpConnTimeoutRaw > 0 ? mcpConnTimeoutRaw : 10000;
-        const mcpCallTimeout =
-          Number.isFinite(mcpCallTimeoutRaw) && mcpCallTimeoutRaw > 0 ? mcpCallTimeoutRaw : 30000;
-        const servers = JSON.parse(mcpServersRaw) as Record<string, MCPServerConfig>;
-        const enabled = Object.values(servers).filter((s) => s.enabled);
-        if (enabled.length > 0) {
-          const registry = new MCPRegistry({
-            connection: mcpConnTimeout,
-            call: mcpCallTimeout,
-            maxOutputBytes: Number(process.env.QLING_MCP_MAX_OUTPUT_BYTES) || 20 * 1024,
-          });
-          for (const s of enabled) {
-            registry.registerServer(s);
-          }
-          this.runtimeServices.setMcpRegistry(registry);
-          const results = await registry.connectAll();
-          const allowedNames = this.config.runtime?.toolAllowlist
-            ? new Set(this.config.runtime.toolAllowlist)
-            : null;
-          const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools())
-            .filter((tool) => !allowedNames || allowedNames.has(tool.name));
-          if (mcpTools.length > 0) {
-            const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
-            this.config.tools = [
-              ...this.config.tools,
-              ...(exposure === "search"
-                ? MCP_CATALOG_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name))
-                : mcpTools),
-            ];
-            console.error("[MCP] Connected " + results.filter((r) => r.status === "connected").length + " servers, " + mcpTools.length + " tools");
-          }
-        }
-      } catch (err) {
-        console.error("[MCP] Init failed: " + (err as Error).message);
-      }
+    // MCP initialization. 子 agent 不新建连接；只有角色白名单显式包含 mcp__* 才复用父 registry。
+    if (this.config.subagent) {
+      this.inheritSubagentMcpTools(this.config.subagent);
+    } else {
+      await this.connectConfiguredMcpServers();
     }
 
     // Skills section registration
@@ -719,6 +708,70 @@ export class AgentLoop extends AgentEventEmitter {
     // Guard M2: content filter custom patterns
     if (this.guardConfig.content_filter?.custom_patterns?.length > 0) {
       setCustomPatterns(this.guardConfig.content_filter.custom_patterns);
+    }
+  }
+
+  private inheritSubagentMcpTools(subagent: NonNullable<AgentConfig["subagent"]>): void {
+    const role = normalizeSubAgentRole(subagent.role);
+    if (!roleAllowlistIncludesMcp(role)) return;
+    const registry = subagent.mcpRegistry;
+    if (!registry) return;
+    this.runtimeServices.setMcpRegistry(registry as MCPRegistry, { own: false });
+    const allowedNames = this.config.runtime?.toolAllowlist
+      ? new Set(this.config.runtime.toolAllowlist)
+      : null;
+    const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
+    const candidates = exposure === "search"
+      ? MCP_CATALOG_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name))
+      : mcpToolsToNativeDefinitions(registry.getAllTools())
+          .filter((tool) => !allowedNames || allowedNames.has(tool.name));
+    const visible = filterToolsForRole(candidates, role);
+    if (visible.length > 0) {
+      this.config.tools = [...this.config.tools, ...visible];
+    }
+  }
+
+  private async connectConfiguredMcpServers(): Promise<void> {
+    const mcpServersRaw = process.env.QLING_MCP_SERVERS;
+    if (!mcpServersRaw) return;
+    try {
+      const mcpConnTimeoutRaw = Number(process.env.QLING_MCP_CONNECTION_TIMEOUT_MS ?? "10000");
+      const mcpCallTimeoutRaw = Number(process.env.QLING_MCP_CALL_TIMEOUT_MS ?? "30000");
+      const mcpConnTimeout =
+        Number.isFinite(mcpConnTimeoutRaw) && mcpConnTimeoutRaw > 0 ? mcpConnTimeoutRaw : 10000;
+      const mcpCallTimeout =
+        Number.isFinite(mcpCallTimeoutRaw) && mcpCallTimeoutRaw > 0 ? mcpCallTimeoutRaw : 30000;
+      const servers = JSON.parse(mcpServersRaw) as Record<string, MCPServerConfig>;
+      const enabled = Object.values(servers).filter((s) => s.enabled);
+      if (enabled.length > 0) {
+        const registry = new MCPRegistry({
+          connection: mcpConnTimeout,
+          call: mcpCallTimeout,
+          maxOutputBytes: Number(process.env.QLING_MCP_MAX_OUTPUT_BYTES) || 20 * 1024,
+        });
+        for (const s of enabled) {
+          registry.registerServer(s);
+        }
+        this.runtimeServices.setMcpRegistry(registry);
+        const results = await registry.connectAll();
+        const allowedNames = this.config.runtime?.toolAllowlist
+          ? new Set(this.config.runtime.toolAllowlist)
+          : null;
+        const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools())
+          .filter((tool) => !allowedNames || allowedNames.has(tool.name));
+        if (mcpTools.length > 0) {
+          const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
+          this.config.tools = [
+            ...this.config.tools,
+            ...(exposure === "search"
+              ? MCP_CATALOG_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name))
+              : mcpTools),
+          ];
+          console.error("[MCP] Connected " + results.filter((r) => r.status === "connected").length + " servers, " + mcpTools.length + " tools");
+        }
+      }
+    } catch (err) {
+      console.error("[MCP] Init failed: " + (err as Error).message);
     }
   }
 
@@ -1074,6 +1127,13 @@ export class AgentLoop extends AgentEventEmitter {
       getRecoveryState: () => this.getRecoveryState(),
       reflectiveThink: (tc: ToolCall) => this.reflectiveThink(tc),
       checkAutoDream: () => this.checkAutoDream(),
+      checkpointStateDir: this.requestedFileStateDir,
+      checkpointSession: () => {
+        if (!canWriteMidTurnCheckpoint(this.requestedFileStateDir)) {
+          return Promise.resolve(undefined);
+        }
+        return this.checkpointSession();
+      },
     };
     const result = await runInnerIterationLoop(host);
     // write back mutable counters from host
@@ -1217,6 +1277,19 @@ export class AgentLoop extends AgentEventEmitter {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  getTools(): ToolDefinition[] {
+    return this.config.tools;
+  }
+
+  setTools(tools: ToolDefinition[]): void {
+    this.config.tools = tools.map((tool) => ({ ...tool }));
+    this.pipeline.setToolDefs(this.config.tools);
+  }
+
+  getJsonHookRunner(): JsonHookRunner | null {
+    return this.jsonHookRunner;
   }
 
   getSessionLeaseToken(): string | undefined {
@@ -1609,6 +1682,29 @@ export class AgentLoop extends AgentEventEmitter {
       this.hookManager.setWorkspaceDir(targetWorkspaceDir);
       this.sessionLease = targetLease;
       if (previous.lease && previous.lease !== targetLease) previous.lease.release();
+      try {
+        const reconciled = await reconcileInterruptedSession({
+          activeRun: this.activeRun,
+          recoveryStatus: this.getRecoveryState()?.status ?? null,
+          messages: this.messages,
+          traceStore: this.runTraceStore,
+        });
+        if (reconciled.interrupted) {
+          this.messages = reconciled.messages;
+          this.activeRun = reconciled.activeRun;
+          try {
+            await this.sessionRegistry.save(this.captureSessionSnapshot(snapshot.name));
+          } catch (error) {
+            console.warn(
+              `[interrupted-run] 中断恢复后的会话未能写回: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[interrupted-run] 中断检测失败，继续加载原会话: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       return patch.summary;
     } catch (error) {
       this.messages = previous.messages;

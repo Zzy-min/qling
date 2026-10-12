@@ -9,6 +9,7 @@ import {
   resetBackgroundTaskRegistryForTests,
   formatBgTaskLine,
   formatBgTaskNotify,
+  truncateBytes,
 } from "../../dist/runtime/background-tasks.js";
 import { runBash } from "../../dist/tools/bash.js";
 import { runBgList, runBgWait, runBgKill, runBgReconcile } from "../../dist/tools/bg-task.js";
@@ -563,4 +564,53 @@ test("kill waits for a SIGTERM-resistant child tree before reporting completion"
   } finally {
     await fs.rm(stateDir, { recursive: true, force: true });
   }
+});
+
+test("background output keeps the head and tail inside the same byte cap", async () => {
+  const maxBytes = 512 * 1024;
+  const head = `BG_HEAD\n${"H".repeat(70 * 1024)}`;
+  const tail = `${"T".repeat(64)}\nBG_TAIL`;
+  const text = `${head}${"M".repeat(600 * 1024)}${tail}`;
+  const clipped = truncateBytes(text, maxBytes);
+  assert.equal(truncateBytes("short output", maxBytes), "short output");
+  assert.ok(clipped.startsWith("BG_HEAD"));
+  assert.ok(clipped.endsWith("BG_TAIL"));
+  assert.match(clipped, /…\[省略 \d+ 字节\]…/);
+  assert.ok(Buffer.byteLength(clipped) <= maxBytes);
+  const emoji = `${"中".repeat(80_000)}🙂TAIL`;
+  const emojiMax = 96 * 1024;
+  const emojiClipped = truncateBytes(emoji, emojiMax);
+  assert.ok(Buffer.byteLength(emojiClipped) <= emojiMax);
+  assert.ok(emojiClipped.endsWith("🙂TAIL"));
+  assert.ok(emojiClipped.startsWith("中"));
+  assert.ok(Buffer.byteLength(truncateBytes(emoji, 48)) <= 48);
+
+  const reg = new BackgroundTaskRegistry({ persist: false });
+  const task = reg.startPromise({
+    label: "bounded-output",
+    cwd: process.cwd(),
+    promise: Promise.resolve(text),
+    timeoutMs: 10_000,
+  });
+  const done = await reg.wait(task.taskId, 5_000);
+  assert.ok(done.output.includes("BG_HEAD"));
+  assert.ok(done.output.includes("BG_TAIL"));
+  assert.match(done.output, /…\[省略 \d+ 字节\]…/);
+  assert.ok(Buffer.byteLength(done.output) <= maxBytes);
+
+  const script = `process.stdout.write("BG_HEAD\\n"); process.stdout.write("M".repeat(${600 * 1024})); process.stdout.write("\\nBG_TAIL");`;
+  const shell = new BackgroundTaskRegistry({ persist: false });
+  const running = shell.startShell({
+    command: "emit-bounded",
+    cwd: process.cwd(),
+    executable: process.execPath,
+    executableArgs: ["-e", script],
+    timeoutSec: 20,
+  });
+  const finished = await shell.wait(running.taskId, 15_000);
+  assert.equal(finished.status, "completed", finished.output);
+  assert.ok(finished.output.includes("BG_HEAD"));
+  assert.ok(finished.output.includes("BG_TAIL"));
+  assert.match(finished.output, /省略 \d+ 字节/);
+  assert.ok(Buffer.byteLength(finished.output) <= maxBytes);
 });

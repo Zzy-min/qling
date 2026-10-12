@@ -276,6 +276,7 @@ export const PLAN_MODE_HARD_DENY_TOOLS = [
   "subtask",
   "browser_fetch",
   "browser_act",
+  "use_tool",
 ] as const;
 
 export class HookManager {
@@ -388,8 +389,12 @@ export class HookManager {
   async runPreHook(ctx: ToolHookContext, sessionId?: string): Promise<HookResult> {
     // 0. Plan Mode：硬拒绝执行类工具；write/patch 仅允许计划目录
     if (this.planMode) {
-      if ((PLAN_MODE_HARD_DENY_TOOLS as readonly string[]).includes(ctx.toolName)) {
-        const reason = `Plan Mode: 工具 ${ctx.toolName} 已禁用（只读规划）。使用 /plan off 或 /plan approve 退出。`;
+      // 未声明 readOnlyHint 的 MCP 工具（ctx.isReadOnly=false）在 Plan Mode 下一律拒绝。
+      const isUnmarkedMcpTool = ctx.toolName.startsWith("mcp__") && !ctx.isReadOnly;
+      if ((PLAN_MODE_HARD_DENY_TOOLS as readonly string[]).includes(ctx.toolName) || isUnmarkedMcpTool) {
+        const reason = isUnmarkedMcpTool
+          ? `Plan Mode: MCP 工具 ${ctx.toolName} 未声明只读（annotations.readOnlyHint），已禁用（只读规划）。使用 /plan off 或 /plan approve 退出。`
+          : `Plan Mode: 工具 ${ctx.toolName} 已禁用（只读规划）。使用 /plan off 或 /plan approve 退出。`;
         if (this.guardConfig) {
           await appendGuardAudit(this.guardConfig, {
             tool: ctx.toolName,
@@ -570,6 +575,10 @@ export class ToolPipeline {
     this.sessionId = id;
   }
 
+  setToolDefs(toolDefs: ToolDefinition[]): void {
+    this.toolDefs = toolDefs;
+  }
+
   async execute(toolCall: ToolCall, runner: (tc: ToolCall) => Promise<ToolResult>): Promise<ToolResult> {
     const def = this.toolDefs.find((t) => t.name === toolCall.name);
     const hookCtx = this.buildHookContext(toolCall, def);
@@ -621,7 +630,7 @@ export class ToolPipeline {
       toolName: toolCall.name,
       arguments: toolCall.arguments,
       inputSchema: def?.parameters ?? {},
-      isReadOnly: def?.readOnly ?? toolCall.name !== "bash",
+      isReadOnly: def?.readOnly ?? (toolCall.name.startsWith("mcp__") ? false : toolCall.name !== "bash"),
       isDestructive: def?.destructive ?? /\b(rm|del|rmdir)\b/.test(cmd),
       isConcurrencySafe: def?.concurrencySafe ?? false,
       dangerousPatterns: matched,

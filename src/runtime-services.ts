@@ -3,6 +3,10 @@ import type { MCPRegistry } from "./mcp/registry.js";
 import type { LlmHttpClient } from "./providers/llm-client.js";
 import { createToolDispatcher, type ToolDispatcher } from "./tools/index.js";
 import { runWithRuntimeRoots } from "./runtime-paths.js";
+import {
+  runWithSubagentParentScope,
+  type SubagentParentScope,
+} from "./runtime/subagent-scope.js";
 
 export interface RuntimeConfigSnapshot {
   provider: string;
@@ -18,6 +22,8 @@ export class RuntimeServices {
   readonly config: Readonly<RuntimeConfigSnapshot>;
   readonly dispatchTool: ToolDispatcher;
   private registry: MCPRegistry | null = null;
+  private ownsRegistry = false;
+  private parentScope: (() => SubagentParentScope) | null = null;
 
   constructor(
     readonly provider: LlmHttpClient,
@@ -33,11 +39,20 @@ export class RuntimeServices {
       workspaceDir: config.workspaceDir,
       fileCacheDir: config.fileCacheDir,
       fileStateDir: config.stateDir,
-    }, () => dispatch(toolCall));
+    }, () => {
+      const scope = this.parentScope?.();
+      const exec = () => dispatch(toolCall);
+      return scope ? runWithSubagentParentScope(scope, exec) : exec();
+    });
   }
 
-  setMcpRegistry(registry: MCPRegistry | null): void {
+  setParentScope(provider: () => SubagentParentScope): void {
+    this.parentScope = provider;
+  }
+
+  setMcpRegistry(registry: MCPRegistry | null, options?: { own?: boolean }): void {
     this.registry = registry;
+    this.ownsRegistry = Boolean(registry) && options?.own !== false;
   }
 
   getMcpRegistry(): MCPRegistry | null {
@@ -46,7 +61,9 @@ export class RuntimeServices {
 
   async shutdown(): Promise<void> {
     const registry = this.registry;
+    const ownsRegistry = this.ownsRegistry;
     this.registry = null;
-    if (registry) await registry.disconnectAll();
+    this.ownsRegistry = false;
+    if (ownsRegistry && registry) await registry.disconnectAll();
   }
 }

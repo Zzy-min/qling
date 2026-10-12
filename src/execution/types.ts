@@ -7,7 +7,8 @@ export type ExecutionRunStatus =
   | "exhausted"
   | "succeeded"
   | "failed"
-  | "canceled";
+  | "canceled"
+  | "interrupted";
 
 export type FailureCategory =
   | "provider_transient"

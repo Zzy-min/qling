@@ -39,6 +39,12 @@ export interface Mission {
     totalToolCalls: number;
   };
 
+  /**
+   * Pid of the process that moved this mission to running.
+   * Legacy snapshots omit it and are treated as not alive on restart.
+   */
+  ownerPid?: number;
+
   /** 错误信息 */
   error?: {
     message: string;

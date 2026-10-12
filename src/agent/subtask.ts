@@ -18,6 +18,9 @@ import {
 import type { UsageLedgerSnapshot } from "../usage-ledger.js";
 import { getBackgroundTaskRegistry } from "../runtime/background-tasks.js";
 import { getRuntimeExecutionIdentity } from "../runtime-paths.js";
+import { getSubagentParentScope } from "../runtime/subagent-scope.js";
+import type { SubagentHookRunner } from "../runtime/subagent-scope.js";
+import { sealSubagentTools } from "./subtask-parallel.js";
 
 export interface SubtaskConfig {
   task: string;
@@ -76,9 +79,14 @@ export async function runWithTimeout<T>(
 
 export class SubtaskRunner {
   private parentConfig: Partial<AgentConfig>;
+  private hookRunner: SubagentHookRunner | null;
 
-  constructor(parentConfig: Partial<AgentConfig>) {
+  constructor(
+    parentConfig: Partial<AgentConfig>,
+    options?: { hookRunner?: SubagentHookRunner | null }
+  ) {
     this.parentConfig = parentConfig;
+    this.hookRunner = options?.hookRunner ?? null;
   }
 
   async run(config: SubtaskConfig): Promise<SubtaskResult> {
@@ -95,15 +103,34 @@ export class SubtaskRunner {
       this.parentConfig.tools?.filter((t) => t.name !== "subtask") ??
       [];
     const tools = filterToolsForRole(baseTools, role);
+    const parentScope = getSubagentParentScope();
+    const hookRunner = this.hookRunner ?? parentScope?.hookRunner ?? null;
+    const taskPreview = String(config.task ?? "").slice(0, 200);
 
     const subtaskConfig: Partial<AgentConfig> = {
       ...this.parentConfig,
       tools,
       maxIterations: maxIter,
+      subagent: {
+        parentSessionId:
+          parentScope?.sessionId ??
+          this.parentConfig.subagent?.parentSessionId ??
+          "parent",
+        role,
+        mcpRegistry: parentScope?.mcpRegistry ?? this.parentConfig.subagent?.mcpRegistry,
+      },
     };
 
     const subAgent = new AgentLoop(subtaskConfig);
     await subAgent.waitForInit();
+    subAgent.setTools(sealSubagentTools(subAgent.getTools(), role));
+    if (hookRunner) {
+      try {
+        await hookRunner.subagentStart({ role, task: taskPreview });
+      } catch {
+        // 生命周期钩子失败不跳过子任务，也不放宽工具白名单。
+      }
+    }
 
     const preamble = buildRoleSystemPreamble(role);
     let prompt = `${preamble}\n\n[子任务]\n${config.task}`;
@@ -160,6 +187,18 @@ export class SubtaskRunner {
           await subAgent.shutdown();
         } catch {
           // ignore shutdown errors
+        }
+      }
+      if (hookRunner) {
+        try {
+          await hookRunner.subagentStop({
+            role,
+            task: taskPreview,
+            success,
+            durationMs: Date.now() - start,
+          });
+        } catch {
+          // 同上：停止钩子失败不改变子任务结果。
         }
       }
     }

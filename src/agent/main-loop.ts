@@ -2,6 +2,7 @@
 // Agent 主循环：外层 transport 恢复 + 内层 turn 迭代（从 AgentLoop 抽出）
 // ============================================================
 
+import path from "node:path";
 import {
   resolveRoundTokenUsage,
   type ChatUsage,
@@ -218,6 +219,98 @@ export interface InnerLoopHost {
   getRecoveryState: () => RecoveryState | null;
   reflectiveThink: (tc: ToolCall) => Promise<{ decision: ReflectionDecision; reason: string }>;
   checkAutoDream: () => Promise<void>;
+  /** Persist messages after a tool batch. Must not be awaited by the loop. */
+  checkpointSession?: () => Promise<unknown>;
+  /**
+   * Directory for the mid-turn snapshot. Empty or relative values must not be
+   * resolved against cwd. Falls back to fileStateDir when omitted.
+   */
+  checkpointStateDir?: string | null;
+}
+
+const checkpointSkipNoted = { done: false };
+
+/** Absolute state dirs only. Empty/relative input is not joined onto process.cwd(). */
+export function canWriteMidTurnCheckpoint(stateDir: string | null | undefined): boolean {
+  if (typeof stateDir !== "string") return false;
+  const trimmed = stateDir.trim();
+  if (!trimmed || !path.isAbsolute(trimmed)) return false;
+  return true;
+}
+
+function noteMidTurnCheckpointSkipped(stateDir: string | null | undefined): void {
+  if (checkpointSkipNoted.done) return;
+  checkpointSkipNoted.done = true;
+  const shown = stateDir === undefined ? "<unset>" : JSON.stringify(stateDir);
+  console.debug(`[checkpoint] skip mid-turn snapshot; stateDir is not an absolute directory (${shown})`);
+}
+
+const checkpointWarningState = { warned: false };
+
+export function resolveCheckpointMinIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.QLING_CHECKPOINT_MIN_INTERVAL_MS;
+  if (raw === undefined || String(raw).trim() === "") return 2000;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return 2000;
+  return value;
+}
+
+/**
+ * After each tool batch, snapshot the session through the caller's save
+ * (atomic-json queue). Never awaits the write and warns at most once.
+ */
+export function createThrottledSessionCheckpoint(options: {
+  save: () => Promise<unknown>;
+  minIntervalMs: number;
+  now?: () => number;
+  warn?: (message: string) => void;
+  warningState?: { warned: boolean };
+  schedule?: (callback: () => void, delayMs: number) => { cancel(): void };
+}): { afterToolBatch(): void } {
+  const warningState = options.warningState ?? checkpointWarningState;
+  const now = () => (options.now ?? Date.now)();
+  const schedule = options.schedule ?? ((callback: () => void, delayMs: number) => {
+    const timer = setTimeout(callback, delayMs);
+    if (typeof timer.unref === "function") timer.unref();
+    return { cancel: () => clearTimeout(timer) };
+  });
+  let lastStartedAt = Number.NEGATIVE_INFINITY;
+  let pending: { cancel(): void } | null = null;
+
+  const warnOnce = (error: unknown) => {
+    if (warningState.warned) return;
+    warningState.warned = true;
+    const message = error instanceof Error ? error.message : String(error);
+    (options.warn ?? ((line: string) => console.warn(line)))(
+      `[checkpoint] 会话检查点写入失败（后续相同失败不再重复告警）: ${message}`,
+    );
+  };
+
+  const run = () => {
+    lastStartedAt = now();
+    try {
+      void Promise.resolve(options.save()).catch(warnOnce);
+    } catch (error) {
+      warnOnce(error);
+    }
+  };
+
+  return {
+    afterToolBatch() {
+      const elapsed = now() - lastStartedAt;
+      if (elapsed >= options.minIntervalMs) {
+        pending?.cancel();
+        pending = null;
+        run();
+        return;
+      }
+      if (pending) return;
+      pending = schedule(() => {
+        pending = null;
+        run();
+      }, options.minIntervalMs - elapsed);
+    },
+  };
 }
 
 async function saveCheckpointSafely(
@@ -248,6 +341,14 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
   const efficiency = new RunEfficiencyGuard({ initialState: host.initialProgressState });
   let autoCompactSuppressed = false;
   let compactionBudgetNotified = false;
+  const checkpointStateDir = host.checkpointStateDir ?? host.fileStateDir;
+  const checkpointScheduler = host.checkpointSession && canWriteMidTurnCheckpoint(checkpointStateDir)
+    ? createThrottledSessionCheckpoint({
+        minIntervalMs: resolveCheckpointMinIntervalMs(),
+        save: () => host.checkpointSession!(),
+      })
+    : null;
+  if (host.checkpointSession && !checkpointScheduler) noteMidTurnCheckpointSkipped(checkpointStateDir);
 
   for (let i = 0; i < host.maxIterations; i++) {
     host.turnCount++;
@@ -531,6 +632,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         sessionLeaseToken: host.sessionLeaseToken,
       }
     );
+    checkpointScheduler?.afterToolBatch();
     const failureSignal = efficiency.recordTools(observations);
     const progressSignal = efficiency.recordObservationProgress(observations);
     const efficiencyStop = failureSignal ?? progressSignal;

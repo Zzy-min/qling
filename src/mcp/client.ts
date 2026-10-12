@@ -103,6 +103,13 @@ export class MCPClient {
           name: t.name,
           description: t.description ?? "",
           inputSchema: t.inputSchema ?? {},
+          annotations:
+            t.annotations && typeof t.annotations === "object"
+              ? {
+                  readOnlyHint: t.annotations.readOnlyHint === true,
+                  destructiveHint: t.annotations.destructiveHint === true,
+                }
+              : undefined,
         }));
       }
 

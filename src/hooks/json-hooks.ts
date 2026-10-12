@@ -9,7 +9,9 @@ export type JsonHookEvent =
   | "SessionEnd"
   | "PreToolUse"
   | "PostToolUse"
-  | "PostToolUseFailure";
+  | "PostToolUseFailure"
+  | "SubagentStart"
+  | "SubagentStop";
 
 export interface JsonHookCommand {
   command: string;
@@ -85,6 +87,27 @@ export class JsonHookRunner {
 
   async sessionEnd(payload: { sessionId: string; status: string }): Promise<void> {
     await this.runEvent("SessionEnd", payload);
+  }
+
+  async subagentStart(payload: { role: string; task: string }): Promise<void> {
+    await this.runEvent("SubagentStart", {
+      role: payload.role,
+      task: String(payload.task ?? "").slice(0, 200),
+    });
+  }
+
+  async subagentStop(payload: {
+    role: string;
+    task: string;
+    success: boolean;
+    durationMs: number;
+  }): Promise<void> {
+    await this.runEvent("SubagentStop", {
+      role: payload.role,
+      task: String(payload.task ?? "").slice(0, 200),
+      success: payload.success,
+      durationMs: payload.durationMs,
+    });
   }
 
   private async runEvent(event: JsonHookEvent, payload: unknown): Promise<CommandOutcome[]> {
@@ -168,6 +191,8 @@ export async function installJsonHooks(options: {
   stateDir: string;
   workspaceDir: string;
   sessionId: string;
+  /** 子 agent 仍注册 Pre/PostToolUse，但不发 SessionStart。默认 true。 */
+  emitSessionStart?: boolean;
 }): Promise<JsonHookRunner | null> {
   if (process.env.QLING_JSON_HOOKS_ENABLED !== "true") return null;
   const manifestPath = path.resolve(
@@ -189,9 +214,11 @@ export async function installJsonHooks(options: {
   options.hookManager.register("PreToolUse", (context) => runner.runPre(context));
   options.hookManager.register("PostToolUse", (context, result) => runner.runPost(context, result));
   options.hookManager.register("PostToolUseFailure", (context, error) => runner.runFailure(context, error));
-  await runner.sessionStart({
-    sessionId: options.sessionId,
-    workspace: path.basename(options.workspaceDir),
-  });
+  if (options.emitSessionStart !== false) {
+    await runner.sessionStart({
+      sessionId: options.sessionId,
+      workspace: path.basename(options.workspaceDir),
+    });
+  }
   return runner;
 }

@@ -54,7 +54,8 @@ export type SyntheticReason =
   | "date_reminder"
   | "state_snapshot"
   | "run_side_effects"
-  | "history_repair";
+  | "history_repair"
+  | "interrupted_run";
 
 // --- Agent Config ---
 
@@ -90,6 +91,23 @@ export interface AgentConfig {
   experimental?: {
     /** Experimental text-token streaming; enabled only by the interactive chat entrypoint. */
     streaming: boolean;
+  };
+  /**
+   * 子 agent 标记。存在时 init 不发 SessionStart、不新建 MCP 连接。
+   * mcpRegistry 仅在角色白名单显式包含 mcp__* 时复用，且子 agent 不拥有其生命周期。
+   */
+  subagent?: {
+    parentSessionId: string;
+    role: string;
+    mcpRegistry?: {
+      getAllTools(): Array<{
+        serverName: string;
+        name: string;
+        description: string;
+        inputSchema: Record<string, unknown>;
+        annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+      }>;
+    };
   };
 }
 
@@ -335,6 +353,8 @@ export interface MCPServerConfig {
   transport?: "stdio" | "http";
   url?: string;
   headers?: Record<string, string>;
+  /** per-server 输出上限（字节），优先于 QLING_MCP_MAX_OUTPUT_BYTES。 */
+  max_output_bytes?: number;
 }
 
 // --- Subtask ---
