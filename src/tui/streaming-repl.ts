@@ -512,16 +512,23 @@ export class StreamingREPL {
           break;
         }
 
-        const goalResult = await this.goalController.afterTurn({
-          transcript: SessionGoalController.messagesToTranscript(this.agent.getMessagesSnapshot()),
-          stats: (() => {
-            const stats = this.agent.getSessionStats();
-            return {
-              turnCount: stats.turnCount,
-              tokens: stats.tokens,
-            };
-          })(),
-        });
+        let goalResult;
+        try {
+          goalResult = await this.goalController.afterTurn({
+            transcript: SessionGoalController.messagesToTranscript(this.agent.getMessagesSnapshot()),
+            stats: (() => {
+              const stats = this.agent.getSessionStats();
+              return {
+                turnCount: stats.turnCount,
+                tokens: stats.tokens,
+              };
+            })(),
+          });
+        } catch (err) {
+          this.ui.appendValidation("warn", `goal 评估失败: ${err instanceof Error ? err.message : String(err)}`);
+          currentPrompt = null;
+          break;
+        }
 
         if (goalResult.status === "continue" && goalResult.continuePrompt) {
           this.ui.appendValidation("warn", `goal 未达成: ${goalResult.reason ?? "条件未满足"}`);
@@ -533,6 +540,12 @@ export class StreamingREPL {
           this.ui.appendValidation("pass", `goal 已达成: ${goalResult.reason ?? "条件满足"}`);
         } else if (goalResult.status === "cleared") {
           this.ui.appendValidation("warn", `goal 已停止: ${goalResult.reason ?? "已清除"}`);
+        } else if (goalResult.status === "paused") {
+          this.ui.appendValidation("warn", `goal 已暂停: ${goalResult.reason ?? "已暂停"}。使用 /goal resume 恢复。`);
+        } else if (goalResult.status === "blocked") {
+          this.ui.appendValidation("warn", `goal 已阻塞: ${goalResult.reason ?? "已阻塞"}`);
+        } else if (goalResult.status === "evaluator_error") {
+          this.ui.appendValidation("warn", `goal 评估失败: ${goalResult.reason ?? "评估器不可用"}`);
         }
 
         currentPrompt = null;

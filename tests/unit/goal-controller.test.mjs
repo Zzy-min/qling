@@ -21,6 +21,7 @@ test("goal controller continues when evaluator says condition is unmet, then sto
       evaluate: async () => evaluations.shift(),
     },
     maxAutoTurns: 4,
+    stallThreshold: 2,
   });
   await controller.init();
   await controller.setGoal("所有 auth 测试通过", { turnCount: 2, tokens: 1000 }, { runner: "session" });
@@ -41,7 +42,7 @@ test("goal controller continues when evaluator says condition is unmet, then sto
   assert.equal(second.continuePrompt, null);
 });
 
-test("goal controller clears active goal when max auto turns is exceeded", async () => {
+test("goal controller pauses on the auto-turn budget instead of clearing the goal", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-controller-max-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-c", clock: () => 1_000 });
   const controller = new SessionGoalController({
@@ -51,6 +52,7 @@ test("goal controller clears active goal when max auto turns is exceeded", async
       evaluate: async () => ({ done: false, reason: "条件未满足" }),
     },
     maxAutoTurns: 1,
+    evidenceGoals: false,
   });
   await controller.init();
   await controller.setGoal("完成 lint", { turnCount: 5, tokens: 2000 }, { runner: "session" });
@@ -59,11 +61,12 @@ test("goal controller clears active goal when max auto turns is exceeded", async
     transcript: "assistant: 继续修复中",
     stats: { turnCount: 7, tokens: 2600 },
   });
-  assert.equal(result.status, "cleared");
+  assert.equal(result.status, "paused");
   assert.match(result.reason, /max auto turns/i);
 
   const snapshot = await manager.getGoalStatus();
-  assert.equal(snapshot.status, "cleared");
+  assert.equal(snapshot.status, "paused_budget");
+  assert.equal(snapshot.condition, "完成 lint");
 });
 
 test("goal controller ignores active goal owned by a different runner", async () => {

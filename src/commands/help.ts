@@ -26,6 +26,7 @@ export const HELP_LINES = [
   "/clear, /reset          - 清空当前对话上下文",
   "/compact [n] [主题]     - 压缩上下文；n=保留最近条数，可带主题焦点",
   "/goal [condition|clear] - 设定、查询或清除当前 session 的目标条件",
+  "/goal resume            - 把 paused_* 目标恢复为 active",
   "/goal daemon            - 查询 daemon runner 的 goal 状态",
   "/goal daemon clear      - 清理 daemon runner 的 goal",
   "/goal daemon <condition> - 将 goal 交由 qlingd 在后台持续推进",

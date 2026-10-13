@@ -324,7 +324,7 @@ const TOPICS: HelpTopic[] = [
     aliases: ["goal", "/goal", "目标", "/目标"],
     slashUsage: "/goal [status|set <condition>|clear|daemon ...]",
     cliUsage: "{bin} goal <status|set|clear>",
-    slashExamples: ["/goal status", "/goal set 所有测试通过", "/goal 所有测试通过", "/goal daemon clear", "/目标 设置 所有测试通过"],
+    slashExamples: ["/goal status", "/goal set 所有测试通过", "/goal 所有测试通过", "/goal daemon clear", "/goal resume", "/目标 设置 所有测试通过"],
     cliExamples: ["{bin} goal status", "{bin} goal set \"所有测试通过\"", "{bin} 目标 设置 \"所有测试通过\""],
     boundary: "本地保存目标条件和状态；不直接执行 destructive 操作。",
   },

@@ -1,8 +1,11 @@
 type GoalFetch = typeof fetch;
 
+export type GoalEvaluatorError = "network" | "timeout" | "no_key" | "unparseable";
+
 export interface GoalEvaluationResult {
   done: boolean;
   reason: string;
+  error?: GoalEvaluatorError;
 }
 
 export interface GoalEvaluatorOptions {
@@ -68,6 +71,7 @@ export class GoalEvaluator {
       return {
         done: false,
         reason: "goal evaluator 缺少 API key，无法确认条件达成",
+        error: "no_key",
       };
     }
 
@@ -100,11 +104,33 @@ ${input.transcript.slice(-12_000)}`;
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`goal evaluator http ${response.status}`);
+        return {
+          done: false,
+          reason: `goal evaluator http ${response.status}`,
+          error: "network",
+        };
       }
-      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      let data: { choices?: { message?: { content?: string } }[] };
+      try {
+        data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      } catch {
+        return {
+          done: false,
+          reason: "goal evaluator 返回了不可解析结果",
+          error: "unparseable",
+        };
+      }
       const content = data.choices?.[0]?.message?.content ?? "";
       return this.parse(content);
+    } catch (error) {
+      const reason = error instanceof Error && error.message ? error.message : "goal evaluator failed";
+      const name = error instanceof Error ? error.name : "";
+      const timedOut = name === "AbortError" || name === "TimeoutError" || /timeout|aborted/i.test(reason);
+      return {
+        done: false,
+        reason,
+        error: timedOut ? "timeout" : "network",
+      };
     } finally {
       clearTimeout(timer);
     }
@@ -112,9 +138,9 @@ ${input.transcript.slice(-12_000)}`;
 
   parse(raw: string): GoalEvaluationResult {
     try {
-      const parsed = JSON.parse(stripCodeFences(raw)) as GoalEvaluationResult;
+      const parsed = JSON.parse(stripCodeFences(raw)) as Partial<GoalEvaluationResult>;
       if (typeof parsed.done === "boolean" && typeof parsed.reason === "string") {
-        return parsed;
+        return { done: parsed.done, reason: parsed.reason };
       }
     } catch {
       // fall through
@@ -122,6 +148,7 @@ ${input.transcript.slice(-12_000)}`;
     return {
       done: false,
       reason: raw.trim() || "goal evaluator 返回了不可解析结果",
+      error: "unparseable",
     };
   }
 }
