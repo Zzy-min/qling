@@ -89,7 +89,7 @@ export interface AgentConfig {
     inspectDumpDir: string;
   };
   experimental?: {
-    /** Experimental text-token streaming; enabled only by the interactive chat entrypoint. */
+    /** Text-token streaming. Interactive chat follows streaming_chat; ACP enables it per session. */
     streaming: boolean;
   };
   /**

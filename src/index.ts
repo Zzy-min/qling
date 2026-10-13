@@ -1113,7 +1113,7 @@ async function main() {
       inspectDumpDir: loaded.config.logging.inspect_dump_dir,
     },
     experimental: {
-      // Headless, Mission and ACP remain complete-response by default.
+      // Headless and Mission stay complete-response. ACP opts into streaming below.
       streaming: decision.mode === "chat" && loaded.config.experimental.streaming_chat,
     },
   };
@@ -1126,6 +1126,7 @@ async function main() {
     }
     await runAcpStdioServer((cwd) => new AgentLoop({
       ...agentConfig,
+      experimental: { ...agentConfig.experimental, streaming: true },
       tools: buildToolRegistry({ staticEnabled }),
       runtime: {
         ...agentConfig.runtime!,
