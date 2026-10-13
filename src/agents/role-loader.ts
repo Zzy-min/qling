@@ -67,6 +67,11 @@ async function loadDirectory(
       const id = String(manifest.id ?? fallbackId).trim().toLowerCase();
       const baseRole = manifest.base_role ?? "explore";
       if (!id || !SUBAGENT_ROLES.includes(baseRole)) continue;
+      const existing = catalog.get(id);
+      if (source === "workspace" && existing?.source === "user") {
+        console.error(`[roles] 项目角色 "${id}" 与用户角色同名，已保留用户角色，未覆盖。`);
+        continue;
+      }
       const base = ROLE_DEFINITIONS[baseRole];
       const allowed = new Set(base.allowedTools);
       const requested = Array.isArray(manifest.allowed_tools)
@@ -98,11 +103,11 @@ export async function loadRoleCatalog(options: {
   const home = options.homeDir ?? os.homedir();
   const state = options.stateDir ?? path.join(home, ".qling");
   const workspace = options.workspaceDir ?? process.cwd();
-  // Later directories override earlier ones: workspace > user > builtin.
+  // Same precedence as skills: user > project > builtin. A project role
+  // never replaces a same-named user role. Untrusted workspaces skip project
+  // roles entirely; user and stateDir roles stay available.
   await loadDirectory(catalog, path.join(home, ".claude", "agents"), "user");
   await loadDirectory(catalog, path.join(state, "agents"), "user");
-  // Project agents follow the same trust gate as project skills. User and
-  // stateDir roles stay available in an untrusted workspace.
   if (isWorkspaceTrusted(workspace, { homeDir: home })) {
     await loadDirectory(catalog, path.join(workspace, ".claude", "agents"), "workspace");
     await loadDirectory(catalog, path.join(workspace, ".qling", "agents"), "workspace");
@@ -117,6 +122,6 @@ export function formatLoadedRoles(catalog: Map<string, LoadedRoleDefinition>): s
     lines.push(`  ${role.description}`);
     lines.push(`  基础角色: ${role.baseRole} · 可写: ${role.canWrite ? "是" : "否"}`);
   }
-  lines.push("", "可见角色均可调用；受信工作区定义覆盖用户定义，用户定义覆盖内置定义。未受信工作区不加载项目角色。");
+  lines.push("", "可见角色均可调用；同名时用户角色优先，项目角色不覆盖用户角色；用户角色与项目角色都覆盖内置定义。未受信工作区不加载项目角色。");
   return lines.join("\n");
 }

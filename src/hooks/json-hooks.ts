@@ -53,6 +53,8 @@ interface CommandOutcome {
   stderr: string;
   code: number | null;
   timedOut: boolean;
+  /** True when stdin JSON was shortened to the payload byte cap. */
+  payloadTruncated?: boolean;
 }
 
 interface PreparedCommand {
@@ -92,21 +94,258 @@ function utf8Prefix(text: string, maxBytes: number): string {
   return text.slice(0, end);
 }
 
-export function encodeHookPayload(payload: unknown, maxBytes: number): string {
-  const limit = Math.max(64, maxBytes);
-  const full = JSON.stringify(payload ?? null);
-  if (Buffer.byteLength(full, "utf8") <= limit) return full;
+const TRUNCATION_MARK = "…[truncated]";
+const PROTECTED_PAYLOAD_PATHS = new Set([
+  "hook_event_name",
+  "tool_name",
+  "context.toolName",
+  "context.toolCallId",
+  "context.sessionId",
+]);
+
+interface StringLeaf {
+  path: string;
+  bytes: number;
+  value: string;
+  protected: boolean;
+  assign: (next: string) => void;
+}
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function payloadLimit(maxBytes: number): number {
+  if (!Number.isFinite(maxBytes)) return 64;
+  return Math.max(64, Math.floor(maxBytes));
+}
+
+function isProtectedPayloadPath(path: string): boolean {
+  return PROTECTED_PAYLOAD_PATHS.has(path);
+}
+
+function withHookIdentity(event: JsonHookEvent, payload: unknown): unknown {
+  const base: Record<string, unknown> =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? { ...(payload as Record<string, unknown>) }
+      : { value: payload ?? null };
+  if (typeof base.hook_event_name !== "string" || base.hook_event_name.trim() === "") {
+    base.hook_event_name = event;
+  }
+  if (typeof base.tool_name !== "string" || base.tool_name.trim() === "") {
+    const name = toolNameOf(base);
+    if (name) base.tool_name = name;
+  }
+  return base;
+}
+
+function readPayloadIdentity(payload: unknown): { hookEvent?: string; toolName?: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const record = payload as Record<string, unknown>;
+  const hookEvent = typeof record.hook_event_name === "string" ? record.hook_event_name : undefined;
+  let toolName = typeof record.tool_name === "string" ? record.tool_name : undefined;
+  if (toolName === undefined) {
+    const context = record.context;
+    if (context && typeof context === "object" && !Array.isArray(context)) {
+      const name = (context as Record<string, unknown>).toolName;
+      if (typeof name === "string") toolName = name;
+    }
+  }
+  return { hookEvent, toolName };
+}
+
+function collectStringLeaves(value: unknown, path: string, out: StringLeaf[]): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectStringLeaves(item, `${path}[${index}]`, out));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const childPath = path ? `${path}.${key}` : key;
+    if (typeof child === "string") {
+      out.push({
+        path: childPath,
+        bytes: byteLength(child),
+        value: child,
+        protected: isProtectedPayloadPath(childPath),
+        assign: (next: string) => {
+          (value as Record<string, unknown>)[key] = next;
+        },
+      });
+      continue;
+    }
+    collectStringLeaves(child, childPath, out);
+  }
+}
+
+function shrinkLeaf(leaf: StringLeaf, overflow: number, extra: number): void {
+  const markBytes = byteLength(TRUNCATION_MARK);
+  const budget = Math.max(0, leaf.bytes - overflow - extra - markBytes - 8);
+  let next = "";
+  if (budget > 0) {
+    if (budget <= markBytes) next = utf8Prefix(leaf.value, budget);
+    else next = utf8Prefix(leaf.value, budget - markBytes) + TRUNCATION_MARK;
+  }
+  if (byteLength(next) >= leaf.bytes) {
+    next = leaf.bytes <= 1 ? "" : utf8Prefix(leaf.value, Math.max(0, Math.floor(leaf.bytes / 2)));
+    if (byteLength(next) >= leaf.bytes) next = "";
+  }
+  leaf.assign(next);
+}
+
+function shrinkLargestString(
+  working: Record<string, unknown>,
+  truncatedFields: string[],
+  overflow: number,
+  allowProtected: boolean,
+): boolean {
+  const leaves: StringLeaf[] = [];
+  collectStringLeaves(working, "", leaves);
+  const candidates = leaves.filter((leaf) => leaf.bytes > 0 && (allowProtected || !leaf.protected));
+  if (candidates.length === 0) return false;
+  candidates.sort((a, b) => b.bytes - a.bytes);
+  const target = candidates[0];
+  if (!target) return false;
+  const extra = truncatedFields.includes(target.path) ? 0 : byteLength(JSON.stringify(target.path)) + 1;
+  shrinkLeaf(target, overflow, extra);
+  if (!truncatedFields.includes(target.path)) truncatedFields.push(target.path);
+  return true;
+}
+
+function dropLargestUnprotected(working: Record<string, unknown>, truncatedFields: string[]): boolean {
+  const candidates: Array<{ bytes: number; path: string; remove: () => void }> = [];
+  const visit = (container: Record<string, unknown>, prefix: string) => {
+    for (const [key, value] of Object.entries(container)) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (path === "truncated" || path === "truncatedFields" || isProtectedPayloadPath(path)) continue;
+      if (path === "context" && value && typeof value === "object" && !Array.isArray(value)) {
+        visit(value as Record<string, unknown>, "context");
+        continue;
+      }
+      let bytes = 0;
+      try {
+        bytes = byteLength(JSON.stringify(value));
+      } catch {
+        bytes = Number.MAX_SAFE_INTEGER;
+      }
+      candidates.push({
+        bytes,
+        path,
+        remove: () => {
+          delete container[key];
+        },
+      });
+    }
+  };
+  visit(working, "");
+  candidates.sort((a, b) => b.bytes - a.bytes);
+  const target = candidates.find((candidate) => candidate.bytes > 0);
+  if (!target) return false;
+  target.remove();
+  if (!truncatedFields.includes(target.path)) truncatedFields.push(target.path);
+  return true;
+}
+
+function previewFallback(
+  identity: { hookEvent?: string; toolName?: string },
+  full: string,
+  limit: number,
+): string {
+  let hookEvent = identity.hookEvent;
+  let toolName = identity.toolName;
   let preview = utf8Prefix(full, limit);
-  let encoded = JSON.stringify({ truncated: true, preview });
-  while (Buffer.byteLength(encoded, "utf8") > limit && preview.length > 0) {
+  const build = (includePreview: boolean) => {
+    const body: Record<string, unknown> = { truncated: true };
+    if (hookEvent !== undefined) body.hook_event_name = hookEvent;
+    if (toolName !== undefined) body.tool_name = toolName;
+    if (includePreview) body.preview = preview;
+    return JSON.stringify(body);
+  };
+  let encoded = build(true);
+  while (byteLength(encoded) > limit && preview.length > 0) {
     const step = Math.max(1, Math.ceil(preview.length / 8));
-    preview = utf8Prefix(preview.slice(0, preview.length - step), limit);
-    encoded = JSON.stringify({ truncated: true, preview });
+    preview = utf8Prefix(preview.slice(0, Math.max(0, preview.length - step)), limit);
+    encoded = build(true);
   }
-  if (Buffer.byteLength(encoded, "utf8") > limit) {
-    return JSON.stringify({ truncated: true, preview: "" });
+  if (byteLength(encoded) > limit) {
+    preview = "";
+    encoded = build(false);
   }
-  return encoded;
+  const shrinkIdentity = () => {
+    const eventBytes = hookEvent ? byteLength(hookEvent) : 0;
+    const toolBytes = toolName ? byteLength(toolName) : 0;
+    if (toolBytes >= eventBytes && toolName) {
+      const step = Math.max(1, Math.ceil(toolBytes / 8));
+      toolName = utf8Prefix(toolName, Math.max(0, toolBytes - step));
+      return;
+    }
+    if (hookEvent) {
+      const step = Math.max(1, Math.ceil(Math.max(1, eventBytes) / 8));
+      hookEvent = utf8Prefix(hookEvent, Math.max(0, eventBytes - step));
+    }
+  };
+  while (byteLength(encoded) > limit && ((hookEvent?.length ?? 0) > 0 || (toolName?.length ?? 0) > 0)) {
+    shrinkIdentity();
+    encoded = build(false);
+  }
+  if (byteLength(encoded) <= limit) return encoded;
+  const bare = JSON.stringify({ truncated: true, preview: "" });
+  if (byteLength(bare) <= limit) return bare;
+  return utf8Prefix(bare, limit);
+}
+
+function encodeHookPayloadDetailed(payload: unknown, maxBytes: number): { encoded: string; truncated: boolean } {
+  const limit = payloadLimit(maxBytes);
+  let full: string;
+  try {
+    full = JSON.stringify(payload ?? null);
+  } catch {
+    return { encoded: previewFallback({}, "null", limit), truncated: true };
+  }
+  if (byteLength(full) <= limit) return { encoded: full, truncated: false };
+
+  const identity = readPayloadIdentity(payload);
+  let working: Record<string, unknown>;
+  try {
+    const cloned = JSON.parse(full) as unknown;
+    working = cloned && typeof cloned === "object" && !Array.isArray(cloned)
+      ? cloned as Record<string, unknown>
+      : { value: cloned };
+  } catch {
+    return { encoded: previewFallback(identity, full, limit), truncated: true };
+  }
+
+  const truncatedFields: string[] = [];
+  const materialize = (includeFields: boolean): string => {
+    const body: Record<string, unknown> = { ...working, truncated: true };
+    if (includeFields) body.truncatedFields = truncatedFields;
+    return JSON.stringify(body);
+  };
+
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const encoded = materialize(true);
+    const overflow = byteLength(encoded) - limit;
+    if (overflow <= 0) return { encoded, truncated: true };
+    if (!shrinkLargestString(working, truncatedFields, overflow, false)) break;
+  }
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const encoded = materialize(true);
+    if (byteLength(encoded) <= limit) return { encoded, truncated: true };
+    if (!dropLargestUnprotected(working, truncatedFields)) break;
+  }
+
+  // Short identity fields (hook_event_name, tool_name, context.toolName, …)
+  // are never blanked to make a structural payload fit. If they alone cannot
+  // fit, the preview fallback keeps those keys and shortens only as needed.
+  const withFields = materialize(true);
+  if (byteLength(withFields) <= limit) return { encoded: withFields, truncated: true };
+  const withoutFields = materialize(false);
+  if (byteLength(withoutFields) <= limit) return { encoded: withoutFields, truncated: true };
+  return { encoded: previewFallback(identity, full, limit), truncated: true };
+}
+
+export function encodeHookPayload(payload: unknown, maxBytes: number): string {
+  return encodeHookPayloadDetailed(payload, maxBytes).encoded;
 }
 
 function hookName(entry: JsonHookCommand | undefined): string {
@@ -286,10 +525,11 @@ export class JsonHookRunner {
     event: JsonHookEvent,
     payload: unknown
   ): Promise<{ outcomes: CommandOutcome[]; preFloor?: HookResult }> {
+    const enriched = withHookIdentity(event, payload);
     const commands = this.manifest.events?.[event] ?? [];
     const outcomes: CommandOutcome[] = [];
     let preFloor: HookResult | undefined;
-    const toolName = TOOL_EVENTS.has(event) ? toolNameOf(payload) : null;
+    const toolName = TOOL_EVENTS.has(event) ? toolNameOf(enriched) : null;
     const notePreFloor = (result: HookResult) => {
       if (!preFloor || decisionRank(result.decision) > decisionRank(preFloor.decision)) {
         preFloor = result;
@@ -332,11 +572,19 @@ export class JsonHookRunner {
       }
       if (prepared.matcher && !matcherAllows(prepared.matcher, toolName)) continue;
       try {
-        const outcome = await runCommand(prepared.entry, payload, {
+        const outcome = await runCommand(prepared.entry, enriched, {
           ...this.options,
           maxPayloadBytes: this.maxPayloadBytes,
         });
         outcomes.push(outcome);
+        if (event === "PreToolUse" && outcome.payloadTruncated) {
+          notePreFloor({
+            decision: "ask",
+            additionalContexts: [
+              "JSON PreToolUse payload was truncated; explicit approval is required.",
+            ],
+          });
+        }
         await this.audit(event, command.command, outcome);
       } catch (error) {
         const outcome: CommandOutcome = {
@@ -408,7 +656,31 @@ async function runCommand(
 ): Promise<CommandOutcome> {
   return new Promise((resolve) => {
     if (!entry?.command || typeof entry.command !== "string") {
-      resolve({ ok: false, stdout: "", stderr: "invalid command", code: null, timedOut: false });
+      resolve({
+        ok: false,
+        stdout: "",
+        stderr: "invalid command",
+        code: null,
+        timedOut: false,
+        payloadTruncated: false,
+      });
+      return;
+    }
+    let encoded = "";
+    let payloadTruncated = false;
+    try {
+      const detailed = encodeHookPayloadDetailed(payload, options.maxPayloadBytes);
+      encoded = detailed.encoded;
+      payloadTruncated = detailed.truncated;
+    } catch (error) {
+      resolve({
+        ok: false,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        code: null,
+        timedOut: false,
+        payloadTruncated: true,
+      });
       return;
     }
     const child = spawn(entry.command, Array.isArray(entry.args) ? entry.args.map(String) : [], {
@@ -439,13 +711,13 @@ async function runCommand(
       stderr = byteLimited(stderr + chunk.toString("utf8"), options.maxOutputBytes);
     });
     child.on("error", (error) => {
-      finish({ ok: false, stdout, stderr: error.message, code: null, timedOut });
+      finish({ ok: false, stdout, stderr: error.message, code: null, timedOut, payloadTruncated });
     });
     child.on("close", (code) => {
-      finish({ ok: !timedOut && code === 0, stdout, stderr, code, timedOut });
+      finish({ ok: !timedOut && code === 0, stdout, stderr, code, timedOut, payloadTruncated });
     });
     try {
-      child.stdin.end(encodeHookPayload(payload, options.maxPayloadBytes));
+      child.stdin.end(encoded);
     } catch (error) {
       child.kill();
       finish({
@@ -454,6 +726,7 @@ async function runCommand(
         stderr: error instanceof Error ? error.message : String(error),
         code: null,
         timedOut,
+        payloadTruncated,
       });
     }
   });

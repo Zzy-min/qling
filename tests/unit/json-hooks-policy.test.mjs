@@ -300,7 +300,7 @@ test("installJsonHooks reads the stateDir disabled-hooks list", async () => {
   }
 });
 
-test("stdin payload over 128KB is replaced by a truncated preview", async () => {
+test("300KB arguments keep tool_name and hook_event_name within the payload cap", async () => {
   const dir = await mkdtemp(join(tmpdir(), "qling-hook-payload-"));
   const prev = process.env.QLING_JSON_HOOKS_MAX_PAYLOAD_BYTES;
   try {
@@ -308,26 +308,100 @@ test("stdin payload over 128KB is replaced by a truncated preview", async () => 
     assert.equal(jsonHooksMaxPayloadBytes({}), 128 * 1024);
     const payloadPath = join(dir, "stdin.txt");
     const script = join(dir, "dump.mjs");
-    await writeFile(script, `import { writeFileSync } from "node:fs"; let raw = ""; process.stdin.on("data", (c) => { raw += c; }); process.stdin.on("end", () => writeFileSync(${JSON.stringify(payloadPath)}, raw));\n`);
+    await writeFile(script, `import { writeFileSync } from "node:fs"; let raw = ""; process.stdin.on("data", (c) => { raw += c; }); process.stdin.on("end", () => { writeFileSync(${JSON.stringify(payloadPath)}, raw); console.log(JSON.stringify({ decision: "allow" })); });\n`);
     const runner = await runnerFor(dir, {
       PreToolUse: [{ command: process.execPath, args: [script] }],
     }, { maxPayloadBytes: 128 * 1024 });
     const huge = `测${"A".repeat(300 * 1024)}ENDMARKER_SHOULD_DROP`;
     const result = await runner.runPre(ctx("bash", { blob: huge }));
-    assert.equal(result.decision, "allow");
+    assert.equal(result.decision, "ask");
+    assert.match(result.additionalContexts.join("\n"), /truncated/);
     const stdin = await readFile(payloadPath);
     assert.ok(stdin.byteLength <= 128 * 1024);
-    const parsed = JSON.parse(stdin.toString("utf8"));
+    const text = stdin.toString("utf8");
+    const parsed = JSON.parse(text);
     assert.equal(parsed.truncated, true);
-    assert.equal(typeof parsed.preview, "string");
-    assert.match(parsed.preview, /^\{/);
-    assert.doesNotMatch(parsed.preview, /ENDMARKER_SHOULD_DROP/);
-    assert.equal(stdin.toString("utf8").includes("\uFFFD"), false);
-    const encoded = encodeHookPayload({ blob: huge }, 128 * 1024);
+    assert.equal(parsed.hook_event_name, "PreToolUse");
+    assert.equal(parsed.tool_name, "bash");
+    assert.equal(parsed.context.toolName, "bash");
+    assert.equal(typeof parsed.context.arguments.blob, "string");
+    assert.ok(parsed.context.arguments.blob.length < huge.length);
+    assert.ok(Array.isArray(parsed.truncatedFields));
+    assert.ok(parsed.truncatedFields.some((field) => String(field).includes("blob")));
+    assert.equal(text.includes("ENDMARKER_SHOULD_DROP"), false);
+    assert.equal(text.includes("\uFFFD"), false);
+    const encoded = encodeHookPayload({
+      hook_event_name: "PreToolUse",
+      tool_name: "bash",
+      context: { toolName: "bash", arguments: { blob: huge } },
+    }, 128 * 1024);
     assert.ok(Buffer.byteLength(encoded, "utf8") <= 128 * 1024);
+    const direct = JSON.parse(encoded);
+    assert.equal(direct.truncated, true);
+    assert.equal(direct.hook_event_name, "PreToolUse");
+    assert.equal(direct.tool_name, "bash");
   } finally {
     if (prev === undefined) delete process.env.QLING_JSON_HOOKS_MAX_PAYLOAD_BYTES;
     else process.env.QLING_JSON_HOOKS_MAX_PAYLOAD_BYTES = prev;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("truncated PreToolUse fails closed at ask but a hook deny still wins", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-hook-trunc-decision-"));
+  try {
+    const allow = join(dir, "allow.mjs");
+    const deny = join(dir, "deny.mjs");
+    await writeFile(allow, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ decision: 'allow' })));\n");
+    await writeFile(deny, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ decision: 'deny', blockingError: 'hook deny' })));\n");
+    const huge = "B".repeat(300 * 1024);
+    const allowed = await runnerFor(dir, {
+      PreToolUse: [{ name: "allow-huge", command: process.execPath, args: [allow] }],
+    }, { maxPayloadBytes: 128 * 1024 });
+    const asked = await allowed.runPre(ctx("bash", { blob: huge }));
+    assert.equal(asked.decision, "ask");
+    assert.match(asked.additionalContexts.join("\n"), /truncated/);
+    const deniedRunner = await runnerFor(dir, {
+      PreToolUse: [{ name: "deny-huge", command: process.execPath, args: [deny] }],
+    }, { maxPayloadBytes: 128 * 1024 });
+    const denied = await deniedRunner.runPre(ctx("write", { blob: huge }));
+    assert.equal(denied.decision, "deny");
+    assert.match(denied.blockingError, /hook deny/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("untruncated PreToolUse keeps allow and deny and adds hook identity", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-hook-small-payload-"));
+  try {
+    const payloadPath = join(dir, "stdin.txt");
+    const script = join(dir, "echo.mjs");
+    await writeFile(script, `import { writeFileSync } from "node:fs"; let raw = ""; process.stdin.on("data", (c) => { raw += c; }); process.stdin.on("end", () => { writeFileSync(${JSON.stringify(payloadPath)}, raw); console.log(process.argv[2]); });\n`);
+    const allowBody = JSON.stringify({ decision: "allow" });
+    const denyBody = JSON.stringify({ decision: "deny", blockingError: "hook deny" });
+    const allowRunner = await runnerFor(dir, {
+      PreToolUse: [{ command: process.execPath, args: [script, allowBody] }],
+    }, { maxPayloadBytes: 128 * 1024 });
+    const allowed = await allowRunner.runPre(ctx("read", { path: "notes.txt" }));
+    assert.equal(allowed.decision, "allow");
+    const allowPayload = JSON.parse(await readFile(payloadPath, "utf8"));
+    assert.equal(allowPayload.hook_event_name, "PreToolUse");
+    assert.equal(allowPayload.tool_name, "read");
+    assert.equal(allowPayload.context.toolName, "read");
+    assert.equal(allowPayload.context.arguments.path, "notes.txt");
+    assert.equal(allowPayload.truncated, undefined);
+    const denyRunner = await runnerFor(dir, {
+      PreToolUse: [{ command: process.execPath, args: [script, denyBody] }],
+    }, { maxPayloadBytes: 128 * 1024 });
+    const denied = await denyRunner.runPre(ctx("bash", { cmd: "echo hi" }));
+    assert.equal(denied.decision, "deny");
+    assert.match(denied.blockingError, /hook deny/);
+    const denyPayload = JSON.parse(await readFile(payloadPath, "utf8"));
+    assert.equal(denyPayload.truncated, undefined);
+    assert.equal(denyPayload.tool_name, "bash");
+    assert.equal(denyPayload.hook_event_name, "PreToolUse");
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
