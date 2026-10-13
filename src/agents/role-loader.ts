@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { readdir, readFile } from "node:fs/promises";
 import YAML from "yaml";
+import { isWorkspaceTrusted } from "../guard/workspace-trust.js";
 import {
   ROLE_DEFINITIONS,
   SUBAGENT_ROLES,
@@ -100,8 +101,12 @@ export async function loadRoleCatalog(options: {
   // Later directories override earlier ones: workspace > user > builtin.
   await loadDirectory(catalog, path.join(home, ".claude", "agents"), "user");
   await loadDirectory(catalog, path.join(state, "agents"), "user");
-  await loadDirectory(catalog, path.join(workspace, ".claude", "agents"), "workspace");
-  await loadDirectory(catalog, path.join(workspace, ".qling", "agents"), "workspace");
+  // Project agents follow the same trust gate as project skills. User and
+  // stateDir roles stay available in an untrusted workspace.
+  if (isWorkspaceTrusted(workspace, { homeDir: home })) {
+    await loadDirectory(catalog, path.join(workspace, ".claude", "agents"), "workspace");
+    await loadDirectory(catalog, path.join(workspace, ".qling", "agents"), "workspace");
+  }
   return catalog;
 }
 
@@ -112,6 +117,6 @@ export function formatLoadedRoles(catalog: Map<string, LoadedRoleDefinition>): s
     lines.push(`  ${role.description}`);
     lines.push(`  基础角色: ${role.baseRole} · 可写: ${role.canWrite ? "是" : "否"}`);
   }
-  lines.push("", "可见角色均可调用；工作区定义覆盖用户定义，用户定义覆盖内置定义。");
+  lines.push("", "可见角色均可调用；受信工作区定义覆盖用户定义，用户定义覆盖内置定义。未受信工作区不加载项目角色。");
   return lines.join("\n");
 }

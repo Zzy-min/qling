@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRoleCatalog } from "../../dist/agents/role-loader.js";
+import { trustWorkspace } from "../../dist/guard/workspace-trust.js";
 
 test("role catalog precedence is workspace over user over built-in", async () => {
   const root = await mkdtemp(join(tmpdir(), "qling-roles-"));
@@ -17,6 +18,7 @@ test("role catalog precedence is workspace over user over built-in", async () =>
     title: "user",
     base_role: "explore",
   }));
+  await trustWorkspace(workspace, { homeDir: home });
   await writeFile(join(workspace, ".qling", "agents", "custom.md"), [
     "---",
     "id: custom",

@@ -41,6 +41,7 @@ import type { ProjectProfile } from "../runtime/project-profile.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
 import { repairHistory } from "../context-history-repair.js";
 import { resolveCostBudgetSignal } from "../cost-budget.js";
+import { stopHookMaxContinuations } from "../hooks/json-hooks.js";
 
 export interface TurnTelemetry {
   turn: number;
@@ -219,6 +220,11 @@ export interface InnerLoopHost {
   getRecoveryState: () => RecoveryState | null;
   reflectiveThink: (tc: ToolCall) => Promise<{ decision: ReflectionDecision; reason: string }>;
   checkAutoDream: () => Promise<void>;
+  /** Stop hooks are fail-open. Absent runner means the turn ends normally. */
+  runStopHook?: (input: {
+    lastAssistantText: string;
+    stopHookActive: boolean;
+  }) => Promise<{ blocked?: boolean; reason?: string }>;
   /** Persist messages after a tool batch. Must not be awaited by the loop. */
   checkpointSession?: () => Promise<unknown>;
   /**
@@ -327,6 +333,36 @@ async function saveCheckpointSafely(
   }
 }
 
+async function resolveStopHookGate(
+  host: InnerLoopHost,
+  content: string,
+  continuations: number
+): Promise<
+  | { action: "stop" }
+  | { action: "continue"; continuations: number; reason: string }
+  | { action: "force"; notice: string }
+> {
+  if (!host.runStopHook) return { action: "stop" };
+  const max = stopHookMaxContinuations();
+  if (continuations >= max) {
+    return {
+      action: "force",
+      notice: `Stop hook 续跑已达每轮上限 ${max}（QLING_STOP_HOOK_MAX_CONTINUATIONS），本次强制结束。`,
+    };
+  }
+  try {
+    const decision = await host.runStopHook({
+      lastAssistantText: String(content ?? "").slice(0, 2000),
+      stopHookActive: continuations > 0,
+    });
+    if (!decision?.blocked) return { action: "stop" };
+    const reason = String(decision.reason ?? "").slice(0, 10_000) || "Stop hook 要求继续。";
+    return { action: "continue", continuations: continuations + 1, reason };
+  } catch {
+    return { action: "stop" };
+  }
+}
+
 /**
  * Inner maxIterations loop: compact → prompt → chat → tools → verify.
  * Mutates host.messages / counters / turnCount in place.
@@ -349,6 +385,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       })
     : null;
   if (host.checkpointSession && !checkpointScheduler) noteMidTurnCheckpointSkipped(checkpointStateDir);
+  let stopContinuations = 0;
 
   for (let i = 0; i < host.maxIterations; i++) {
     host.turnCount++;
@@ -528,7 +565,19 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       if (host.sessionLeaseToken) {
         assertSessionLeaseToken(host.fileStateDir, host.sessionId, host.sessionLeaseToken);
       }
-      host.knowledgeAdapter.onAssistantMessage(content);
+      const stopGate = await resolveStopHookGate(host, content, stopContinuations);
+      if (stopGate.action === "continue") {
+        stopContinuations = stopGate.continuations;
+        host.messages.push({ role: "user", content: stopGate.reason });
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        continue;
+      }
+      let finalText = content ?? "";
+      if (stopGate.action === "force") {
+        console.error(stopGate.notice);
+        finalText = finalText ? `${finalText}\n\n${stopGate.notice}` : stopGate.notice;
+      }
+      host.knowledgeAdapter.onAssistantMessage(finalText);
       await host.checkAutoDream();
       await host.knowledgeAdapter.onTurnEnd(host.turnCount);
       const totals = logTurnTelemetry(
@@ -544,7 +593,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       host.toolCallTotal = totals.toolCallTotal;
       host.toolFailureTotal = totals.toolFailureTotal;
       host.executionEventBus.completeAttempt(runId, "succeeded");
-      return { status: "succeeded", text: content };
+      return { status: "succeeded", text: finalText };
     }
 
     console.error("\n🔧 执行 " + tool_calls.length + " 个工具...\n");

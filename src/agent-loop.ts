@@ -79,6 +79,7 @@ import type { ExecutionEvent, RecoveryState, RunOutcome } from "./execution/type
 import { UsageLedger } from "./usage-ledger.js";
 import type { UsageLedgerSnapshot } from "./usage-ledger.js";
 import { installJsonHooks, type JsonHookRunner } from "./hooks/json-hooks.js";
+import { claimUntrustedWorkspaceHint } from "./guard/workspace-trust.js";
 import { loadRoleCatalog } from "./agents/role-loader.js";
 import {
   filterToolsForRole,
@@ -683,10 +684,15 @@ export class AgentLoop extends AgentEventEmitter {
     }
 
     // Skills section registration
+    const workspaceForTrust = this.getWorkspaceDir();
+    const trustHint = claimUntrustedWorkspaceHint(workspaceForTrust);
+    if (trustHint) console.error(trustHint);
     try {
-      const skillDirs = getSkillDirs();
+      const skillDirs = getSkillDirs({ cwd: workspaceForTrust });
       const skills = await listSkills(skillDirs);
-      this.sectionRegistry.register(buildSkillsSection(skills));
+      const section = buildSkillsSection(skills);
+      if (trustHint) section.content = `${section.content}\n\n${trustHint}`;
+      this.sectionRegistry.register(section);
     } catch {
       // ignore
     }
@@ -1127,6 +1133,10 @@ export class AgentLoop extends AgentEventEmitter {
       getRecoveryState: () => this.getRecoveryState(),
       reflectiveThink: (tc: ToolCall) => this.reflectiveThink(tc),
       checkAutoDream: () => this.checkAutoDream(),
+      runStopHook: (input: { lastAssistantText: string; stopHookActive: boolean }) => {
+        if (!this.jsonHookRunner) return Promise.resolve({ blocked: false });
+        return this.jsonHookRunner.runStop(input);
+      },
       checkpointStateDir: this.requestedFileStateDir,
       checkpointSession: () => {
         if (!canWriteMidTurnCheckpoint(this.requestedFileStateDir)) {

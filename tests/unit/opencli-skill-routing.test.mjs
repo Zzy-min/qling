@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,7 +64,11 @@ test("listSkills discovers opencli from package skills path", async () => {
 test("runSkill loads opencli body with decision tree", async () => {
   clearSkillCache();
   const prev = process.cwd();
+  const prevHome = process.env.QLING_HOME;
+  const home = await mkdtemp(join(tmpdir(), "qling-opencli-home-"));
   try {
+    await mkdir(home, { recursive: true });
+    process.env.QLING_HOME = home;
     process.chdir(repoRoot);
     const result = await runSkill({ name: "opencli" });
     assert.notEqual(result.is_error, true, result.output);
@@ -70,6 +76,9 @@ test("runSkill loads opencli body with decision tree", async () => {
     assert.match(result.output, /url_fetch/);
   } finally {
     process.chdir(prev);
+    if (prevHome === undefined) delete process.env.QLING_HOME;
+    else process.env.QLING_HOME = prevHome;
+    await rm(home, { recursive: true, force: true });
     clearSkillCache();
   }
 });

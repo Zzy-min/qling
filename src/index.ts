@@ -826,7 +826,35 @@ async function main() {
   }
 
   if (decision.mode === "hooks") {
+    const [sub, name] = decision.subArgs;
+    if (sub === "disable" || sub === "enable") {
+      const { disableHook, enableHook } = await import("./hooks/disabled-hooks.js");
+      if (!name || !name.trim() || name.trim().startsWith("#")) {
+        console.error(`用法: qling hooks ${sub} <name>`);
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        if (sub === "disable") await disableHook(stateDir, name);
+        else await enableHook(stateDir, name);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+        return;
+      }
+      console.log(sub === "disable" ? `已禁用 hook: ${name.trim()}` : `已启用 hook: ${name.trim()}`);
+      return;
+    }
     console.log(formatLocalHooksReport(buildLocalHooksReport(loaded.config.guard)).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "trust" || decision.mode === "untrust") {
+    const { runTrustCommand, runUntrustCommand } = await import("./cli/trust-control.js");
+    const code = await (decision.mode === "trust" ? runTrustCommand : runUntrustCommand)(decision.subArgs, {
+      cwd: loaded.config.runtime.workspace_dir ?? process.cwd(),
+    });
+    if (code !== 0) process.exitCode = code;
     return;
   }
 

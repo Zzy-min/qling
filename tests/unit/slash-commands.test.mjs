@@ -41,12 +41,21 @@ async function withTempDir(fn) {
 async function withSkillWorkspace(fn) {
   const dir = await mkdtemp(join(tmpdir(), "qling-slash-skill-"));
   const previousCwd = process.cwd();
+  const prevTrust = process.env.QLING_TRUST_ALL_WORKSPACES;
+  const prevHome = process.env.QLING_HOME;
   try {
+    process.env.QLING_HOME = join(dir, "home");
+    process.env.QLING_TRUST_ALL_WORKSPACES = "true";
+    await mkdir(process.env.QLING_HOME, { recursive: true });
     process.chdir(dir);
     await mkdir(join(dir, "skills"), { recursive: true });
     await fn(dir);
   } finally {
     process.chdir(previousCwd);
+    if (prevTrust === undefined) delete process.env.QLING_TRUST_ALL_WORKSPACES;
+    else process.env.QLING_TRUST_ALL_WORKSPACES = prevTrust;
+    if (prevHome === undefined) delete process.env.QLING_HOME;
+    else process.env.QLING_HOME = prevHome;
     await rm(dir, { recursive: true, force: true });
     clearSkillCache();
   }

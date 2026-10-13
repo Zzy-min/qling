@@ -115,6 +115,14 @@ export interface QlingConfig {
     timeout_ms: number;
     max_output_bytes: number;
   };
+  /**
+   * Env QLING_TRUST_ALL_WORKSPACES only. Default false.
+   * Project qling.config.* and --config inside a workspace cannot turn this on;
+   * there is no auto-loaded user-level config file.
+   */
+  trust?: {
+    all_workspaces: boolean;
+  };
   features: {
     semantic_memory: boolean;
     workflow_runtime: boolean;
@@ -289,6 +297,9 @@ export function buildDefaultConfig(): QlingConfig {
       manifest_path: path.join(DEFAULT_STATE_DIR, "hooks.json"),
       timeout_ms: 5000,
       max_output_bytes: 16 * 1024,
+    },
+    trust: {
+      all_workspaces: false,
     },
     features: {
       semantic_memory: false,
@@ -470,6 +481,15 @@ export async function loadQlingConfig(
     const expanded = expandEnvTemplate(raw, env, warnings);
     fromFile = parseConfigByExt(configPath, expanded) as Partial<QlingConfig>;
     usedConfigPath = configPath;
+    if (configRequestsTrustAll(fromFile) && fromFile.trust) {
+      const trust: { all_workspaces?: boolean } = { ...fromFile.trust };
+      delete trust.all_workspaces;
+      if (Object.keys(trust).length === 0) delete fromFile.trust;
+      else fromFile.trust = trust as QlingConfig["trust"];
+      warnings.push(
+        "忽略配置文件中的 trust.all_workspaces：该开关只接受环境变量 QLING_TRUST_ALL_WORKSPACES（当前没有自动加载的用户级配置文件）。"
+      );
+    }
   }
 
   const fromEnv = buildEnvConfig(env, defaults);
@@ -535,6 +555,12 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_JSON_HOOKS_MANIFEST = config.hooks?.manifest_path ?? path.join(config.runtime.file_state_dir, "hooks.json");
   process.env.QLING_JSON_HOOKS_TIMEOUT_MS = String(config.hooks?.timeout_ms ?? 5000);
   process.env.QLING_JSON_HOOKS_MAX_OUTPUT_BYTES = String(config.hooks?.max_output_bytes ?? 16 * 1024);
+  // A project config default of false must not clear an operator env opt-in.
+  if (config.trust?.all_workspaces === true || isTrustAllWorkspacesEnv(process.env)) {
+    process.env.QLING_TRUST_ALL_WORKSPACES = "true";
+  } else {
+    process.env.QLING_TRUST_ALL_WORKSPACES = "false";
+  }
   process.env.QLING_GUARD_ENABLED = String(config.guard.enabled);
   process.env.QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES =
     JSON.stringify(config.guard.network.url_fetch.allowed_url_prefixes);
@@ -700,6 +726,17 @@ export function guardConfigFromEnv(env: NodeJS.ProcessEnv = process.env): GuardC
       rules: parsePermissionRules(env.QLING_GUARD_PERMISSIONS_RULES, defaults.permissions.rules),
     },
   };
+}
+
+function isTrustAllWorkspacesEnv(env: NodeJS.ProcessEnv): boolean {
+  return /^(1|true|yes|on)$/i.test(String(env.QLING_TRUST_ALL_WORKSPACES ?? "").trim());
+}
+
+/** Project and ad-hoc config files cannot opt the process into trusting every workspace. */
+function configRequestsTrustAll(value: Partial<QlingConfig>): boolean {
+  const flag = (value.trust as { all_workspaces?: unknown } | undefined)?.all_workspaces;
+  if (flag === true || flag === 1) return true;
+  return typeof flag === "string" && /^(1|true|yes|on)$/i.test(flag.trim());
 }
 
 function resolveConfigPath(input?: string): string | undefined {

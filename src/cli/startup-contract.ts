@@ -4,10 +4,10 @@ import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect" | "acp";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp";
 
-const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect", "acp"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect", "acp"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "版本": "version",
@@ -31,6 +31,8 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "MCP": "mcp",
   "外部工具": "mcp",
   "钩子": "hooks",
+  "信任": "trust",
+  "取消信任": "untrust",
   "记忆": "memory",
   "使命": "mission",
   "代理": "agents",
@@ -686,6 +688,11 @@ TUI 环境变量:
   ${binName} config                   # 查看本地配置摘要（密钥脱敏）
   ${binName} mcp                      # MCP 状态 / list / presets / add / remove
   ${binName} hooks                    # 查看本地 hooks/guard 配置摘要
+  ${binName} hooks disable <name>     # 按名称禁用 JSON hook（不影响权限判定）
+  ${binName} hooks enable <name>      # 重新启用 JSON hook
+  ${binName} trust [dir]              # 将工作区标记为受信（默认当前目录）
+  ${binName} trust --list             # 列出 ~/.qling/trusted-workspaces
+  ${binName} untrust [dir]            # 取消工作区受信标记
   ${binName} agents                   # 按状态分组查看后台任务
   ${binName} 代理                     # agents 的中文别名
   ${binName} logs <id>                # 查看特定使命日志（top-level alias）
@@ -738,7 +745,7 @@ TUI 环境变量:
 兼容别名:
   ${binName} --tui, --repl, --once "task", "task"
 中文别名:
-  ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 检查点 [name] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 记忆 | 使命 | 代理 | 日志 <id>
+  ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 检查点 [name] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 信任 | 取消信任 | 记忆 | 使命 | 代理 | 日志 <id>
 
 本地边界:
   help / doctor / privacy / config 只读本地状态；不会调用模型或联网。
