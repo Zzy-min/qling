@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { JsonHookRunner, encodeHookPayload, installJsonHooks, jsonHooksMaxPayloadBytes } from "../../dist/hooks/json-hooks.js";
+import { JsonHookRunner, encodeHookPayload, installJsonHooks, jsonHooksMaxPayloadBytes, resetJsonHookMatcherWarningsForTests } from "../../dist/hooks/json-hooks.js";
 import { disableHook, enableHook, readDisabledHookNames } from "../../dist/hooks/disabled-hooks.js";
 import { HookManager } from "../../dist/pipeline/hooks.js";
 
@@ -45,6 +45,7 @@ async function runnerFor(dir, events, extra = {}) {
     maxOutputBytes: extra.maxOutputBytes ?? 64 * 1024,
     disabledNames: extra.disabledNames,
     maxPayloadBytes: extra.maxPayloadBytes,
+    knownToolNames: extra.knownToolNames,
   });
 }
 
@@ -191,6 +192,137 @@ test("PostToolUse invalid matcher disables only that entry", async () => {
     assert.match(audit, /matcher_compile_failed/);
     assert.match(audit, /PostToolUse/);
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("tool matcher matches the whole name, alternation, and still fails closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-hook-whole-matcher-"));
+  try {
+    const log = join(dir, "spawns.txt");
+    const script = join(dir, "count.mjs");
+    await writeFile(script, `import { appendFileSync } from "node:fs"; let raw = ""; process.stdin.on("data", (c) => { raw += c; }); process.stdin.on("end", () => appendFileSync(${JSON.stringify(log)}, "1\\n"));\n`);
+    const editOnly = await runnerFor(dir, {
+      PreToolUse: [{ name: "edit-only", matcher: "Edit", command: process.execPath, args: [script] }],
+    });
+    assert.equal((await editOnly.runPre(ctx("MultiEdit"))).decision, "allow");
+    await assert.rejects(readFile(log, "utf8"));
+    assert.equal((await editOnly.runPre(ctx("Edit"))).decision, "allow");
+    assert.equal((await readFile(log, "utf8")).trim(), "1");
+
+    const either = await runnerFor(dir, {
+      PreToolUse: [{ name: "either", matcher: "Edit|Write", command: process.execPath, args: [script] }],
+    });
+    assert.equal((await either.runPre(ctx("Edit"))).decision, "allow");
+    assert.equal((await either.runPre(ctx("Write"))).decision, "allow");
+    assert.equal((await either.runPre(ctx("MultiEdit"))).decision, "allow");
+    assert.equal((await readFile(log, "utf8")).trim().split(/\n/).length, 3);
+
+    const broken = await runnerFor(dir, {
+      PreToolUse: [{ name: "broken", matcher: "(", command: process.execPath, args: [script] }],
+    });
+    const asked = await broken.runPre(ctx("Edit"));
+    assert.notEqual(asked.decision, "allow");
+    assert.equal(asked.decision, "ask");
+    assert.match(asked.additionalContexts.join("\n"), /matcher failed to compile/);
+    assert.equal((await readFile(log, "utf8")).trim().split(/\n/).length, 3);
+    const audit = await readFile(join(dir, "audit", "events.jsonl"), "utf8");
+    assert.match(audit, /matcher_compile_failed/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("patch and read matchers also match anchored aliases but not unrelated names", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-hook-alias-matcher-"));
+  try {
+    const log = join(dir, "spawns.txt");
+    const script = join(dir, "deny.mjs");
+    await writeFile(script, `import { appendFileSync } from "node:fs"; process.stdin.resume(); process.stdin.on("end", () => { appendFileSync(${JSON.stringify(log)}, "x\\n"); console.log(JSON.stringify({ decision: "deny", blockingError: "hook deny" })); });\n`);
+    const spawns = async () => {
+      try {
+        return (await readFile(log, "utf8")).trim().split(/\n/).length;
+      } catch {
+        return 0;
+      }
+    };
+    const patchOnly = await runnerFor(dir, {
+      PreToolUse: [{ name: "patch-only", matcher: "patch", command: process.execPath, args: [script] }],
+    });
+    assert.equal((await patchOnly.runPre(ctx("patch"))).decision, "deny");
+    assert.equal((await patchOnly.runPre(ctx("patch_anchored"))).decision, "deny");
+    assert.equal((await patchOnly.runPre(ctx("write"))).decision, "allow");
+    assert.equal((await patchOnly.runPre(ctx("patch_file"))).decision, "allow");
+    assert.equal(await spawns(), 2);
+
+    const readOnly = await runnerFor(dir, {
+      PreToolUse: [{ name: "read-only", matcher: "read", command: process.execPath, args: [script] }],
+    });
+    assert.equal((await readOnly.runPre(ctx("read"))).decision, "deny");
+    assert.equal((await readOnly.runPre(ctx("read_anchored"))).decision, "deny");
+    assert.equal((await readOnly.runPre(ctx("read_file"))).decision, "allow");
+    assert.equal(await spawns(), 4);
+
+    const either = await runnerFor(dir, {
+      PreToolUse: [{ name: "patch-or-write", matcher: "patch|write", command: process.execPath, args: [script] }],
+    });
+    assert.equal((await either.runPre(ctx("patch_anchored"))).decision, "deny");
+    assert.equal((await either.runPre(ctx("write"))).decision, "deny");
+    assert.equal((await either.runPre(ctx("read_anchored"))).decision, "allow");
+    assert.equal(await spawns(), 6);
+
+    const broken = await runnerFor(dir, {
+      PreToolUse: [{ name: "broken", matcher: "(", command: process.execPath, args: [script] }],
+    });
+    const asked = await broken.runPre(ctx("patch_anchored"));
+    assert.notEqual(asked.decision, "allow");
+    assert.equal(asked.decision, "ask");
+    assert.match(asked.additionalContexts.join("\n"), /matcher failed to compile/);
+    assert.equal(await spawns(), 6);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("matcher compatibility warning fires once only when a substring hit is lost", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-hook-matcher-warn-"));
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  resetJsonHookMatcherWarningsForTests();
+  try {
+    const script = join(dir, "allow.mjs");
+    await writeFile(script, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ decision: 'allow' })));\n");
+    const alias = await runnerFor(dir, {
+      PreToolUse: [{ name: "patch-alias", matcher: "patch", command: process.execPath, args: [script] }],
+    }, { knownToolNames: ["patch", "patch_anchored", "read", "read_anchored"] });
+    assert.equal((await alias.runPre(ctx("patch_anchored"))).decision, "allow");
+    assert.equal((await alias.runPre(ctx("patch"))).decision, "allow");
+    assert.deepEqual(warnings, []);
+
+    const lost = await runnerFor(dir, {
+      PreToolUse: [{ name: "read-prefix", matcher: "read", command: process.execPath, args: [script] }],
+    }, { knownToolNames: ["read", "read_anchored", "read_file"] });
+    assert.equal((await lost.runPre(ctx("read_anchored"))).decision, "allow");
+    assert.equal((await lost.runPre(ctx("read_file"))).decision, "allow");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /"read"/);
+    assert.match(warnings[0], /substring/);
+
+    const again = await runnerFor(dir, {
+      PreToolUse: [{ name: "read-prefix-again", matcher: "read", command: process.execPath, args: [script] }],
+    }, { knownToolNames: ["read_file"] });
+    assert.equal((await again.runPre(ctx("read"))).decision, "allow");
+    assert.equal(warnings.length, 1);
+
+    const unwired = await runnerFor(dir, {
+      PreToolUse: [{ name: "unwired", matcher: "file", command: process.execPath, args: [script] }],
+    });
+    assert.equal((await unwired.runPre(ctx("read_file"))).decision, "allow");
+    assert.equal(warnings.length, 1);
+  } finally {
+    console.warn = original;
+    resetJsonHookMatcherWarningsForTests();
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -426,6 +558,96 @@ test("Stop hook blocks with a truncated reason and fails open on crash", async (
     });
     assert.equal((await invalid.runStop({ lastAssistantText: "bye", stopHookActive: false })).blocked, false);
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("installJsonHooks warns once per regressed matcher and does not change decisions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-hook-install-warn-"));
+  const prevEnabled = process.env.QLING_JSON_HOOKS_ENABLED;
+  const prevManifest = process.env.QLING_JSON_HOOKS_MANIFEST;
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  resetJsonHookMatcherWarningsForTests();
+  try {
+    const script = join(dir, "deny.mjs");
+    await writeFile(script, "process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ decision: 'deny', blockingError: 'hook deny' })));\n");
+    const anchoredManifest = join(dir, "anchored-hooks.json");
+    const fileManifest = join(dir, "file-hooks.json");
+    const command = { command: process.execPath, args: [script] };
+    await writeFile(anchoredManifest, JSON.stringify({
+      events: {
+        PreToolUse: [
+          { name: "still-patch", matcher: "patch", ...command },
+          { name: "lost-anchored", matcher: "anchored", ...command },
+        ],
+      },
+    }));
+    await writeFile(fileManifest, JSON.stringify({
+      events: {
+        PreToolUse: [{ name: "lost-file", matcher: "file", ...command }],
+      },
+    }));
+    process.env.QLING_JSON_HOOKS_ENABLED = "true";
+    const knownToolNames = ["patch", "patch_anchored", "read_file"];
+    const install = async (manifestPath, withNames) => {
+      process.env.QLING_JSON_HOOKS_MANIFEST = manifestPath;
+      return installJsonHooks({
+        hookManager: { register() {} },
+        stateDir: dir,
+        workspaceDir: dir,
+        sessionId: "session-warn",
+        emitSessionStart: false,
+        ...(withNames ? { knownToolNames } : {}),
+      });
+    };
+    const names = ["patch_anchored", "patch", "read_file", "patch_anchored"];
+    const collect = async (runner) => {
+      const results = [];
+      for (const name of names) results.push(await runner.runPre(ctx(name)));
+      return results;
+    };
+
+    const plain = await install(anchoredManifest, false);
+    const wired = await install(anchoredManifest, true);
+    assert.ok(plain);
+    assert.ok(wired);
+    const plainDecisions = await collect(plain);
+    assert.deepEqual(warnings, []);
+    const wiredDecisions = await collect(wired);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /"anchored"/);
+    assert.match(warnings[0], /substring/);
+    assert.deepEqual(wiredDecisions, plainDecisions);
+    assert.equal(wiredDecisions[0].decision, "deny");
+    assert.equal(wiredDecisions[1].decision, "deny");
+    assert.equal(wiredDecisions[2].decision, "allow");
+    assert.equal(wiredDecisions[3].decision, "deny");
+    await collect(wired);
+    assert.equal(warnings.length, 1);
+
+    const plainFile = await install(fileManifest, false);
+    const wiredFile = await install(fileManifest, true);
+    const plainFileDecisions = await collect(plainFile);
+    assert.equal(warnings.length, 1);
+    const wiredFileDecisions = await collect(wiredFile);
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[1], /"file"/);
+    assert.match(warnings[1], /substring/);
+    assert.deepEqual(wiredFileDecisions, plainFileDecisions);
+    assert.equal(wiredFileDecisions[0].decision, "allow");
+    assert.equal(wiredFileDecisions[2].decision, "allow");
+    await wired.runPre(ctx("patch_anchored"));
+    await wiredFile.runPre(ctx("read_file"));
+    assert.equal(warnings.length, 2);
+  } finally {
+    console.warn = originalWarn;
+    resetJsonHookMatcherWarningsForTests();
+    if (prevEnabled === undefined) delete process.env.QLING_JSON_HOOKS_ENABLED;
+    else process.env.QLING_JSON_HOOKS_ENABLED = prevEnabled;
+    if (prevManifest === undefined) delete process.env.QLING_JSON_HOOKS_MANIFEST;
+    else process.env.QLING_JSON_HOOKS_MANIFEST = prevManifest;
     await rm(dir, { recursive: true, force: true });
   }
 });

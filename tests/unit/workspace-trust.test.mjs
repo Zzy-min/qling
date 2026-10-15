@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSkillDirs, runSkill } from "../../dist/tools/skill.js";
@@ -94,6 +94,57 @@ test("trusted workspace loads project skills and agents, and child directories i
     const catalog = await loadRoleCatalog({ workspaceDir: child, homeDir: home, stateDir: join(root, "state") });
     assert.equal(catalog.get("nested-role")?.source, "workspace");
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("trust follows real paths and ignores a junction that points outside", async () => {
+  const root = await mkdtemp(join(tmpdir(), "qling-trust-link-"));
+  const home = join(root, "home");
+  const trusted = join(root, "trusted");
+  const outside = join(root, "outside");
+  const child = join(trusted, "child");
+  const missing = join(trusted, "missing-child");
+  const sibling = join(root, "trustedX");
+  const linkOut = join(trusted, "link-out");
+  const linkIn = join(root, "link-in");
+  const options = { homeDir: home, env: isolatedEnv };
+  try {
+    await mkdir(child, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await mkdir(sibling, { recursive: true });
+    await trustWorkspace(trusted, options);
+    assert.equal(isWorkspaceTrusted(child, options), true);
+    assert.equal(isWorkspaceTrusted(missing, options), true);
+    assert.equal(isWorkspaceTrusted(outside, options), false);
+    assert.equal(isWorkspaceTrusted(sibling, options), false);
+    if (process.platform === "win32") {
+      assert.equal(isWorkspaceTrusted(trusted.toUpperCase(), options), true);
+    }
+
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    let linksReady = false;
+    try {
+      await symlink(outside, linkOut, linkType);
+      await symlink(trusted, linkIn, linkType);
+      linksReady = true;
+    } catch (error) {
+      console.log(`symlink/junction assertions skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (linksReady) {
+      assert.equal(isWorkspaceTrusted(linkOut, options), false);
+      assert.equal(isWorkspaceTrusted(join(linkOut, "nested"), options), false);
+      assert.equal(isWorkspaceTrusted(linkIn, options), true);
+      assert.equal(isWorkspaceTrusted(join(linkIn, "child"), options), true);
+      const file = trustedWorkspacesFile(options);
+      await writeFile(file, `${linkOut}\n`, "utf8");
+      assert.equal(isWorkspaceTrusted(outside, options), true);
+      assert.equal(isWorkspaceTrusted(trusted, options), false);
+      assert.equal(isWorkspaceTrusted(sibling, options), false);
+    }
+  } finally {
+    await rm(linkOut, { force: true }).catch(() => undefined);
+    await rm(linkIn, { force: true }).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -172,8 +172,10 @@ export class MissionManager {
   }
 
   /**
-   * Startup reconciliation only moves running missions with no live owner to
-   * blocked. It never creates, deletes, or resumes a mission.
+   * Startup reconciliation moves running missions with no live owner
+   * (including legacy snapshots that omit ownerPid) to paused. Paused is the
+   * existing status resumeMission already accepts, so an explicit resume can
+   * queue them again. This never starts or continues a mission by itself.
    */
   private async reconcileInterruptedMissions(): Promise<void> {
     const orphaned = [...this.missions.values()].filter(
@@ -181,7 +183,7 @@ export class MissionManager {
     );
     for (const mission of orphaned) {
       if (this.missions.get(mission.id)?.status !== "running") continue;
-      await this.updateStatus(mission.id, "blocked", undefined, { reason: "interrupted_on_restart" });
+      await this.updateStatus(mission.id, "paused", undefined, { reason: "interrupted_on_restart" });
     }
   }
 

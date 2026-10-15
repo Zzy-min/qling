@@ -519,6 +519,7 @@ export class AgentLoop extends AgentEventEmitter {
       workspaceDir: this.getWorkspaceDir(),
       sessionId: this.sessionId,
       emitSessionStart: !this.config.subagent,
+      knownToolNames: this.config.tools.map((tool) => tool.name),
     });
 
     // v0.3 Sync dynamic discovery

@@ -1,6 +1,6 @@
 // Workspace trust gate. Project skills, project agents, and any future
 // project hook source stay unloaded until the workspace is trusted.
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -32,11 +32,35 @@ export function trustedWorkspacesFile(options: WorkspaceTrustOptions = {}): stri
   return path.join(home, ".qling", TRUST_FILE_NAME);
 }
 
-/** Absolute path, trailing separator removed except for the drive/root. */
-export function normalizeTrustPath(input: string): string {
+/**
+ * Real path used for trust checks. Missing paths keep the resolved suffix
+ * under the nearest existing ancestor. Other realpath failures fall back
+ * to path.resolve so a trust check cannot throw.
+ */
+function canonicalizeTrustPath(input: string): string {
   const resolved = path.resolve(String(input ?? "").trim());
-  const root = path.parse(resolved).root;
-  let trimmed = resolved;
+  const missing: string[] = [];
+  let current = resolved;
+  while (true) {
+    try {
+      const real = realpathSync.native(current);
+      return missing.length === 0 ? real : path.join(real, ...missing);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") return resolved;
+      const parent = path.dirname(current);
+      if (parent === current) return resolved;
+      missing.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** Absolute real path, trailing separator removed except for the drive/root. */
+export function normalizeTrustPath(input: string): string {
+  const canonical = canonicalizeTrustPath(input);
+  const root = path.parse(canonical).root;
+  let trimmed = canonical;
   while (
     trimmed.length > root.length &&
     (trimmed.endsWith("/") || trimmed.endsWith("\\"))

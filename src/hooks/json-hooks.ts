@@ -24,8 +24,13 @@ export interface JsonHookCommand {
   args?: string[];
   name?: string;
   /**
-   * Tool events only. PreToolUse compile failure or a matcher without a tool
-   * name fails closed (ask). Observe-only events disable that entry instead.
+   * Tool events only. Matched against the whole tool name: the pattern is
+   * compiled as ^(?:matcher)$. "patch" does not substring-match
+   * "patch_anchored"; a whole-name match of "patch" still matches
+   * "patch_anchored" via the alias table, and "read" likewise matches
+   * "read_anchored". Use ".*patch.*" to restore substring behavior.
+   * PreToolUse compile failure or a matcher without a tool name fails closed
+   * (ask). Observe-only events disable that entry instead.
    */
   matcher?: string;
   enabled?: boolean;
@@ -367,6 +372,74 @@ function strictestPreDecision(results: HookResult[]): HookResult {
   return best;
 }
 
+/**
+ * Whole-name match of the source also matches the anchored tool.
+ * The reverse is not true: "patch_anchored" does not match "patch".
+ */
+const TOOL_MATCH_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  patch_anchored: ["patch"],
+  read_anchored: ["read"],
+};
+
+const warnedMatcherSources = new Set<string>();
+
+/** Test hook. Compatibility warnings are once per matcher string per process. */
+export function resetJsonHookMatcherWarningsForTests(): void {
+  warnedMatcherSources.clear();
+}
+
+/** Whole tool name only. "patch" does not substring-match "patch_anchored"; use .*patch.* for that. */
+function compileToolMatcher(source: string): RegExp {
+  return new RegExp(`^(?:${source})$`);
+}
+
+function regexMatches(matcher: RegExp, name: string): boolean {
+  try {
+    matcher.lastIndex = 0;
+    return matcher.test(name);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Warn once when the pre-anchor substring rule hits a registered tool that
+ * whole-name matching, including aliases, no longer hits. Never changes the
+ * allow/ask/deny decision. No known-tool list means no warning.
+ */
+function noteMatcherRegression(
+  source: string,
+  matcher: RegExp,
+  knownToolNames: readonly string[] | undefined
+): void {
+  if (!knownToolNames || knownToolNames.length === 0) return;
+  if (warnedMatcherSources.has(source)) return;
+  let legacy: RegExp;
+  try {
+    legacy = new RegExp(source);
+  } catch {
+    return;
+  }
+  const regressed = knownToolNames.some((name) => {
+    if (!name) return false;
+    try {
+      legacy.lastIndex = 0;
+      return legacy.test(name) && !matcherAllows(matcher, name);
+    } catch {
+      return false;
+    }
+  });
+  if (!regressed) return;
+  warnedMatcherSources.add(source);
+  try {
+    console.warn(
+      `[json-hooks] matcher ${JSON.stringify(source)} matched a registered tool by substring, but whole-name matching does not. Use the full tool name, an alias source (patch or read), or an explicit substring such as .*patch.*`,
+    );
+  } catch {
+    // The notice must not change the hook decision.
+  }
+}
+
 function prepareCommand(
   entry: JsonHookCommand,
   event: JsonHookEvent,
@@ -377,7 +450,7 @@ function prepareCommand(
   if (name && disabledNames.has(name)) return { entry, skipReason: "user_disabled" };
   if (TOOL_EVENTS.has(event) && typeof entry?.matcher === "string" && entry.matcher.trim()) {
     try {
-      return { entry, matcher: new RegExp(entry.matcher) };
+      return { entry, matcher: compileToolMatcher(entry.matcher) };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return { entry, skipReason: `matcher_compile_failed: ${detail}` };
@@ -396,17 +469,15 @@ function toolNameOf(payload: unknown): string | null {
 
 function matcherAllows(matcher: RegExp, toolName: string | null): boolean {
   if (!toolName) return false;
-  try {
-    matcher.lastIndex = 0;
-    return matcher.test(toolName);
-  } catch {
-    return false;
-  }
+  if (regexMatches(matcher, toolName)) return true;
+  const sources = TOOL_MATCH_ALIASES[toolName];
+  return Boolean(sources?.some((source) => regexMatches(matcher, source)));
 }
 
 export class JsonHookRunner {
   private readonly disabledNames: ReadonlySet<string>;
   private readonly maxPayloadBytes: number;
+  private readonly knownToolNames: readonly string[] | undefined;
   private readonly auditedSkips = new Set<string>();
 
   constructor(
@@ -418,10 +489,13 @@ export class JsonHookRunner {
       maxOutputBytes: number;
       disabledNames?: ReadonlySet<string>;
       maxPayloadBytes?: number;
+      /** Registered tool names used only for the one-time substring compatibility warning. */
+      knownToolNames?: readonly string[];
     }
   ) {
     this.disabledNames = options.disabledNames ?? new Set();
     this.maxPayloadBytes = options.maxPayloadBytes ?? jsonHooksMaxPayloadBytes();
+    this.knownToolNames = options.knownToolNames;
   }
 
   async runPre(context: ToolHookContext): Promise<HookResult> {
@@ -559,6 +633,9 @@ export class JsonHookRunner {
           });
         }
         continue;
+      }
+      if (prepared.matcher && typeof command.matcher === "string") {
+        noteMatcherRegression(command.matcher, prepared.matcher, this.knownToolNames);
       }
       if (event === "PreToolUse" && prepared.matcher && !toolName) {
         await this.auditSkip(event, command, "matcher_missing_tool_name");
@@ -739,6 +816,8 @@ export async function installJsonHooks(options: {
   sessionId: string;
   /** 子 agent 仍注册 Pre/PostToolUse，但不发 SessionStart。默认 true。 */
   emitSessionStart?: boolean;
+  /** Registered tool names. Used only for the one-time substring compatibility warning. */
+  knownToolNames?: readonly string[];
 }): Promise<JsonHookRunner | null> {
   if (process.env.QLING_JSON_HOOKS_ENABLED !== "true") return null;
   const manifestPath = path.resolve(
@@ -759,6 +838,7 @@ export async function installJsonHooks(options: {
     maxOutputBytes: Math.max(1024, Number(process.env.QLING_JSON_HOOKS_MAX_OUTPUT_BYTES) || 16 * 1024),
     maxPayloadBytes: jsonHooksMaxPayloadBytes(),
     disabledNames,
+    knownToolNames: options.knownToolNames,
   });
   options.hookManager.register("PreToolUse", (context) => runner.runPre(context));
   options.hookManager.register("PostToolUse", (context, result) => runner.runPost(context, result));

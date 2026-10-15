@@ -171,7 +171,7 @@ test("isMissionOwnerAlive probes with signal 0 only", () => {
   assert.equal(isMissionOwnerAlive(0), false);
 });
 
-test("mission reconcile blocks only running missions whose owner is dead", async () => {
+test("mission reconcile pauses only running missions whose owner is dead", async () => {
   await withTempDir(async (stateDir) => {
     const signals = [];
     const specs = [
@@ -205,13 +205,13 @@ test("mission reconcile blocks only running missions whose owner is dead", async
     assert.equal(manager.getMission("msn_paused").status, "paused");
     assert.equal(manager.getMission("msn_ok").status, "succeeded");
     assert.equal(manager.getMission("msn_blocked").status, "blocked");
-    assert.equal(manager.getMission("msn_dead").status, "blocked");
-    assert.equal(manager.getMission("msn_legacy").status, "blocked");
+    assert.equal(manager.getMission("msn_dead").status, "paused");
+    assert.equal(manager.getMission("msn_legacy").status, "paused");
     assert.deepEqual(signals, [{ pid: 424242, signal: 0 }]);
     const logs = await manager.getMissionLogs("msn_dead");
     assert.equal(logs.some((event) =>
       event.type === "state_changed"
-      && event.data.to === "blocked"
+      && event.data.to === "paused"
       && event.data.reason === "interrupted_on_restart"
     ), true);
 
@@ -222,8 +222,45 @@ test("mission reconcile blocks only running missions whose owner is dead", async
     });
     await again.init();
     assert.equal(again.listMissions().length, specs.length);
-    assert.equal(again.getMission("msn_dead").status, "blocked");
+    assert.equal(again.getMission("msn_dead").status, "paused");
     assert.equal(again.getMission("msn_queued").status, "queued");
+  });
+});
+
+test("mission reconcile pauses an ownerless running mission for explicit resume and keeps a live owner", async () => {
+  await withTempDir(async (stateDir) => {
+    await fs.mkdir(path.join(stateDir, "missions"), { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, "missions", "msn_legacy.json"),
+      JSON.stringify(missionSnapshot({ id: "msn_legacy", name: "legacy", status: "running" })),
+    );
+    await fs.writeFile(
+      path.join(stateDir, "missions", "msn_live.json"),
+      JSON.stringify(missionSnapshot({ id: "msn_live", name: "live", status: "running", ownerPid: process.pid })),
+    );
+
+    const manager = new MissionManager(stateDir, {
+      processProbe: (pid, signal) => {
+        assert.equal(signal, 0);
+        return pid === process.pid;
+      },
+    });
+    await manager.init();
+    assert.equal(manager.getMission("msn_legacy").status, "paused");
+    assert.equal(manager.getMission("msn_live").status, "running");
+
+    const resumed = await manager.resumeMission("msn_legacy", "operator resume");
+    assert.equal(resumed.status, "queued");
+    assert.notEqual(resumed.status, "running");
+    assert.equal(manager.getMission("msn_live").status, "running");
+    const logs = await manager.getMissionLogs("msn_legacy");
+    assert.equal(logs.some((event) =>
+      event.type === "state_changed"
+      && event.data.to === "paused"
+      && event.data.reason === "interrupted_on_restart"
+    ), true);
+    assert.equal(logs.some((event) => event.type === "control" && event.data.action === "resume"), true);
+    assert.equal(logs.some((event) => event.type === "state_changed" && event.data.to === "running"), false);
   });
 });
 
