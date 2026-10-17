@@ -16,6 +16,21 @@ export interface OtelExecutionEvent {
   tool?: string;
   category?: string;
   durationMs?: number;
+  modelRetry?: {
+    attempt?: number;
+    max?: number;
+    delayMs?: number;
+    kind?: string;
+    status?: number;
+    requestId?: string;
+    model?: string;
+    attempts?: number;
+    elapsedMs?: number;
+    lastKind?: string;
+    models?: string[];
+    from?: string;
+    to?: string;
+  };
 }
 
 export interface OtelTraceBridgeOptions {
@@ -147,6 +162,55 @@ export class OtelTraceBridge {
 
     const run = this.runSpans.get(event.runId);
     if (!run) return;
+    if (event.modelRetry && (event.type.startsWith("model_retry") || event.type.startsWith("model_fallback"))) {
+      const meta = event.modelRetry;
+      const attributes: Record<string, string | number> = {};
+      if (typeof meta.attempt === "number") {
+        run.span.setAttribute("qling.model.retry.attempt", meta.attempt);
+        attributes.attempt = meta.attempt;
+      }
+      if (typeof meta.max === "number") attributes.max = meta.max;
+      if (typeof meta.delayMs === "number") {
+        run.span.setAttribute("qling.model.retry.delay_ms", meta.delayMs);
+        attributes.delay_ms = meta.delayMs;
+      }
+      if (meta.kind) {
+        const kind = meta.kind.slice(0, 64);
+        run.span.setAttribute("qling.model.error_kind", kind);
+        attributes.kind = kind;
+      }
+      if (typeof meta.status === "number") {
+        run.span.setAttribute("qling.model.http_status", meta.status);
+        attributes.http_status = meta.status;
+      }
+      if (meta.model) {
+        const model = meta.model.slice(0, 128);
+        run.span.setAttribute("qling.model.name", model);
+        attributes.model = model;
+      }
+      if (typeof meta.attempts === "number") {
+        run.span.setAttribute("qling.model.retry.attempts", meta.attempts);
+        attributes.attempts = meta.attempts;
+      }
+      if (typeof meta.elapsedMs === "number") {
+        run.span.setAttribute("qling.model.retry.elapsed_ms", meta.elapsedMs);
+        attributes.elapsed_ms = meta.elapsedMs;
+      }
+      if (meta.lastKind) {
+        const lastKind = meta.lastKind.slice(0, 64);
+        run.span.setAttribute("qling.model.retry.last_kind", lastKind);
+        attributes.last_kind = lastKind;
+      }
+      if (meta.from) run.span.setAttribute("qling.model.fallback_from", meta.from.slice(0, 128));
+      if (meta.to) run.span.setAttribute("qling.model.fallback_to", meta.to.slice(0, 128));
+      if (meta.models && meta.models.length > 0) {
+        attributes.models = meta.models.slice(0, 4).join(",").slice(0, 256);
+      }
+      if (meta.requestId && /^[\w.:-]{1,128}$/.test(meta.requestId)) {
+        attributes.request_id = meta.requestId;
+      }
+      run.span.addEvent(event.type, attributes);
+    }
     if (event.category) run.span.setAttribute("qling.failure.category", allowed(event.category, CATEGORIES));
     if (event.stage) run.span.setAttribute("qling.stage", allowed(event.stage, STAGES));
     if (event.type === "run_completed") {

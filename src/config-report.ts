@@ -1,4 +1,4 @@
-import type { QlingConfig } from "./config.js";
+import type { QlingConfig, LlmFieldSources } from "./config.js";
 import { formatPermissionMode } from "./statusline.js";
 import { resolveOtelExportConfig, type OtelExportState } from "./metrics/otel-config.js";
 
@@ -132,7 +132,13 @@ function formatFeatureFlags(features: Record<string, boolean>): string {
     .join(" ");
 }
 
-export function formatLocalConfigReport(report: LocalConfigReport): string[] {
+export function formatLocalConfigReport(
+  report: LocalConfigReport,
+  sources?: LlmFieldSources
+): string[] {
+  const sourceLine = sources
+    ? `Source     : provider=${sources.provider} model=${sources.model} endpoint=${sources.endpoint} apiKey=${sources.apiKey}`
+    : "";
   return [
     "",
     "⚙️ 本地配置摘要",
@@ -141,6 +147,7 @@ export function formatLocalConfigReport(report: LocalConfigReport): string[] {
     `Model      : ${report.model}`,
     `Endpoint   : ${report.endpoint}`,
     `Api key    : ${report.apiKeyStatus}`,
+    ...(sourceLine ? [sourceLine] : []),
     `Workspace  : ${report.workspaceDir}`,
     `State dir  : ${report.stateDir}`,
     `Cache dir  : ${report.cacheDir}`,

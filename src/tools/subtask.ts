@@ -17,6 +17,7 @@ import { patchTool } from "./patch.js";
 import { codeSymbolsTool } from "./code-symbols.js";
 import { lspTool } from "./lsp.js";
 import { getRuntimeRootsFromEnv } from "../runtime-paths.js";
+import { resolveActiveLlm } from "../providers/resolve-llm.js";
 import {
   filterToolsForRole,
   isKnownSubAgentRole,
@@ -118,24 +119,17 @@ function buildRunnerConfig(
   const controlledToolNames = new Set(["read", "search", "code_symbols", "lsp", "skill", "write", "patch"]);
   const tools = filterToolsForRole(SUBTASK_TOOL_POOL, role)
     .filter((tool) => !(ownedPaths && ownedPaths.length > 0) || controlledToolNames.has(tool.name));
-  const apiKey =
-    process.env.QLING_LLM_API_KEY ??
-    process.env.DEEPSEEK_API_KEY ??
-    process.env.OPENAI_API_KEY ??
-    "";
+  const llm = resolveActiveLlm(process.env);
+  const apiKey = llm.apiKey;
 
   return {
     apiKey,
     tools,
     parent: {
       apiKey,
-      provider: process.env.QLING_LLM_PROVIDER ?? "deepseek",
-      endpoint:
-        process.env.QLING_LLM_ENDPOINT ??
-        process.env.OPENAI_BASE_URL ??
-        process.env.DEEPSEEK_BASE_URL ??
-        "https://api.deepseek.com",
-      model: process.env.QLING_LLM_MODEL ?? "deepseek-chat",
+      provider: llm.provider,
+      endpoint: llm.endpoint,
+      model: llm.model,
       tools,
       runtime: {
         workspaceDir: workspaceDir ?? roots.workspaceDir,

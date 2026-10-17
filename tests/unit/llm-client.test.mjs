@@ -277,3 +277,60 @@ test("LlmHttpClient does not retry a generic 400 as a stream capability fallback
     await fake.close();
   }
 });
+
+test("provider errors include model and host, explain 401 and 404, and omit the key", async () => {
+  const fake = await startFakeServer((req, res) => {
+    const status = String(req.url || "").includes("missing-model") ? 404 : 401;
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "Bearer sk-secret-value" } }));
+  });
+  try {
+    const client = new LlmHttpClient({
+      endpoint: fake.base + "/v1",
+      apiKey: "sk-secret-value",
+      timeoutMs: 5000,
+      provider: "openai",
+    });
+    await assert.rejects(
+      client.chatCompletions({
+        model: "gpt-4o",
+        systemPrompt: "sys",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [],
+      }),
+      (error) => {
+        assert.ok(error instanceof ProviderHttpError);
+        assert.equal(error.status, 401);
+        assert.match(error.message, /model=gpt-4o/);
+        assert.match(error.message, /endpoint=127\.0\.0\.1:/);
+        assert.match(error.message, /key 无效或不属于 openai/);
+        assert.doesNotMatch(error.message, /sk-secret-value/);
+        return true;
+      }
+    );
+    const missing = new LlmHttpClient({
+      endpoint: fake.base + "/v1/missing-model",
+      apiKey: "sk-secret-value",
+      timeoutMs: 5000,
+      provider: "openai",
+    });
+    await assert.rejects(
+      missing.chatCompletions({
+        model: "no-such-model",
+        systemPrompt: "sys",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [],
+      }),
+      (error) => {
+        assert.ok(error instanceof ProviderHttpError);
+        assert.equal(error.status, 404);
+        assert.match(error.message, /model=no-such-model/);
+        assert.match(error.message, /\/model list --remote/);
+        assert.doesNotMatch(error.message, /sk-secret-value/);
+        return true;
+      }
+    );
+  } finally {
+    await fake.close();
+  }
+});

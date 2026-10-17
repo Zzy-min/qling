@@ -767,6 +767,16 @@ export class QlingAcpServer {
       const text = typeof delta === "string" ? delta : String(delta ?? "");
       session.batcher?.push(text);
     }));
+    session.unsubscribers.push(subscribeAgent(agent, "model_retry", (info) => {
+      const payload = info && typeof info === "object"
+        ? info as { attempt?: unknown; max?: unknown; kind?: unknown; model?: unknown }
+        : {};
+      const attempt = typeof payload.attempt === "number" ? payload.attempt : "?";
+      const max = typeof payload.max === "number" ? payload.max : "?";
+      const kind = String(payload.kind ?? "retry").slice(0, 64);
+      const model = String(payload.model ?? "").slice(0, 128);
+      session.batcher?.push(`\n[模型重试 ${attempt}/${max}：${kind}${model ? ` ${model}` : ""}]\n`);
+    }));
     session.unsubscribers.push(subscribeAgent(agent, "tool_start", (name, args) => {
       this.noteToolStart(session, String(name ?? ""), args);
     }));

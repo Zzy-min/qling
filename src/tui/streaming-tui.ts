@@ -16,6 +16,7 @@
 // ============================================================
 
 import * as readline from "readline";
+import { DEFAULT_MODEL } from "../providers/presets.js";
 import { default as stringWidth } from "string-width";
 import {
   resolveSlashUiPorts,
@@ -267,7 +268,7 @@ export class StreamUI {
   private turnSelected = 0;
 
   constructor(
-    model: string = "deepseek-chat",
+    model: string = DEFAULT_MODEL,
     tools: number = 0,
     options: { now?: () => number; slashUi?: SlashUiPorts; tuiMode?: TuiMode } = {}
   ) {

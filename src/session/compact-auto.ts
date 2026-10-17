@@ -16,9 +16,12 @@ export interface AutoCompactConfig {
   windowTokens: number | null;
   /** Trigger ratio used when windowTokens is known. */
   triggerRatio: number;
+  /** config window_tokens, known model window, or the legacy 6000 trigger. */
+  budgetSource: "window" | "model" | "legacy";
 }
 
 import { resolveContextBudget } from "../context-budget.js";
+import { lookupModelWindow } from "../providers/presets.js";
 
 function parseBool(raw: string | undefined, fallback: boolean): boolean {
   if (raw === undefined || raw === "") return fallback;
@@ -29,17 +32,29 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
 }
 
 export function resolveAutoCompactConfig(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  model?: string
 ): AutoCompactConfig {
   const enabled = parseBool(env.QLING_AUTO_COMPACT, true);
   const maxRaw = Number(env.QLING_COMPACT_MAX_TOKENS);
+  const explicitMax = Number.isFinite(maxRaw) && maxRaw > 500 ? Math.floor(maxRaw) : 0;
   const windowRaw = Number(env.QLING_CONTEXT_WINDOW_TOKENS);
+  const configuredWindow = Number.isFinite(windowRaw) && windowRaw >= 1000 ? Math.floor(windowRaw) : 0;
+  const knownWindow = lookupModelWindow(model ?? "")?.contextWindow ?? 0;
   const ratioRaw = Number(env.QLING_COMPACTION_TRIGGER_RATIO);
+  let windowTokens = 0;
+  let budgetSource: AutoCompactConfig["budgetSource"] = "legacy";
+  if (configuredWindow >= 1000) {
+    windowTokens = configuredWindow;
+    budgetSource = "window";
+  } else if (knownWindow >= 1000 && !explicitMax) {
+    windowTokens = knownWindow;
+    budgetSource = "model";
+  }
   const budget = resolveContextBudget({
-    windowTokens: Number.isFinite(windowRaw) ? windowRaw : undefined,
+    windowTokens,
     triggerRatio: Number.isFinite(ratioRaw) ? ratioRaw : undefined,
-    legacyMaxTokens:
-      Number.isFinite(maxRaw) && maxRaw > 500 ? Math.floor(maxRaw) : 6000,
+    legacyMaxTokens: explicitMax || 6000,
   });
   const maxTokens = budget.triggerTokens;
   const keepRaw = Number(env.QLING_COMPACT_RECENT_KEEP);
@@ -53,5 +68,6 @@ export function resolveAutoCompactConfig(
     recentKeep,
     windowTokens: budget.windowTokens,
     triggerRatio: budget.triggerRatio,
+    budgetSource: windowTokens >= 1000 ? budgetSource : "legacy",
   };
 }

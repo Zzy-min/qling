@@ -5,14 +5,28 @@
 
 import axios from "axios";
 import type { EvalTask, EvalTaskContext } from "./types.js";
+import { resolveLlmSettings } from "../providers/resolve-llm.js";
+
+function resolveSettings(env: NodeJS.ProcessEnv) {
+  return resolveLlmSettings(
+    {
+      provider: env.QLING_LLM_PROVIDER,
+      endpoint: env.QLING_LLM_ENDPOINT,
+      model: env.QLING_LLM_MODEL,
+      apiKey: env.QLING_LLM_API_KEY,
+      sources: {
+        provider: env.QLING_LLM_PROVIDER ? "env" : "default",
+        endpoint: env.QLING_LLM_ENDPOINT ? "env" : "default",
+        model: env.QLING_LLM_MODEL ? "env" : "default",
+        apiKey: env.QLING_LLM_API_KEY ? "env" : "default",
+      },
+    },
+    env
+  );
+}
 
 function resolveApiKey(env: NodeJS.ProcessEnv): string {
-  return (
-    env.QLING_LLM_API_KEY ||
-    env.DEEPSEEK_API_KEY ||
-    env.OPENAI_API_KEY ||
-    ""
-  ).trim();
+  return resolveSettings(env).apiKey.trim();
 }
 
 function llmEvalEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -21,16 +35,11 @@ function llmEvalEnabled(env: NodeJS.ProcessEnv): boolean {
 }
 
 function resolveEndpoint(env: NodeJS.ProcessEnv): string {
-  return (
-    env.QLING_LLM_ENDPOINT ||
-    env.OPENAI_BASE_URL ||
-    env.DEEPSEEK_BASE_URL ||
-    "https://api.deepseek.com"
-  ).replace(/\/$/, "");
+  return resolveSettings(env).endpoint.replace(/\/$/, "");
 }
 
 function resolveModel(env: NodeJS.ProcessEnv): string {
-  return env.QLING_LLM_MODEL || "deepseek-chat";
+  return resolveSettings(env).model;
 }
 
 export function resolveChatCompletionsUrl(endpoint: string): string {
@@ -61,7 +70,7 @@ export function buildEvalLlmTasks(): EvalTask[] {
           return {
             ok: true,
             skip: true,
-            detail: "无 API key（QLING_LLM_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY）",
+            detail: "无 API key（QLING_LLM_API_KEY 或当前 provider 的 <PROVIDER>_API_KEY）",
           };
         }
         return {

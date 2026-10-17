@@ -4,6 +4,7 @@
 // ============================================================
 
 import { Message } from "./types.js";
+import { DEFAULT_MODEL } from "./providers/presets.js";
 import { repairHistory, type HistoryRepairReport } from "./context-history-repair.js";
 import * as path from "path";
 import { createHash } from "node:crypto";
@@ -177,7 +178,7 @@ export class ContextCompactor {
 
   constructor(
     maxTokens = 6000,
-    model = "deepseek-chat",
+    model = DEFAULT_MODEL,
     options: {
       summarizer?: ContextSummaryCallback;
       minSummaryChars?: number;

@@ -61,7 +61,21 @@ import {
   apiKeyRequiredForEndpoint,
   isLoopbackEndpoint,
 } from "./providers/presets.js";
+import {
+  isHttpEndpoint,
+  publishProcessLlmSession,
+  resolveLlmSettings,
+  resolveProviderApiKey,
+  validateModelName,
+  type LlmFieldSources,
+} from "./providers/resolve-llm.js";
 import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
+import {
+  callModelWithRetry,
+  resolveModelRetryPolicy,
+  type ModelRetryEvent,
+} from "./providers/model-retry.js";
+import { resolveCostBudgetSignal } from "./cost-budget.js";
 import { RuntimeServices } from "./runtime-services.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
 import { RuntimeEventJournal } from "./runtime/event-journal.js";
@@ -123,9 +137,10 @@ const EXPLICIT_ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 export class MissingApiKeyError extends Error {
   readonly code = "QLING_API_KEY_MISSING";
 
-  constructor() {
+  constructor(message?: string) {
     super(
-      "未配置模型 API Key。请运行 `qling setup`，或设置 QLING_LLM_API_KEY、DEEPSEEK_API_KEY、OPENAI_API_KEY；使用本地 Ollama 时可将 endpoint 设为 http://localhost:11434/v1。"
+      message ??
+        "未配置模型 API Key。请运行 `qling setup`，或为当前 provider 设置 QLING_LLM_API_KEY / 对应的 <PROVIDER>_API_KEY；使用本地 Ollama 时可将 endpoint 设为 http://localhost:11434/v1。"
     );
     this.name = "MissingApiKeyError";
   }
@@ -340,34 +355,55 @@ export class AgentLoop extends AgentEventEmitter {
   // 轻量观测指标
   private compactionCount = 0;
   private retryCountTotal = 0;
+  private modelRetryBudget: { remaining: number } = { remaining: 20 };
+  private stickyModel: string | null = null;
+  private llmActivityNotice: string | null = null;
+  private startupProvider = "deepseek";
+  private llmSources: LlmFieldSources = {
+    provider: "default",
+    endpoint: "default",
+    model: "default",
+    apiKey: "default",
+  };
   private toolCallTotal = 0;
   private toolFailureTotal = 0;
   private jsonHookRunner: JsonHookRunner | null = null;
 
-  constructor(config: Partial<AgentConfig> = {}) {
+  constructor(config: Partial<AgentConfig> & { llmSources?: LlmFieldSources } = {}) {
     super();
-    const provider = config.provider ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
-    const endpoint =
-      config.endpoint ??
-      process.env.QLING_LLM_ENDPOINT ??
-      process.env.OPENAI_BASE_URL ??
-      process.env.DEEPSEEK_BASE_URL ??
-      (provider === "openai"
-        ? "https://api.openai.com/v1"
-        : provider === "ollama" || provider === "local"
-          ? "http://localhost:11434/v1"
-          : "https://api.deepseek.com");
-
-    const rawApiKey =
-      config.apiKey ??
-      process.env.QLING_LLM_API_KEY ??
-      process.env.DEEPSEEK_API_KEY ??
-      process.env.OPENAI_API_KEY ??
-      "";
-    const apiKey = resolveSessionApiKey(rawApiKey, endpoint, provider);
+    const resolved = resolveLlmSettings(
+      {
+        provider: config.provider,
+        endpoint: config.endpoint,
+        model: config.model,
+        apiKey: config.apiKey,
+        sources: {
+          provider: config.llmSources?.provider ?? (config.provider ? "session" : undefined),
+          endpoint: config.llmSources?.endpoint ?? (config.endpoint ? "session" : undefined),
+          model: config.llmSources?.model ?? (config.model ? "session" : undefined),
+          apiKey:
+            config.llmSources?.apiKey ??
+            (config.apiKey !== undefined ? "session" : undefined),
+        },
+      },
+      process.env
+    );
+    const provider = resolved.provider;
+    const endpoint = resolved.endpoint;
+    const apiKey = resolveSessionApiKey(resolved.apiKey, endpoint, provider);
     if (!apiKey) {
-      throw new MissingApiKeyError();
+      const startup = String(process.env.QLING_LLM_STARTUP_PROVIDER ?? "").trim();
+      const refusal = resolveProviderApiKey(provider, process.env, {
+        startupProvider: startup || provider,
+      });
+      const switched = Boolean(startup) && startup !== provider;
+      throw new MissingApiKeyError(switched ? refusal.message : undefined);
     }
+    this.llmSources = resolved.sources;
+    if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
+      process.env.QLING_LLM_STARTUP_PROVIDER = provider;
+    }
+    this.startupProvider = process.env.QLING_LLM_STARTUP_PROVIDER || provider;
     this.requestedFileStateDir =
       config.runtime?.fileStateDir ??
       process.env.QLING_FILE_STATE_DIR ??
@@ -395,7 +431,7 @@ export class AgentLoop extends AgentEventEmitter {
       apiKey,
       provider,
       endpoint,
-      model: config.model ?? "deepseek-chat",
+      model: resolved.model,
       systemPrompt: config.systemPrompt ?? "",
       maxIterations: config.maxIterations ?? 50,
       tools: (config.tools ?? ALL_TOOLS).map((tool) => ({ ...tool })),
@@ -412,7 +448,7 @@ export class AgentLoop extends AgentEventEmitter {
         timeoutMs: config.runtime?.timeoutMs ?? 300_000,
         providerRetryLimit:
           config.runtime?.providerRetryLimit ??
-          Math.max(0, Number(process.env.QLING_LLM_MAX_RETRIES ?? 3) || 0),
+          resolveModelRetryPolicy().maxRetries,
       },
       logging: this.loggingConfig,
       experimental: {
@@ -426,6 +462,12 @@ export class AgentLoop extends AgentEventEmitter {
           }
         : undefined,
     };
+    publishProcessLlmSession({
+      provider: this.config.provider ?? provider,
+      endpoint: this.config.endpoint ?? endpoint,
+      model: this.config.model,
+      apiKey: this.config.apiKey,
+    });
     if (EXPLICIT_ENABLE_VALUES.has(String(process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT ?? "").toLowerCase())) {
       this.config.tools = [...this.config.tools, ...ANCHORED_EDIT_TOOLS];
     }
@@ -445,7 +487,7 @@ export class AgentLoop extends AgentEventEmitter {
       workspaceDir: this.config.runtime?.workspaceDir || undefined,
     });
     {
-      const autoCfg = resolveAutoCompactConfig();
+      const autoCfg = resolveAutoCompactConfig(process.env, this.config.model);
       this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model);
     }
     this.knowledgeAdapter = new KnowledgeAgentAdapter(this.memoryStore);
@@ -903,6 +945,9 @@ export class AgentLoop extends AgentEventEmitter {
     if (this.runAbortController) throw new Error("agent run already in progress");
     const controller = new AbortController();
     this.runAbortController = controller;
+    const retryPolicy = resolveModelRetryPolicy();
+    this.modelRetryBudget = { remaining: retryPolicy.runRetryBudget };
+    this.stickyModel = null;
     try {
       return await runOuterAgentLoop({
         sessionId: this.sessionId,
@@ -920,6 +965,7 @@ export class AgentLoop extends AgentEventEmitter {
         executeInner: () => this.executeRunInternal(),
         isCanceled: () => controller.signal.aborted,
         providerRetryLimit: this.config.runtime?.providerRetryLimit,
+        checkpointSession: () => this.checkpointSession(),
         onProviderRetry: () => {
           this.retryCountTotal++;
         },
@@ -1127,8 +1173,13 @@ export class AgentLoop extends AgentEventEmitter {
       requireWorkspaceMutation: /^(?:1|true|yes|on)$/i.test(String(process.env.QLING_REQUIRE_WORKSPACE_MUTATION ?? "")),
       projectProfile,
       buildSystemPrompt: () => this.buildSystemPrompt(),
-      chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
-        this.chat(systemPrompt, overrides ?? {}),
+      chat: async (systemPrompt: string, overrides?: Record<string, unknown>) => {
+        try {
+          return await this.chat(systemPrompt, overrides ?? {});
+        } finally {
+          host.retryCountTotal = this.retryCountTotal;
+        }
+      },
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
       runVerificationCommand: (cmd: string, runtime?: "native" | "wsl") => this.runVerificationCommand(cmd, runtime),
       getRecoveryState: () => this.getRecoveryState(),
@@ -1200,6 +1251,23 @@ export class AgentLoop extends AgentEventEmitter {
     return this.config.endpoint ?? "";
   }
 
+  /** Request credential. Callers must not write this value to logs or the UI. */
+  getApiKey(): string {
+    return this.config.apiKey;
+  }
+
+  getStartupProvider(): string {
+    return this.startupProvider;
+  }
+
+  getLlmFieldSources(): LlmFieldSources {
+    return { ...this.llmSources };
+  }
+
+  getLlmActivityNotice(): string | null {
+    return this.llmActivityNotice;
+  }
+
   setModel(model: string): void {
     this.applyLlmSession({ model });
   }
@@ -1207,39 +1275,54 @@ export class AgentLoop extends AgentEventEmitter {
   /**
    * 进程内切换 LLM 会话态（model / provider / endpoint / apiKey）。
    * 默认不写盘；同步更新 QLING_LLM_* 环境变量以便后续子组件读取。
+   * provider 变化且未显式给出 apiKey 时清空旧 key，避免把上一供应商的密钥发给新主机。
    */
   applyLlmSession(patch: LlmSessionPatch): { provider: string; endpoint: string; model: string } {
+    const previousProvider = this.config.provider ?? "";
+    if (typeof patch.model === "string" && patch.model.trim()) {
+      const invalid = validateModelName(patch.model);
+      if (invalid) throw new Error(invalid);
+    }
+    if (typeof patch.endpoint === "string" && patch.endpoint.trim() && !isHttpEndpoint(patch.endpoint.trim())) {
+      throw new Error("endpoint 必须是 http(s) URL");
+    }
+    const providerChanged =
+      typeof patch.provider === "string" &&
+      Boolean(patch.provider.trim()) &&
+      patch.provider.trim() !== previousProvider;
+
     if (typeof patch.provider === "string" && patch.provider.trim()) {
       this.config.provider = patch.provider.trim();
       process.env.QLING_LLM_PROVIDER = this.config.provider;
+      this.llmSources.provider = "session";
     }
     if (typeof patch.endpoint === "string" && patch.endpoint.trim()) {
       this.config.endpoint = patch.endpoint.trim();
       process.env.QLING_LLM_ENDPOINT = this.config.endpoint;
+      this.llmSources.endpoint = "session";
     }
+    let modelChanged = false;
     if (typeof patch.model === "string" && patch.model.trim()) {
       this.config.model = patch.model.trim();
       process.env.QLING_LLM_MODEL = this.config.model;
-      {
-        const autoCfg = resolveAutoCompactConfig();
-        this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model, {
-          minSummaryChars: Number(process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS) || 500,
-          maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
-          breakerThreshold: Number(process.env.QLING_COMPACTION_BREAKER) || 3,
-        });
-      }
+      this.llmSources.model = "session";
+      modelChanged = true;
     }
     if (typeof patch.apiKey === "string") {
-      const nextKey = resolveSessionApiKey(
+      this.config.apiKey = resolveSessionApiKey(
         patch.apiKey,
         this.config.endpoint ?? "",
         this.config.provider ?? ""
       );
-      if (nextKey) {
-        this.config.apiKey = nextKey;
-      }
+      this.llmSources.apiKey = "session";
+    } else if (providerChanged) {
+      this.config.apiKey = resolveSessionApiKey(
+        "",
+        this.config.endpoint ?? "",
+        this.config.provider ?? ""
+      );
+      this.llmSources.apiKey = "session";
     } else {
-      // endpoint/provider 切到本地时，若当前 key 为空则填占位
       const ensured = resolveSessionApiKey(
         this.config.apiKey ?? "",
         this.config.endpoint ?? "",
@@ -1247,13 +1330,19 @@ export class AgentLoop extends AgentEventEmitter {
       );
       if (ensured) this.config.apiKey = ensured;
     }
+    if (modelChanged) this.refreshCompactor();
 
-    // Keep HTTP client in sync with session endpoint / key
     this.llmClient.reconfigure({
       endpoint: this.config.endpoint ?? "",
       apiKey: this.config.apiKey,
       timeoutMs: this.resolveLlmRequestTimeout(),
       provider: this.config.provider,
+    });
+    publishProcessLlmSession({
+      provider: this.config.provider ?? "unknown",
+      endpoint: this.config.endpoint ?? "",
+      model: this.config.model,
+      apiKey: this.config.apiKey,
     });
     this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
@@ -1263,6 +1352,15 @@ export class AgentLoop extends AgentEventEmitter {
       endpoint: this.config.endpoint ?? "",
       model: this.config.model,
     };
+  }
+
+  private refreshCompactor(): void {
+    const autoCfg = resolveAutoCompactConfig(process.env, this.config.model);
+    this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model, {
+      minSummaryChars: Number(process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS) || 500,
+      maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
+      breakerThreshold: Number(process.env.QLING_COMPACTION_BREAKER) || 3,
+    });
   }
 
   getToolCount(): number {
@@ -1363,13 +1461,25 @@ export class AgentLoop extends AgentEventEmitter {
 
   private configureCompactorSummarizer(): void {
     this.compactor.setSummarizer(async ({ systemPrompt, text, maxTokens }) => {
-      const response = await this.llmClient.chatCompletions({
-        model: this.config.model,
-        systemPrompt,
-        messages: [{ role: "user", content: text }],
-        tools: [],
-        overrides: { max_tokens: maxTokens, temperature: 0 },
+      const policy = resolveModelRetryPolicy();
+      const model = this.stickyModel || this.config.model;
+      const response = await callModelWithRetry({
+        policy,
+        models: [model],
+        allowFallback: false,
+        retryCap: 2,
         signal: this.runAbortController?.signal,
+        runBudget: this.modelRetryBudget,
+        costExhausted: () => this.isCostBudgetExhausted(),
+        call: (nextModel) => this.llmClient.chatCompletions({
+          model: nextModel,
+          systemPrompt,
+          messages: [{ role: "user", content: text }],
+          tools: [],
+          overrides: { max_tokens: maxTokens, temperature: 0 },
+          signal: this.runAbortController?.signal,
+        }),
+        onEvent: (event) => this.noteModelRetry(event, false),
       });
       return response.content;
     });
@@ -1916,20 +2026,130 @@ export class AgentLoop extends AgentEventEmitter {
       overrides,
     });
 
-    return this.llmClient.chatCompletions({
-      model: this.config.model,
-      systemPrompt,
-      messages: this.messages,
-      tools: requestTools,
-      overrides,
+    const policy = resolveModelRetryPolicy();
+    const primary = this.stickyModel || this.config.model;
+    const models = [primary, ...policy.fallbackModels.filter((model) => model !== primary)];
+    let partial = false;
+    return callModelWithRetry({
+      policy,
+      models,
       signal: this.runAbortController?.signal,
-      stream: Boolean(this.config.experimental?.streaming),
-      onTextDelta: (delta) => {
-        try { this.emit("response_delta", delta); } catch { /* TUI rendering is best-effort */ }
+      runBudget: this.modelRetryBudget,
+      costExhausted: () => this.isCostBudgetExhausted(),
+      call: (model) => {
+        partial = false;
+        return this.llmClient.chatCompletions({
+          model,
+          systemPrompt,
+          messages: this.messages,
+          tools: requestTools,
+          overrides,
+          signal: this.runAbortController?.signal,
+          stream: Boolean(this.config.experimental?.streaming),
+          onTextDelta: (delta) => {
+            partial = true;
+            try { this.emit("response_delta", delta); } catch { /* TUI rendering is best-effort */ }
+          },
+          onStreamFallback: (reason) => {
+            this.llmActivityNotice = "stream→non-stream";
+            try { this.emit("stream_fallback", reason); } catch { /* TUI rendering is best-effort */ }
+          },
+        });
       },
-      onStreamFallback: (reason) => {
-        try { this.emit("stream_fallback", reason); } catch { /* TUI rendering is best-effort */ }
-      },
+      onEvent: (event) => this.noteModelRetry(event, partial),
+    });
+  }
+
+  private isCostBudgetExhausted(): boolean {
+    return resolveCostBudgetSignal({
+      promptTokens: this.sessionPromptTokens,
+      completionTokens: this.sessionCompletionTokens,
+    }).exhausted;
+  }
+
+  private noteModelRetry(event: ModelRetryEvent, partialText: boolean): void {
+    if (event.type === "model_retry") {
+      this.retryCountTotal++;
+      this.llmActivityNotice = `↻ retry ${event.attempt}/${event.max}`;
+      this.emit("model_retry", {
+        attempt: event.attempt,
+        max: event.max,
+        delayMs: event.delayMs,
+        kind: event.kind,
+        status: event.status,
+        model: event.model,
+      });
+      if (partialText) {
+        try {
+          this.emit(
+            "response_delta",
+            `\n[模型连接中断，已丢弃上段输出，第 ${event.attempt}/${event.max} 次重试…]\n`,
+          );
+        } catch { /* TUI rendering is best-effort */ }
+      }
+      console.error(
+        `[model-retry] ${event.kind} ${event.attempt}/${event.max} wait ${event.delayMs}ms model=${event.model}` +
+          (event.status ? ` status=${event.status}` : ""),
+      );
+      this.emitModelRetryExecution("model_retry_scheduled", {
+        attempt: event.attempt,
+        max: event.max,
+        delayMs: event.delayMs,
+        kind: event.kind,
+        status: event.status,
+        requestId: event.requestId,
+        model: event.model,
+      });
+      return;
+    }
+    if (event.type === "model_fallback") {
+      this.stickyModel = event.to;
+      this.emit("model_fallback", { from: event.from, to: event.to, reason: event.reason });
+      const notice = `\n[已切换到备用模型 ${event.to}]\n`;
+      try { this.emit("response_delta", notice); } catch { /* TUI rendering is best-effort */ }
+      this.emit("repair", `已切换到备用模型 ${event.to}`, "model_fallback", event.reason);
+      console.error(`[model-fallback] ${event.from} -> ${event.to} (${event.reason})`);
+      this.emitModelRetryExecution("model_fallback_activated", {
+        from: event.from,
+        to: event.to,
+        kind: event.reason,
+      });
+      return;
+    }
+    if (event.type === "model_retry_recovered") {
+      this.llmActivityNotice = null;
+      this.emitModelRetryExecution("model_retry_recovered", {
+        attempts: event.attempts,
+        elapsedMs: event.elapsedMs,
+        model: event.model,
+      });
+      return;
+    }
+    this.llmActivityNotice = null;
+    this.emitModelRetryExecution("model_retry_exhausted", {
+      attempts: event.attempts,
+      elapsedMs: event.elapsedMs,
+      lastKind: event.lastKind,
+      models: event.models,
+      status: event.status,
+      requestId: event.requestId,
+      model: event.model,
+    });
+  }
+
+  private emitModelRetryExecution(
+    type: string,
+    modelRetry: NonNullable<ExecutionEvent["modelRetry"]>,
+  ): void {
+    const runId = this.activeRun?.runId;
+    if (!runId) return;
+    this.executionEventBus.emit({
+      runId,
+      sessionId: this.sessionId,
+      type,
+      stage: "provider",
+      status: type === "model_retry_exhausted" ? "failed" : "recovering",
+      modelRetry,
     });
   }
 

@@ -226,6 +226,13 @@ export class StreamingREPL {
     });
     this.agent.on("stream_fallback", (reason: string) => {
       this.ui.appendValidation("warn", `流式输出不可用，已单次回退完整响应 · ${reason}`);
+      void this.refreshStatusLine();
+    });
+    this.agent.on("model_retry", () => {
+      void this.refreshStatusLine();
+    });
+    this.agent.on("model_fallback", () => {
+      void this.refreshStatusLine();
     });
 
     this.agent.on("tool_start", (name: string, args: Record<string, unknown>) => {

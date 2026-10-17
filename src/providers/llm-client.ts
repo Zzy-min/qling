@@ -9,6 +9,12 @@ import {
   type ChatUsage,
 } from "../token-usage.js";
 import type { Message, RawToolCall, ToolDefinition } from "../types.js";
+import {
+  classifyModelError,
+  parseRetryAfterMs,
+  resolveStreamIdleMs,
+} from "./model-retry.js";
+import { endpointHost } from "./resolve-llm.js";
 
 export interface LlmChatOverrides {
   max_tokens?: number;
@@ -21,6 +27,7 @@ export interface LlmChatResponse {
   tool_calls?: RawToolCall[];
   usage?: ChatUsage;
   streamed?: boolean;
+  finishReason?: string;
 }
 
 export interface LlmStreamCallbacks {
@@ -46,6 +53,8 @@ export interface ProviderHttpErrorOptions {
   requestId?: string;
   retriable: boolean;
   detail?: string;
+  model?: string;
+  endpointHost?: string;
   cause?: unknown;
 }
 
@@ -56,11 +65,22 @@ export class ProviderHttpError extends Error {
   readonly retryAfterMs?: number;
   readonly requestId?: string;
   readonly retriable: boolean;
+  readonly model?: string;
+  readonly endpointHost?: string;
   override readonly cause?: unknown;
 
   constructor(options: ProviderHttpErrorOptions) {
     const statusText = options.status ? ` HTTP ${options.status}` : " transport";
-    super(`${options.provider}${statusText} error${options.detail ? `: ${options.detail}` : ""}`);
+    const detail = options.detail ? `: ${options.detail}` : "";
+    const model = options.model ? ` model=${options.model}` : "";
+    const host = options.endpointHost ? ` endpoint=${options.endpointHost}` : "";
+    let hint = "";
+    if (options.status === 401 || options.status === 403) {
+      hint = `；key 无效或不属于 ${options.provider}`;
+    } else if (options.status === 404 && options.model) {
+      hint = "；模型名可能不存在，用 /model list --remote 查看";
+    }
+    super(`${options.provider}${statusText} error${detail}${model}${host}${hint}`);
     this.name = "ProviderHttpError";
     this.provider = options.provider;
     this.status = options.status;
@@ -68,6 +88,8 @@ export class ProviderHttpError extends Error {
     this.retryAfterMs = options.retryAfterMs;
     this.requestId = options.requestId;
     this.retriable = options.retriable;
+    this.model = options.model;
+    this.endpointHost = options.endpointHost;
     Object.defineProperty(this, "cause", {
       value: options.cause,
       enumerable: false,
@@ -89,25 +111,21 @@ function sanitizeProviderDetail(value: unknown): string {
     .replace(/(["']?(?:api[_-]?key|token|secret)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi, "$1[REDACTED]");
 }
 
-function parseRetryAfterMs(value: unknown): number | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
-  const date = Date.parse(value);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
-}
-
 export class LlmHttpClient {
   private client: AxiosInstance;
   private provider: string;
+  private endpointHost = "";
+  private requestModel = "";
 
   constructor(options: LlmClientOptions) {
     this.provider = options.provider ?? "unknown";
+    this.endpointHost = endpointHost(options.endpoint);
     this.client = this.buildClient(options);
   }
 
   reconfigure(options: LlmClientOptions): void {
     this.provider = options.provider ?? this.provider;
+    this.endpointHost = endpointHost(options.endpoint);
     this.client = this.buildClient(options);
   }
 
@@ -125,6 +143,7 @@ export class LlmHttpClient {
     overrides?: LlmChatOverrides;
     signal?: AbortSignal;
   } & LlmStreamCallbacks): Promise<LlmChatResponse> {
+    this.requestModel = input.model;
     const systemMsg: Message = { role: "system", content: input.systemPrompt };
     const wireMessages = [systemMsg, ...input.messages].map((message) => ({
       role: message.role,
@@ -180,7 +199,18 @@ export class LlmHttpClient {
         validateStatus: () => true,
       });
     } catch (err) {
-      throw this.normalizeRequestError(err, input.signal);
+      if (input.signal?.aborted) throw this.normalizeRequestError(err, input.signal);
+      const normalized = this.normalizeRequestError(err, input.signal);
+      const transport = `${normalized instanceof ProviderHttpError ? normalized.code ?? "" : ""} ${normalized instanceof Error ? normalized.message : ""}`;
+      if (normalized instanceof ProviderHttpError && normalized.status === undefined && /econnreset|epipe|econnaborted|socket hang up/i.test(transport)) {
+        throw this.providerError({
+          code: "stream_interrupted",
+          retriable: true,
+          detail: "stream interrupted after 0 bytes; tool_call_fragment=no",
+          cause: err,
+        });
+      }
+      throw normalized;
     }
 
     const status = Number(resp.status ?? 0);
@@ -202,8 +232,7 @@ export class LlmHttpClient {
       try {
         return this.parseChatResponse(JSON.parse(raw), false);
       } catch (error) {
-        throw new ProviderHttpError({
-          provider: this.provider,
+        throw this.providerError({
           status,
           retriable: false,
           detail: "stream endpoint returned neither SSE nor valid JSON",
@@ -216,10 +245,26 @@ export class LlmHttpClient {
     let content = "";
     let usage: ChatUsage | undefined;
     let buffer = "";
+    let receivedBytes = 0;
+    let sawDone = false;
+    let finishReason: string | undefined;
     const decoder = new TextDecoder();
+    const stream = resp.data as AsyncIterable<Uint8Array> & { destroy?: () => void };
+    const iterator = stream[Symbol.asyncIterator]();
+    const idleMs = resolveStreamIdleMs();
+    const interrupted = (cause?: unknown) => this.providerError({
+      code: "stream_interrupted",
+      retriable: true,
+      detail: `stream interrupted after ${receivedBytes} bytes; tool_call_fragment=${toolParts.size > 0 ? "yes" : "no"}`,
+      cause,
+    });
     try {
-      for await (const chunk of resp.data as AsyncIterable<Uint8Array>) {
+      while (true) {
         if (input.signal?.aborted) throw canceledRequestError();
+        const next = await readNextStreamChunk(iterator, idleMs, input.signal, stream);
+        if (next.done) break;
+        const chunk = next.value;
+        receivedBytes += chunk?.byteLength ?? 0;
         buffer = (buffer + decoder.decode(chunk, { stream: true })).replace(/\r\n/g, "\n");
         let boundary: number;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
@@ -230,16 +275,40 @@ export class LlmHttpClient {
             .filter((line) => line.startsWith("data:"))
             .map((line) => line.slice(5).trimStart())
             .join("\n");
-          if (!data || data === "[DONE]") continue;
+          if (!data) continue;
+          if (data === "[DONE]") {
+            sawDone = true;
+            continue;
+          }
           const parsed = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{
+            error?: { message?: string; type?: string; code?: string; status?: number };
+            choices?: Array<{ finish_reason?: string | null; delta?: { content?: string; tool_calls?: Array<{
               index?: number;
               id?: string;
               function?: { name?: string; arguments?: string };
             }> } }>;
             usage?: unknown;
           };
-          const delta = parsed.choices?.[0]?.delta;
+          if (parsed.error) {
+            const upstreamCode = parsed.error.code || parsed.error.type || "upstream_stream_error";
+            const upstream = Object.assign(new Error(parsed.error.message || upstreamCode), {
+              code: upstreamCode,
+              status: parsed.error.status,
+              type: parsed.error.type,
+            });
+            const classification = classifyModelError(upstream);
+            throw this.providerError({
+              status: classification.status,
+              code: upstreamCode,
+              retriable: classification.retryable,
+              detail: sanitizeProviderDetail(parsed.error.message || parsed.error),
+            });
+          }
+          const choice = parsed.choices?.[0];
+          if (typeof choice?.finish_reason === "string" && choice.finish_reason) {
+            finishReason = choice.finish_reason;
+          }
+          const delta = choice?.delta;
           if (typeof delta?.content === "string" && delta.content) {
             content += delta.content;
             try { input.onTextDelta?.(delta.content); } catch { /* rendering must not fail the run */ }
@@ -256,15 +325,14 @@ export class LlmHttpClient {
         }
       }
     } catch (error) {
-      if (input.signal?.aborted) throw canceledRequestError();
-      throw new ProviderHttpError({
-        provider: this.provider,
-        status,
-        retriable: false,
-        detail: "stream ended before a valid completion",
-        cause: error,
-      });
+      if (input.signal?.aborted || (error instanceof Error && error.name === "AgentRunCanceledError")) {
+        throw error instanceof Error && error.name === "AgentRunCanceledError" ? error : canceledRequestError();
+      }
+      if (error instanceof ProviderHttpError) throw error;
+      throw interrupted(error);
     }
+
+    if (!sawDone && !finishReason) throw interrupted();
 
     const tool_calls = [...toolParts.entries()]
       .sort(([a], [b]) => a - b)
@@ -278,6 +346,7 @@ export class LlmHttpClient {
       ...(tool_calls.length > 0 ? { tool_calls } : {}),
       usage,
       streamed: true,
+      ...(finishReason ? { finishReason } : {}),
     };
   }
 
@@ -309,11 +378,13 @@ export class LlmHttpClient {
 
     const usage =
       extractProviderUsage(data?.usage) ?? extractProviderUsage(data);
+    const finishReason = typeof choice.finish_reason === "string" ? choice.finish_reason : undefined;
     return {
       content: msg.content ?? "",
       tool_calls: rawToolCalls,
       usage,
       streamed,
+      ...(finishReason ? { finishReason } : {}),
     };
   }
 
@@ -326,8 +397,7 @@ export class LlmHttpClient {
     const status = e.response?.status;
     const headers = e.response?.headers ?? {};
     const body = e.response?.data as { error?: { code?: string } } | undefined;
-    return new ProviderHttpError({
-      provider: this.provider,
+    return this.providerError({
       status,
       code: body?.error?.code ?? e.code,
       retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
@@ -349,14 +419,24 @@ export class LlmHttpClient {
     } catch {
       // plain-text provider error
     }
-    return new ProviderHttpError({
-      provider: this.provider,
+    return this.providerError({
       status,
       code,
       retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
       requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
       retriable: status === 429 || status >= 500,
       detail: sanitizeProviderDetail(detail),
+    });
+  }
+
+  private providerError(
+    options: Omit<ProviderHttpErrorOptions, "provider" | "model" | "endpointHost">
+  ): ProviderHttpError {
+    return new ProviderHttpError({
+      ...options,
+      provider: this.provider,
+      model: this.requestModel || undefined,
+      endpointHost: this.endpointHost || undefined,
     });
   }
 
@@ -378,6 +458,47 @@ function canceledRequestError(): Error {
   const canceled = new Error("LLM request canceled");
   canceled.name = "AgentRunCanceledError";
   return canceled;
+}
+
+async function readNextStreamChunk(
+  iterator: AsyncIterator<Uint8Array>,
+  idleMs: number,
+  signal: AbortSignal | undefined,
+  stream: { destroy?: () => void },
+): Promise<IteratorResult<Uint8Array>> {
+  if (signal?.aborted) throw canceledRequestError();
+  if (!idleMs) return iterator.next();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      action();
+    };
+    const onAbort = () => {
+      finish(() => {
+        try { stream.destroy?.(); } catch { /* already closed */ }
+        reject(canceledRequestError());
+      });
+    };
+    timer = setTimeout(() => {
+      finish(() => {
+        try { stream.destroy?.(); } catch { /* already closed */ }
+        const idle = new Error("stream idle timeout");
+        (idle as Error & { code?: string }).code = "stream_interrupted";
+        reject(idle);
+      });
+    }, idleMs);
+    timer.unref?.();
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    iterator.next().then(
+      (result) => finish(() => resolve(result)),
+      (error) => finish(() => reject(error)),
+    );
+  });
 }
 
 async function readResponseStream(stream: AsyncIterable<Uint8Array>, maxBytes: number): Promise<string> {

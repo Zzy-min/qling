@@ -22,6 +22,7 @@ import type { ExecutionEventBus } from "../execution/event-bus.js";
 import type { RecoveryController } from "../execution/recovery-controller.js";
 import type { FailureClassification, RecoveryState, RunOutcome } from "../execution/types.js";
 import { classifyFailure } from "../execution/failure-classifier.js";
+import { formatModelCallFailure, isModelRetryTerminal } from "../providers/model-retry.js";
 import {
   executePreparedTools,
   fingerprintToolAction,
@@ -925,6 +926,8 @@ export interface OuterLoopHost {
   providerRetryLimit?: number;
   sleep?: (delayMs: number) => Promise<void>;
   onProviderRetry?: () => void;
+  /** Persist completed tool results before a terminal model failure. */
+  checkpointSession?: () => Promise<unknown>;
   setActiveRun: (
     run: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null
   ) => void;
@@ -1008,6 +1011,38 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       }
       host.executionEventBus.completeAttempt(runId, "failed");
       const failure = classifyFailure(error, { provider: true });
+      if (isModelRetryTerminal(error)) {
+        host.executionEventBus.emit({
+          runId,
+          sessionId: host.sessionId,
+          type: "failure",
+          status: "failed",
+          stage: "provider",
+          category: failure.category,
+          fingerprint: failure.fingerprint,
+          recoveryAction: "checkpoint_and_fail",
+        });
+        host.executionEventBus.completeRun(runId, "failed");
+        host.recoveryController.completeRun("failed");
+        host.setActiveRun(null);
+        let saved = false;
+        if (host.checkpointSession) {
+          try {
+            await host.checkpointSession();
+            saved = true;
+          } catch (checkpointError) {
+            console.warn(
+              `[model-retry] 会话保存失败: ${checkpointError instanceof Error ? checkpointError.message : "unknown"}`,
+            );
+          }
+        }
+        return {
+          status: "failed",
+          runId,
+          text: formatModelCallFailure(error, host.sessionId, saved),
+          failure,
+        };
+      }
       const providerRetryLimit = Math.max(0, host.providerRetryLimit ?? 3);
       if (failure.category === "provider_transient" && transportAttempts < providerRetryLimit) {
         transportAttempts++;

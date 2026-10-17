@@ -1,4 +1,5 @@
 import { SlashCommand } from "./types.js";
+import { endpointHost } from "../providers/resolve-llm.js";
 
 export const configCommand: SlashCommand = {
   name: "/config",
@@ -6,12 +7,22 @@ export const configCommand: SlashCommand = {
   description: "查看当前生效配置",
   usage: "/config",
   execute: async (_args, context) => {
+    const loop = context.agentLoop as {
+      getProvider?: () => string;
+      getModel?: () => string;
+      getEndpoint?: () => string;
+      getLlmFieldSources?: () => { provider: string; model: string; endpoint: string };
+    } | undefined;
+    const sources = loop?.getLlmFieldSources?.();
+    const provider = loop?.getProvider?.() || process.env.QLING_LLM_PROVIDER || "未设置";
+    const model = loop?.getModel?.() || process.env.QLING_LLM_MODEL || "未设置";
+    const host = endpointHost(loop?.getEndpoint?.() || process.env.QLING_LLM_ENDPOINT || "") || "默认";
     context.writeLine("");
-    context.writeLine("⚙️ 【当前环境配置】");
+    context.writeLine("⚙️ 【当前生效配置】");
     context.writeLine("-----------------------------------------");
-    context.writeLine(`Provider   : ${process.env.QLING_LLM_PROVIDER || "未设置"}`);
-    context.writeLine(`Model      : ${process.env.QLING_LLM_MODEL || "未设置"}`);
-    context.writeLine(`Endpoint   : ${process.env.QLING_LLM_ENDPOINT || "默认"}`);
+    context.writeLine(`Provider   : ${provider}${sources ? ` (${sources.provider})` : ""}`);
+    context.writeLine(`Model      : ${model}${sources ? ` (${sources.model})` : ""}`);
+    context.writeLine(`Endpoint   : ${host}${sources ? ` (${sources.endpoint})` : ""}`);
     context.writeLine(`Workspace  : ${context.workspaceDir || process.cwd()}`);
     context.writeLine(`Vision     : ${process.env.QLING_FEATURES_VISION_TOOL === "true" ? "开启" : "关闭"}`);
     context.writeLine(`Memory     : ${process.env.QLING_FEATURES_SEMANTIC_MEMORY === "true" ? "语义" : "传统"}`);

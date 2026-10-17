@@ -4,10 +4,10 @@ import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp" | "models";
 
-const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "版本": "version",
@@ -45,6 +45,7 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "connect": "connect",
   "连接器": "connect",
   "ACP": "acp",
+  "模型": "models",
 };
 
 interface TopLevelCommandSuggestion {
@@ -686,6 +687,7 @@ TUI 环境变量:
   ${binName} permissions              # 查看本地权限默认策略与规则
   ${binName} permissions explain <tool> # 解释指定工具的权限决策
   ${binName} config                   # 查看本地配置摘要（密钥脱敏）
+  ${binName} models [--all]           # 默认只列当前服务商（远端失败回退该服务商预设，不打印 key）；--all 列出全部预设且不请求其他服务商
   ${binName} mcp                      # MCP 状态 / list / presets / add / remove
   ${binName} hooks                    # 查看本地 hooks/guard 配置摘要
   ${binName} hooks disable <name>     # 按名称禁用 JSON hook（不影响权限判定）

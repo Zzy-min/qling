@@ -6,17 +6,25 @@ import { join } from "path";
 
 import { SlashCommand } from "./types.js";
 import {
-  formatPresetTableLines,
+  formatProviderModelLines,
   getProviderPreset,
-  listProviderPresets,
-  resolveModelCandidates,
+  listProviderModelEntries,
+  lookupRetiredModel,
+  presetsForProvider,
+  providerModelNames,
 } from "../providers/presets.js";
+import { listRemoteModels } from "../providers/remote-models.js";
+import {
+  activePresetIds,
+  endpointHost,
+  isSameLlmTarget,
+  resolveProviderApiKey,
+  validateModelName,
+} from "../providers/resolve-llm.js";
 import { openOptionPickerOrFallback } from "../tui/option-picker-helpers.js";
 import { writeClipboardText } from "../runtime/clipboard.js";
 
 const execFileAsync = promisify(execFile);
-
-const DEFAULT_MODELS = resolveModelCandidates();
 
 function workspaceOf(context: any): string {
   return context.workspaceDir || context.agentLoop?.getWorkspaceDir?.() || process.cwd();
@@ -103,9 +111,9 @@ export const usageCommand: SlashCommand = {
 export const modelCommand: SlashCommand = {
   name: "/model",
   description: "切换器选择模型 / Provider 预设",
-  usage: "/model [list|use <preset>|model|status]",
+  usage: "/model [list [--remote]|use <preset>|<model>|status]",
   category: "session",
-  argumentHint: "[list|use <preset>|<model>|status]",
+  argumentHint: "[list [--remote]|use <preset>|<model>|status]",
   availability: "local",
   claudeCompatibleName: "/model",
   execute: async (args, context) => {
@@ -126,18 +134,40 @@ export const modelCommand: SlashCommand = {
     const sub = (args[0] ?? "").trim().toLowerCase();
     const rest = args.slice(1).join(" ").trim();
 
+    const endpointLabel = endpointHost(currentEndpoint) || currentEndpoint;
+    const sources = typeof loop.getLlmFieldSources === "function" ? loop.getLlmFieldSources() : null;
+    const sessionKey = typeof loop.getApiKey === "function" ? String(loop.getApiKey() ?? "") : "";
+    const unknownProvider = presetsForProvider(currentProvider).length === 0;
+    let showCatalogHint = true;
+
     const applyPreset = async (presetKey: string): Promise<boolean> => {
       const preset = getProviderPreset(presetKey);
       if (!preset) {
         context.writeError(`❌ 未找到预设 '${presetKey}'。`);
         return false;
       }
+      const sameProvider = preset.provider === currentProvider;
+      let apiKey: string | undefined;
+      if (!sameProvider) {
+        const startup = typeof loop.getStartupProvider === "function"
+          ? loop.getStartupProvider()
+          : currentProvider;
+        const resolved = resolveProviderApiKey(preset.provider, process.env, {
+          startupProvider: startup,
+          sameProvider: false,
+        });
+        if (preset.requiresApiKey && resolved.refused) {
+          context.writeError(`❌ ${resolved.message}`);
+          return false;
+        }
+        apiKey = resolved.apiKey;
+      }
       if (typeof loop.applyLlmSession === "function") {
         loop.applyLlmSession({
           provider: preset.provider,
           endpoint: preset.endpoint,
           model: preset.model,
-          apiKey: preset.requiresApiKey ? undefined : "",
+          ...(apiKey !== undefined ? { apiKey } : {}),
         });
       } else if (typeof loop.setModel === "function") {
         loop.setModel(preset.model);
@@ -149,29 +179,101 @@ export const modelCommand: SlashCommand = {
         return false;
       }
       await context.onModelChanged?.(preset.model);
-      // 切换器确认后仅一行反馈，避免刷长文
       context.writeLine(
         `🤖 ${preset.id} · ${preset.displayName} → ${preset.model}`
       );
       return true;
     };
 
-    const openModelPicker = (): boolean => {
-      const presets = listProviderPresets();
+    const applyModelOnly = async (nextModel: string): Promise<void> => {
+      const invalid = validateModelName(nextModel);
+      if (invalid) {
+        context.writeError(`❌ ${invalid}`);
+        return;
+      }
+      if (typeof loop.applyLlmSession === "function") {
+        loop.applyLlmSession({ model: nextModel });
+      } else if (typeof loop.setModel === "function") {
+        loop.setModel(nextModel);
+      } else {
+        context.writeError("❌ 当前 AgentLoop 不支持 session 级模型切换。");
+        return;
+      }
+      await context.onModelChanged?.(nextModel);
+      context.writeLine(`已切换模型: ${currentModel} -> ${nextModel}`);
+    };
+
+    const openModelPicker = (models?: string[]): boolean => {
+      if (models && models.length > 0) {
+        const unique = [...new Set(models)];
+        let marked = false;
+        const items = unique.map((model) => {
+          const active = !marked && model === currentModel;
+          if (active) marked = true;
+          return {
+            id: model,
+            label: model,
+            description: `${currentProvider} · ${endpointLabel}`,
+            active,
+          };
+        });
+        return openOptionPickerOrFallback(
+          context,
+          {
+            title: "模型切换 · 远端模型",
+            footerHint: "↑/↓ 选择模型 · Enter 应用 · Esc 取消",
+            selectedId: items.find((item) => item.active)?.id,
+            items,
+            onPick: async (item) => {
+              await applyModelOnly(item.id);
+            },
+          },
+          () => {
+            context.writeLine("");
+            context.writeLine("🤖 【远端模型】");
+            context.writeLine("-----------------------------------------");
+            context.writeLine(`当前      : ${currentProvider} · ${currentModel}`);
+            context.writeLine(`Endpoint  : ${endpointLabel}`);
+            for (const model of unique) context.writeLine(model);
+            context.writeLine("-----------------------------------------");
+            context.writeLine("");
+          }
+        );
+      }
+      const entries = listProviderModelEntries(currentProvider, currentModel);
+      let marked = false;
+      const items = entries.map((entry) => {
+        const preset = entry.presetId ? getProviderPreset(entry.presetId) : undefined;
+        const matchesPreset = preset
+          ? isSameLlmTarget(preset, {
+              provider: currentProvider,
+              endpoint: currentEndpoint,
+              model: currentModel,
+            })
+          : false;
+        const active = !marked && (matchesPreset || (!entry.presetId && entry.model === currentModel));
+        if (active) marked = true;
+        return {
+          id: entry.id,
+          label: entry.source === "preset" ? entry.label : entry.model,
+          description: entry.description,
+          active,
+        };
+      });
       return openOptionPickerOrFallback(
         context,
         {
-          title: "模型切换 · Provider",
-          footerHint: "↑/↓ 选择预设 · Enter 应用 · Esc 取消",
-          selectedId: presets.find((p) => p.model === currentModel)?.id,
-          items: presets.map((p) => ({
-            id: p.id,
-            label: `${p.displayName || p.id}`,
-            description: `${p.provider} · ${p.model}`,
-            active: p.model === currentModel || p.provider === currentProvider,
-          })),
+          title: `模型切换 · ${currentProvider}`,
+          footerHint: "↑/↓ 选择当前服务商的模型 · Enter 应用 · Esc 取消",
+          selectedId: items.find((item) => item.active)?.id,
+          items,
           onPick: async (item) => {
-            await applyPreset(item.id);
+            const entry = entries.find((candidate) => candidate.id === item.id);
+            if (entry?.presetId) {
+              await applyPreset(entry.presetId);
+              return;
+            }
+            await applyModelOnly(entry?.model ?? item.id);
           },
         },
         () => {
@@ -179,8 +281,8 @@ export const modelCommand: SlashCommand = {
           context.writeLine("🤖 【模型 / Provider】");
           context.writeLine("-----------------------------------------");
           context.writeLine(`当前      : ${currentProvider} · ${currentModel}`);
-          context.writeLine(`Endpoint  : ${currentEndpoint}`);
-          for (const line of formatPresetTableLines()) {
+          context.writeLine(`Endpoint  : ${endpointLabel}`);
+          for (const line of formatProviderModelLines(currentProvider, currentModel, { hint: showCatalogHint })) {
             context.writeLine(line);
           }
           context.writeLine("切换: /model use <preset>");
@@ -190,6 +292,29 @@ export const modelCommand: SlashCommand = {
       );
     };
 
+    const remoteRequested = args.some((arg) => arg === "--remote");
+    const listing = !sub || sub === "list" || sub === "ls" || sub === "--remote";
+    if (remoteRequested && listing) {
+      const remote = await listRemoteModels({
+        endpoint: currentEndpoint,
+        apiKey: sessionKey,
+        timeoutMs: 5000,
+      });
+      if (remote.ok) {
+        openModelPicker(remote.models);
+        return;
+      }
+      showCatalogHint = false;
+      if (unknownProvider) {
+        const reason = remote.warning || "远端模型不可用";
+        context.writeError(`⚠️ 未知服务商，${reason}。用 /model use <preset> 切换。`);
+      } else if (remote.warning) {
+        context.writeError(`⚠️ ${remote.warning}`);
+      }
+      openModelPicker();
+      return;
+    }
+
     // 默认 / list / pick → 切换器（TUI）；status 仅文字
     if (!sub || sub === "list" || sub === "ls" || sub === "presets" || sub === "pick" || sub === "ui") {
       openModelPicker();
@@ -197,14 +322,28 @@ export const modelCommand: SlashCommand = {
     }
 
     if (sub === "status" || sub === "状态") {
+      const active = activePresetIds({
+        provider: currentProvider,
+        endpoint: currentEndpoint,
+        model: currentModel,
+      });
       context.writeLine("");
       context.writeLine("🤖 【模型 / Provider】");
       context.writeLine("-----------------------------------------");
-      context.writeLine(`Provider  : ${currentProvider}`);
-      context.writeLine(`Endpoint  : ${currentEndpoint}`);
-      context.writeLine(`Model     : ${currentModel}`);
-      context.writeLine(`候选模型  : ${DEFAULT_MODELS.join(", ")}`);
+      context.writeLine(`Provider  : ${currentProvider}${sources ? ` (${sources.provider})` : ""}`);
+      context.writeLine(`Endpoint  : ${endpointLabel}${sources ? ` (${sources.endpoint})` : ""}`);
+      context.writeLine(`Model     : ${currentModel}${sources ? ` (${sources.model})` : ""}`);
+      const retiredReplacement = lookupRetiredModel(currentModel);
+      if (retiredReplacement) {
+        context.writeLine(`提示      : 该模型已下线，建议换成 ${retiredReplacement}。`);
+      }
+      context.writeLine(`候选模型  : ${providerModelNames(currentProvider, currentModel).join(", ")}`);
+      if (unknownProvider) {
+        context.writeLine("提示      : 未知服务商，没有预设模型。用 /model use <preset> 切换。");
+      }
+      context.writeLine(`高亮预设  : ${active.length ? active.join(", ") : "无"}`);
       context.writeLine("切换      : /model  （打开切换器）");
+      context.writeLine("范围      : 会话切换不写入配置文件。");
       context.writeLine("-----------------------------------------");
       context.writeLine("");
       return;
@@ -222,17 +361,27 @@ export const modelCommand: SlashCommand = {
 
     // 兼容：/model <modelName> 仅切换 model
     const nextModel = args.join(" ").trim();
+    const invalidModel = validateModelName(nextModel);
+    if (invalidModel) {
+      context.writeError(`❌ ${invalidModel}`);
+      return;
+    }
     if (typeof loop.setModel !== "function" && typeof loop.applyLlmSession !== "function") {
       context.writeError("❌ 当前 AgentLoop 不支持 session 级模型切换。");
       context.writeLine("-----------------------------------------");
       context.writeLine("");
       return;
     }
-    if (typeof loop.applyLlmSession === "function") {
-      loop.applyLlmSession({ model: nextModel });
-    } else {
-      loop.setModel(nextModel);
-      process.env.QLING_LLM_MODEL = nextModel;
+    try {
+      if (typeof loop.applyLlmSession === "function") {
+        loop.applyLlmSession({ model: nextModel });
+      } else {
+        loop.setModel(nextModel);
+        process.env.QLING_LLM_MODEL = nextModel;
+      }
+    } catch (err) {
+      context.writeError(`❌ ${err instanceof Error ? err.message : String(err)}`);
+      return;
     }
     await context.onModelChanged?.(nextModel);
     context.writeLine(`已切换模型: ${currentModel} -> ${nextModel}`);

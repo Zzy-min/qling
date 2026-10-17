@@ -3,6 +3,12 @@ import { existsSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import YAML from "yaml";
+import {
+  alignLoadedLlmConfig,
+  type LlmFieldSource,
+  type LlmFieldSources,
+} from "./providers/resolve-llm.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./providers/presets.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type LogFormat = "text" | "json";
@@ -253,7 +259,10 @@ export interface LoadedConfig {
   config: QlingConfig;
   warnings: string[];
   usedConfigPath?: string;
+  llmSources: LlmFieldSources;
 }
+
+export type { LlmFieldSource, LlmFieldSources };
 
 const HOME = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
@@ -262,8 +271,8 @@ const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
 export function buildDefaultConfig(): QlingConfig {
   return {
     llm: {
-      provider: "deepseek",
-      model: "deepseek-chat",
+      provider: DEFAULT_PROVIDER,
+      model: DEFAULT_MODEL,
       endpoint: "https://api.deepseek.com",
       api_key: "",
       request_timeout_ms: 120000,
@@ -499,11 +508,61 @@ export async function loadQlingConfig(
   normalizeAgentsIsolationConfig(withCli);
   normalizeRuntimeRoots(withCli);
   await mergeLocalMcpStore(withCli, warnings);
+  const llmSources = detectLlmSources(fromFile, fromEnv, cli);
+  alignLoadedLlmConfig(withCli.llm, llmSources, env, warnings);
 
   return {
     config: withCli,
     warnings,
     usedConfigPath,
+    llmSources,
+  };
+}
+
+function llmFieldDefined(
+  partial: Partial<QlingConfig> | undefined,
+  field: "provider" | "endpoint" | "model" | "api_key"
+): boolean {
+  return typeof partial?.llm?.[field] === "string";
+}
+
+function detectLlmFieldSource(
+  fromCli: boolean,
+  fromEnv: boolean,
+  fromFile: boolean
+): LlmFieldSource {
+  if (fromCli) return "cli";
+  if (fromEnv) return "env";
+  if (fromFile) return "file";
+  return "default";
+}
+
+function detectLlmSources(
+  fromFile: Partial<QlingConfig>,
+  fromEnv: Partial<QlingConfig>,
+  cli: CliGlobalOptions
+): LlmFieldSources {
+  return {
+    provider: detectLlmFieldSource(
+      Boolean(cli.provider?.trim()),
+      llmFieldDefined(fromEnv, "provider"),
+      llmFieldDefined(fromFile, "provider")
+    ),
+    endpoint: detectLlmFieldSource(
+      Boolean(cli.endpoint?.trim()),
+      llmFieldDefined(fromEnv, "endpoint"),
+      llmFieldDefined(fromFile, "endpoint")
+    ),
+    model: detectLlmFieldSource(
+      Boolean(cli.model?.trim()),
+      llmFieldDefined(fromEnv, "model"),
+      llmFieldDefined(fromFile, "model")
+    ),
+    apiKey: detectLlmFieldSource(
+      Boolean(cli.apiKey?.trim()),
+      llmFieldDefined(fromEnv, "api_key"),
+      llmFieldDefined(fromFile, "api_key")
+    ),
   };
 }
 
@@ -534,6 +593,9 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_LLM_MAX_RETRIES = String(config.llm.max_retries ?? 3);
   if (config.llm.api_key) {
     process.env.QLING_LLM_API_KEY = config.llm.api_key;
+  }
+  if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
+    process.env.QLING_LLM_STARTUP_PROVIDER = config.llm.provider;
   }
 
   if (config.runtime.workspace_dir) {
