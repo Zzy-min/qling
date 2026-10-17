@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,7 +64,11 @@ test("listSkills discovers opencli from package skills path", async () => {
 test("runSkill loads opencli body with decision tree", async () => {
   clearSkillCache();
   const prev = process.cwd();
+  const prevHome = process.env.QLING_HOME;
+  const home = await mkdtemp(join(tmpdir(), "qling-opencli-home-"));
   try {
+    await mkdir(home, { recursive: true });
+    process.env.QLING_HOME = home;
     process.chdir(repoRoot);
     const result = await runSkill({ name: "opencli" });
     assert.notEqual(result.is_error, true, result.output);
@@ -70,6 +76,9 @@ test("runSkill loads opencli body with decision tree", async () => {
     assert.match(result.output, /url_fetch/);
   } finally {
     process.chdir(prev);
+    if (prevHome === undefined) delete process.env.QLING_HOME;
+    else process.env.QLING_HOME = prevHome;
+    await rm(home, { recursive: true, force: true });
     clearSkillCache();
   }
 });
@@ -87,10 +96,21 @@ test("restrictions section routes social platforms to opencli skill", () => {
 
 test("workflow section encodes three task execution rules", () => {
   const section = buildWorkflowSection();
-  assert.match(section.content, /任务执行三条基本规则/);
+  assert.match(section.content, /轻灵基座任务流程/);
+  assert.match(section.content, /查询、解释、审查|诊断类|修改、构建、修复/);
+  assert.match(section.content, /接收.*取证.*执行.*验证.*交付/s);
+  assert.match(section.content, /外部写入.*确认|破坏性.*确认/s);
+  assert.match(section.content, /成功标准|完成条件/);
   assert.match(section.content, /关联分析|工具是否匹配/);
   assert.match(section.content, /正确流程|可复现/);
   assert.match(section.content, /未完成|失败|实事求是|禁止把挑战页/);
+  assert.match(section.content, /文档.*Skill.*能力.*当前运行状态/s);
+  assert.match(section.content, /已确认.*可运行.*已登录.*已连接/s);
+  assert.match(section.content, /本轮.*直接.*证据/s);
+  assert.match(section.content, /只读探测.*--version.*list.*doctor.*whoami.*status.*--help/s);
+  assert.match(section.content, /声明.*证据.*文档能力.*当前运行态.*任务结果/s);
+  assert.match(section.content, /opencli.*skill.*list -f json.*doctor.*--help/s);
+  assert.match(section.content, /清理.*删除.*明确授权/s);
 });
 
 test("tone section requires honest success and failure reporting", () => {

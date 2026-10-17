@@ -43,6 +43,7 @@ function createUiRecorder() {
   const validations = [];
   const outputs = [];
   const errors = [];
+  const clears = [];
   let stopped = false;
   let statusLine = null;
   return {
@@ -51,6 +52,7 @@ function createUiRecorder() {
     validations,
     outputs,
     errors,
+    clears,
     get stopped() {
       return stopped;
     },
@@ -78,6 +80,9 @@ function createUiRecorder() {
     setStatusLineEnabled: () => {},
     isOverlayOpen: () => false,
     dismissOverlay: () => {},
+    clearConversationView: () => {
+      clears.push(true);
+    },
   };
 }
 
@@ -332,6 +337,36 @@ test("streaming repl handles unknown queue subcommand locally with usage", async
   }
 });
 
+test("streaming repl routes interrupt immediately to actor without entering the serial queue", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-interrupt-"));
+  try {
+    const agent = {
+      ...createAgent(stateDir),
+      getAgentRuntimeMode: () => "actor",
+      interjectPrompt: async (prompt) => `interjected:${prompt}`,
+      checkpointSession: async () => {},
+    };
+    const repl = new StreamingREPL(agent);
+    const ui = createUiRecorder();
+    ui.completeAssistantStream = () => false;
+    ui.appendFinal = (text) => ui.outputs.push(String(text));
+    ui.cancelAssistantStream = () => {};
+    repl.ui = ui;
+    repl.scheduler = { listTasks: async () => [], runDueTasksOnce: async () => {} };
+    repl.goalController = { getGoalStatus: async () => null };
+
+    await repl.handleUserInput("/interrupt keep the current constraint");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(ui.userInputs, ["/interrupt keep the current constraint"]);
+    assert.match(ui.validations.join("\n"), /安全边界/);
+    assert.deepEqual(ui.outputs, ["interjected:keep the current constraint"]);
+    assert.equal(repl.inputQueue.pendingCount, 0);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("streaming repl immediate queue clear removes pending input without leaking body", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-queue-clear-"));
   try {
@@ -506,6 +541,21 @@ test("streaming repl routes slash command errors through ui instead of console",
     assert.deepEqual(ui.errors, ["slash error line"]);
   } finally {
     console.error = originalError;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("streaming repl exposes the active view clear port to slash commands", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-repl-clear-view-"));
+  try {
+    const repl = new StreamingREPL(createAgent(stateDir));
+    const ui = createUiRecorder();
+    repl.ui = ui;
+
+    repl.createSlashContext().clearConversationView();
+
+    assert.equal(ui.clears.length, 1);
+  } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
 });

@@ -4,7 +4,8 @@
 // ============================================================
 
 import type { SubtaskResult } from "./subtask.js";
-import { normalizeSubAgentRole, type SubAgentRole } from "../agents/roles.js";
+import type { ToolDefinition } from "../types.js";
+import { filterToolsForRole, normalizeSubAgentRole, type SubAgentRole } from "../agents/roles.js";
 
 const ENABLED = new Set(["1", "true", "on", "yes"]);
 
@@ -115,6 +116,17 @@ export function gateParallelExplore(options: {
   }
 
   return { ok: true, tasks, role };
+}
+
+/**
+ * waitForInit 之后的角色白名单兜底。
+ * 并行 explore/review 也走 SubtaskRunner.run，因此和串行共用这一处收口。
+ */
+export function sealSubagentTools(
+  tools: ToolDefinition[] | undefined,
+  role: SubAgentRole
+): ToolDefinition[] {
+  return filterToolsForRole(tools, role);
 }
 
 export function formatParallelExploreReport(

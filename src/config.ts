@@ -3,6 +3,12 @@ import { existsSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import YAML from "yaml";
+import {
+  alignLoadedLlmConfig,
+  type LlmFieldSource,
+  type LlmFieldSources,
+} from "./providers/resolve-llm.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./providers/presets.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type LogFormat = "text" | "json";
@@ -39,6 +45,8 @@ export interface GuardConfig {
       tool_pattern: string;
       decision: "allow" | "deny" | "ask";
       reason?: string;
+      /** 参数级 glob（bash 为单段命令）；缺省 decision 的规则按 deny 解析 */
+      arg_pattern?: string;
     }>;
   };
 }
@@ -113,6 +121,14 @@ export interface QlingConfig {
     timeout_ms: number;
     max_output_bytes: number;
   };
+  /**
+   * Env QLING_TRUST_ALL_WORKSPACES only. Default false.
+   * Project qling.config.* and --config inside a workspace cannot turn this on;
+   * there is no auto-loaded user-level config file.
+   */
+  trust?: {
+    all_workspaces: boolean;
+  };
   features: {
     semantic_memory: boolean;
     workflow_runtime: boolean;
@@ -120,6 +136,12 @@ export interface QlingConfig {
     dashboard: boolean;
     dynamic_discovery: boolean;
     tool_spec_boost: boolean;
+    harness_prompt: boolean;
+    tool_capabilities: boolean;
+    artifact_store: boolean;
+    evidence_goals: boolean;
+    memory_cards: boolean;
+    controlled_subagents: boolean;
   };
   logging: {
     level: LogLevel;
@@ -230,13 +252,17 @@ export interface CliGlobalOptions {
   provider?: string;
   endpoint?: string;
   apiKey?: string;
+  tuiMode?: "auto" | "fullscreen" | "classic";
 }
 
 export interface LoadedConfig {
   config: QlingConfig;
   warnings: string[];
   usedConfigPath?: string;
+  llmSources: LlmFieldSources;
 }
+
+export type { LlmFieldSource, LlmFieldSources };
 
 const HOME = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
@@ -245,8 +271,8 @@ const DEFAULT_CACHE_DIR = path.join(DEFAULT_STATE_DIR, "cache");
 export function buildDefaultConfig(): QlingConfig {
   return {
     llm: {
-      provider: "deepseek",
-      model: "deepseek-chat",
+      provider: DEFAULT_PROVIDER,
+      model: DEFAULT_MODEL,
       endpoint: "https://api.deepseek.com",
       api_key: "",
       request_timeout_ms: 120000,
@@ -281,6 +307,9 @@ export function buildDefaultConfig(): QlingConfig {
       timeout_ms: 5000,
       max_output_bytes: 16 * 1024,
     },
+    trust: {
+      all_workspaces: false,
+    },
     features: {
       semantic_memory: false,
       workflow_runtime: false,
@@ -288,6 +317,12 @@ export function buildDefaultConfig(): QlingConfig {
       dashboard: false,
       dynamic_discovery: false,
       tool_spec_boost: false,
+      harness_prompt: false,
+      tool_capabilities: false,
+      artifact_store: false,
+      evidence_goals: false,
+      memory_cards: false,
+      controlled_subagents: false,
     },
     logging: {
       level: "info",
@@ -455,6 +490,15 @@ export async function loadQlingConfig(
     const expanded = expandEnvTemplate(raw, env, warnings);
     fromFile = parseConfigByExt(configPath, expanded) as Partial<QlingConfig>;
     usedConfigPath = configPath;
+    if (configRequestsTrustAll(fromFile) && fromFile.trust) {
+      const trust: { all_workspaces?: boolean } = { ...fromFile.trust };
+      delete trust.all_workspaces;
+      if (Object.keys(trust).length === 0) delete fromFile.trust;
+      else fromFile.trust = trust as QlingConfig["trust"];
+      warnings.push(
+        "忽略配置文件中的 trust.all_workspaces：该开关只接受环境变量 QLING_TRUST_ALL_WORKSPACES（当前没有自动加载的用户级配置文件）。"
+      );
+    }
   }
 
   const fromEnv = buildEnvConfig(env, defaults);
@@ -464,11 +508,61 @@ export async function loadQlingConfig(
   normalizeAgentsIsolationConfig(withCli);
   normalizeRuntimeRoots(withCli);
   await mergeLocalMcpStore(withCli, warnings);
+  const llmSources = detectLlmSources(fromFile, fromEnv, cli);
+  alignLoadedLlmConfig(withCli.llm, llmSources, env, warnings);
 
   return {
     config: withCli,
     warnings,
     usedConfigPath,
+    llmSources,
+  };
+}
+
+function llmFieldDefined(
+  partial: Partial<QlingConfig> | undefined,
+  field: "provider" | "endpoint" | "model" | "api_key"
+): boolean {
+  return typeof partial?.llm?.[field] === "string";
+}
+
+function detectLlmFieldSource(
+  fromCli: boolean,
+  fromEnv: boolean,
+  fromFile: boolean
+): LlmFieldSource {
+  if (fromCli) return "cli";
+  if (fromEnv) return "env";
+  if (fromFile) return "file";
+  return "default";
+}
+
+function detectLlmSources(
+  fromFile: Partial<QlingConfig>,
+  fromEnv: Partial<QlingConfig>,
+  cli: CliGlobalOptions
+): LlmFieldSources {
+  return {
+    provider: detectLlmFieldSource(
+      Boolean(cli.provider?.trim()),
+      llmFieldDefined(fromEnv, "provider"),
+      llmFieldDefined(fromFile, "provider")
+    ),
+    endpoint: detectLlmFieldSource(
+      Boolean(cli.endpoint?.trim()),
+      llmFieldDefined(fromEnv, "endpoint"),
+      llmFieldDefined(fromFile, "endpoint")
+    ),
+    model: detectLlmFieldSource(
+      Boolean(cli.model?.trim()),
+      llmFieldDefined(fromEnv, "model"),
+      llmFieldDefined(fromFile, "model")
+    ),
+    apiKey: detectLlmFieldSource(
+      Boolean(cli.apiKey?.trim()),
+      llmFieldDefined(fromEnv, "api_key"),
+      llmFieldDefined(fromFile, "api_key")
+    ),
   };
 }
 
@@ -500,6 +594,9 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   if (config.llm.api_key) {
     process.env.QLING_LLM_API_KEY = config.llm.api_key;
   }
+  if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
+    process.env.QLING_LLM_STARTUP_PROVIDER = config.llm.provider;
+  }
 
   if (config.runtime.workspace_dir) {
     process.env.QLING_WORKSPACE_DIR = config.runtime.workspace_dir;
@@ -520,6 +617,12 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_JSON_HOOKS_MANIFEST = config.hooks?.manifest_path ?? path.join(config.runtime.file_state_dir, "hooks.json");
   process.env.QLING_JSON_HOOKS_TIMEOUT_MS = String(config.hooks?.timeout_ms ?? 5000);
   process.env.QLING_JSON_HOOKS_MAX_OUTPUT_BYTES = String(config.hooks?.max_output_bytes ?? 16 * 1024);
+  // A project config default of false must not clear an operator env opt-in.
+  if (config.trust?.all_workspaces === true || isTrustAllWorkspacesEnv(process.env)) {
+    process.env.QLING_TRUST_ALL_WORKSPACES = "true";
+  } else {
+    process.env.QLING_TRUST_ALL_WORKSPACES = "false";
+  }
   process.env.QLING_GUARD_ENABLED = String(config.guard.enabled);
   process.env.QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES =
     JSON.stringify(config.guard.network.url_fetch.allowed_url_prefixes);
@@ -561,6 +664,12 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_FEATURES_DASHBOARD = String(config.features.dashboard);
   process.env.QLING_FEATURES_DYNAMIC_DISCOVERY = String(config.features.dynamic_discovery);
   process.env.QLING_FEATURES_TOOL_SPEC_BOOST = String(config.features.tool_spec_boost);
+  process.env.QLING_FEATURES_HARNESS_PROMPT = String(config.features.harness_prompt);
+  process.env.QLING_FEATURES_TOOL_CAPABILITIES = String(config.features.tool_capabilities);
+  process.env.QLING_FEATURES_ARTIFACT_STORE = String(config.features.artifact_store);
+  process.env.QLING_FEATURES_EVIDENCE_GOALS = String(config.features.evidence_goals);
+  process.env.QLING_FEATURES_MEMORY_CARDS = String(config.features.memory_cards);
+  process.env.QLING_FEATURES_CONTROLLED_SUBAGENTS = String(config.features.controlled_subagents);
 
   // Workflow
   process.env.QLING_WORKFLOW_CHECKPOINT_DIR = config.workflow.checkpoint_dir;
@@ -679,6 +788,17 @@ export function guardConfigFromEnv(env: NodeJS.ProcessEnv = process.env): GuardC
       rules: parsePermissionRules(env.QLING_GUARD_PERMISSIONS_RULES, defaults.permissions.rules),
     },
   };
+}
+
+function isTrustAllWorkspacesEnv(env: NodeJS.ProcessEnv): boolean {
+  return /^(1|true|yes|on)$/i.test(String(env.QLING_TRUST_ALL_WORKSPACES ?? "").trim());
+}
+
+/** Project and ad-hoc config files cannot opt the process into trusting every workspace. */
+function configRequestsTrustAll(value: Partial<QlingConfig>): boolean {
+  const flag = (value.trust as { all_workspaces?: unknown } | undefined)?.all_workspaces;
+  if (flag === true || flag === 1) return true;
+  return typeof flag === "string" && /^(1|true|yes|on)$/i.test(flag.trim());
 }
 
 function resolveConfigPath(input?: string): string | undefined {
@@ -806,18 +926,32 @@ function parseNumber(raw: string | undefined, fallback: number): number {
 
 function parsePermissionRules(
   raw: string | undefined,
-  fallback: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string }>
-): Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string }> {
+  fallback: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string }>
+): Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string }> {
   if (!raw) return fallback;
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (r) =>
-          typeof r === "object" &&
-          typeof r.tool_pattern === "string" &&
-          ["allow", "deny", "ask"].includes(r.decision)
-      );
+      const out: Array<{ tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string }> = [];
+      for (const r of parsed) {
+        if (!r || typeof r !== "object") continue;
+        if (typeof r.tool_pattern !== "string" || !r.tool_pattern.trim()) continue;
+        // 安全默认（CWE-1188）：缺省/非法 decision 解析为 deny，而不是丢弃后落到默认 mode
+        const decision: "allow" | "deny" | "ask" =
+          r.decision === "allow" || r.decision === "ask" || r.decision === "deny"
+            ? r.decision
+            : "deny";
+        const rule: { tool_pattern: string; decision: "allow" | "deny" | "ask"; reason?: string; arg_pattern?: string } = {
+          tool_pattern: r.tool_pattern,
+          decision,
+        };
+        if (typeof r.reason === "string" && r.reason.trim()) rule.reason = r.reason;
+        if (typeof r.arg_pattern === "string" && r.arg_pattern.trim()) {
+          rule.arg_pattern = r.arg_pattern;
+        }
+        out.push(rule);
+      }
+      return out;
     }
   } catch {
     // ignore

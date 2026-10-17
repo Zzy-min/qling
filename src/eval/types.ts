@@ -32,6 +32,15 @@ export interface EvalTaskResult {
   durationMs: number;
 }
 
+/** Describes exactly what an eval result is allowed to prove. */
+export interface EvalEvidenceProfile {
+  executor: "component" | "harness" | "agent";
+  model: "none" | "fake" | "real";
+  verifier: "assertion" | "environment" | "model" | "human";
+  claim: string;
+  limitations: string[];
+}
+
 export interface EvalReport {
   total: number;
   pass: number;
@@ -39,4 +48,5 @@ export interface EvalReport {
   skip: number;
   results: EvalTaskResult[];
   durationMs: number;
+  evidence?: EvalEvidenceProfile;
 }

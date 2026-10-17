@@ -48,3 +48,39 @@ jobs:
       - name: Build + Unit
         run: npm run test
         shell: bash
+
+  # Every PR commit must typecheck on its own (catches "doesn't compile until split").
+  per-commit-typecheck:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck each commit
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+          base="origin/${{ github.base_ref }}"
+          git rev-parse --verify "$base"
+          commits=$(git rev-list --reverse "$base"..HEAD)
+          if [ -z "$commits" ]; then
+            npm run typecheck
+            exit 0
+          fi
+          for sha in $commits; do
+            echo "typecheck $sha"
+            git checkout --force "$sha"
+            npm run typecheck
+          done

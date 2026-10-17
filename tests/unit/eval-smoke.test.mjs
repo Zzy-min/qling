@@ -17,3 +17,19 @@ test("runEvalSuite passes local smoke suite", async () => {
   assert.ok(report.pass >= 8);
   assert.match(text, /eval:smoke passed/);
 });
+
+test("eval runner preserves and renders the suite evidence profile", async () => {
+  const evidence = {
+    executor: "component",
+    model: "none",
+    verifier: "environment",
+    claim: "Validates fixture setup and deterministic verification only.",
+    limitations: ["Does not execute AgentLoop."],
+  };
+  const report = await runEvalSuite({ tasks: [], evidence });
+
+  assert.deepEqual(report.evidence, evidence);
+  const lines = formatEvalReport(report, { title: "fixture eval" });
+  assert.ok(lines.some((line) => line.includes("executor=component")));
+  assert.ok(lines.some((line) => line.includes("Does not execute AgentLoop")));
+});

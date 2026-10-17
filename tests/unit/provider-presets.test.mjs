@@ -28,7 +28,7 @@ test("getProviderPreset resolves id, alias, and 1-based index", () => {
 
 test("resolveModelCandidates is unique and non-empty", () => {
   const models = resolveModelCandidates();
-  assert.ok(models.includes("deepseek-chat"));
+  assert.ok(models.includes("deepseek-flash"));
   assert.ok(models.includes("llama3"));
   assert.equal(new Set(models).size, models.length);
 });

@@ -10,6 +10,8 @@ dist/
 # Runtime data
 .qling-todos.json
 /runs/
+/run-checkpoints/
+/artifacts/
 
 # Temp / debug files
 *.ps1
@@ -30,4 +32,8 @@ Thumbs.db
 
 dist-portable/
 *.tgz
+
+# Runtime leaks (tests and shell redirects)
+sessions/
+nul
 

@@ -11,7 +11,9 @@ import {
   VerificationVerdict,
   VerificationStep,
 } from "../types.js";
+import { DEFAULT_MODEL } from "../providers/presets.js";
 import type { LlmHttpClient } from "../providers/llm-client.js";
+import { callModelWithRetry, resolveModelRetryPolicy } from "../providers/model-retry.js";
 
 const VERIFICATION_PROMPT = `你是轻灵的验证 Agent，负责判断操作是否成功。
 
@@ -34,7 +36,7 @@ PARTIAL  // 部分成功，有警告
 export class VerificationAgent {
   constructor(
     private client: Pick<LlmHttpClient, "chatCompletions">,
-    private model: string = "deepseek-chat"
+    private model: string = DEFAULT_MODEL
   ) {}
 
   async verify(
@@ -81,15 +83,22 @@ export class VerificationAgent {
   }
 
   private async callLLM(prompt: string): Promise<string> {
-    const response = await this.client.chatCompletions({
-      model: this.model,
-      systemPrompt: VERIFICATION_PROMPT,
-      messages: [{ role: "user", content: prompt }],
-      tools: [],
-      overrides: {
-        max_tokens: 150,
-        temperature: 0,
-      },
+    const policy = resolveModelRetryPolicy();
+    const response = await callModelWithRetry({
+      policy,
+      models: [this.model],
+      allowFallback: false,
+      retryCap: 2,
+      call: (model) => this.client.chatCompletions({
+        model,
+        systemPrompt: VERIFICATION_PROMPT,
+        messages: [{ role: "user", content: prompt }],
+        tools: [],
+        overrides: {
+          max_tokens: 150,
+          temperature: 0,
+        },
+      }),
     });
     return response.content;
   }

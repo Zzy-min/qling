@@ -21,6 +21,7 @@ test("goal controller continues when evaluator says condition is unmet, then sto
       evaluate: async () => evaluations.shift(),
     },
     maxAutoTurns: 4,
+    stallThreshold: 2,
   });
   await controller.init();
   await controller.setGoal("所有 auth 测试通过", { turnCount: 2, tokens: 1000 }, { runner: "session" });
@@ -41,7 +42,7 @@ test("goal controller continues when evaluator says condition is unmet, then sto
   assert.equal(second.continuePrompt, null);
 });
 
-test("goal controller clears active goal when max auto turns is exceeded", async () => {
+test("goal controller pauses on the auto-turn budget instead of clearing the goal", async () => {
   const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-controller-max-"));
   const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-c", clock: () => 1_000 });
   const controller = new SessionGoalController({
@@ -51,6 +52,7 @@ test("goal controller clears active goal when max auto turns is exceeded", async
       evaluate: async () => ({ done: false, reason: "条件未满足" }),
     },
     maxAutoTurns: 1,
+    evidenceGoals: false,
   });
   await controller.init();
   await controller.setGoal("完成 lint", { turnCount: 5, tokens: 2000 }, { runner: "session" });
@@ -59,11 +61,12 @@ test("goal controller clears active goal when max auto turns is exceeded", async
     transcript: "assistant: 继续修复中",
     stats: { turnCount: 7, tokens: 2600 },
   });
-  assert.equal(result.status, "cleared");
+  assert.equal(result.status, "paused");
   assert.match(result.reason, /max auto turns/i);
 
   const snapshot = await manager.getGoalStatus();
-  assert.equal(snapshot.status, "cleared");
+  assert.equal(snapshot.status, "paused_budget");
+  assert.equal(snapshot.condition, "完成 lint");
 });
 
 test("goal controller ignores active goal owned by a different runner", async () => {
@@ -89,4 +92,55 @@ test("goal controller ignores active goal owned by a different runner", async ()
   const snapshot = await manager.getGoalStatus();
   assert.equal(snapshot.runner, "daemon");
   assert.equal(snapshot.evaluatedTurns, 0);
+});
+
+test("goal controller uses deterministic outcome evidence before the LLM evaluator", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-evidence-"));
+  const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-evidence", clock: () => 2_000 });
+  let llmCalls = 0;
+  const controller = new SessionGoalController({
+    manager,
+    evaluator: { evaluate: async () => { llmCalls += 1; return { done: true, reason: "model says done" }; } },
+  });
+  await controller.init();
+  await controller.setGoal("build passes", { turnCount: 0, tokens: 0 }, {
+    contract: {
+      objective: "build passes",
+      deliverables: [{ id: "build", claim: "npm build succeeds", required: true, maxAgeMs: 1_000 }],
+      prohibitedSideEffects: ["external"],
+      budget: { maxFailures: 3 },
+    },
+  });
+  const missing = await controller.afterTurn({ transcript: "assistant: done", stats: { turnCount: 1, tokens: 10 }, evidence: [], now: 2_000 });
+  assert.equal(missing.status, "continue");
+  assert.match(missing.reason, /missing/i);
+  assert.equal(llmCalls, 0);
+
+  const achieved = await controller.afterTurn({
+    transcript: "assistant: done",
+    stats: { turnCount: 2, tokens: 20 },
+    evidence: [{ id: "ev-build", claim: "npm build succeeds", source: "command", commandOrTool: "npm run build", observedAt: 1_900, verdict: "pass", scope: "workspace", deterministic: true, redacted: false }],
+    now: 2_000,
+  });
+  assert.equal(achieved.status, "achieved");
+  assert.equal(llmCalls, 0);
+  assert.deepEqual((await manager.getGoalStatus()).evidenceIds, ["ev-build"]);
+});
+
+test("goal controller blocks on deterministic failure even when transcript claims success", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-blocked-"));
+  const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-blocked", clock: () => 3_000 });
+  const controller = new SessionGoalController({ manager });
+  await controller.init();
+  await controller.setGoal("file exists", { turnCount: 0, tokens: 0 }, {
+    contract: { objective: "file exists", deliverables: [{ id: "file", claim: "target file exists", required: true }], prohibitedSideEffects: [], budget: {} },
+  });
+  const result = await controller.afterTurn({
+    transcript: "assistant: file created successfully",
+    stats: { turnCount: 1, tokens: 10 },
+    evidence: [{ id: "ev-missing", claim: "target file exists", source: "filesystem", observedAt: 2_900, verdict: "fail", scope: "workspace", deterministic: true, redacted: false }],
+    now: 3_000,
+  });
+  assert.equal(result.status, "blocked");
+  assert.equal((await manager.getGoalStatus()).status, "blocked");
 });

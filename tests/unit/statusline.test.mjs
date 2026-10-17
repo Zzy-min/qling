@@ -209,6 +209,61 @@ test("statusline short session id keeps compact prompt width", () => {
   assert.equal(resolveShortSessionId("session_1234567890abcdef"), "session_1234");
 });
 
+test("statusline shows provider·model, narrow model, and retry or fallback marks", () => {
+  const wide = formatStatusLine({
+    model: "deepseek-chat",
+    provider: "deepseek",
+    columns: 120,
+    sessionId: "s",
+    branch: null,
+    permissionMode: null,
+    goalStatus: null,
+    activeTasks: 0,
+    tokens: 0,
+  });
+  assert.match(wide, /模型=deepseek·deepseek-chat/);
+  const narrow = formatStatusLine({
+    model: "deepseek-chat",
+    provider: "deepseek",
+    columns: 40,
+    sessionId: "s",
+    branch: null,
+    permissionMode: null,
+    goalStatus: null,
+    activeTasks: 0,
+    tokens: 0,
+  });
+  assert.match(narrow, /模型=deepseek-chat/);
+  assert.doesNotMatch(narrow, /deepseek·/);
+  const retry = formatStatusLine({
+    model: "deepseek-chat",
+    provider: "deepseek",
+    columns: 120,
+    modelNotice: "↻ retry 2/5",
+    sessionId: "s",
+    branch: null,
+    permissionMode: null,
+    goalStatus: null,
+    activeTasks: 0,
+    tokens: 0,
+  });
+  assert.match(retry, /↻ retry 2\/5/);
+  const fallback = formatStatusLine({
+    model: "deepseek-chat",
+    provider: "deepseek",
+    columns: 120,
+    modelNotice: "stream→non-stream",
+    sessionId: "s",
+    branch: null,
+    permissionMode: null,
+    goalStatus: null,
+    activeTasks: 0,
+    tokens: 0,
+  });
+  assert.match(fallback, /stream→non-stream/);
+  assert.doesNotMatch(fallback, /sk-/);
+});
+
 test("statusline permission mode formatter explains local tool behavior", () => {
   assert.equal(formatPermissionMode("allow"), "允许(自动)");
   assert.equal(formatPermissionMode("ask"), "询问(确认)");

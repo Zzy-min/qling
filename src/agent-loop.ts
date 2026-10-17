@@ -6,6 +6,7 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { createHash } from "node:crypto";
 import { ALL_TOOLS } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry } from "./pipeline/sections.js";
@@ -27,7 +28,7 @@ import type { MCPServerConfig } from "./types.js";
 import { VerificationAgent } from "./pipeline/verification.js";
 import { ContextCompactor } from "./context-compactor.js";
 import { KnowledgeAgentAdapter } from "./knowledge-agent.js";
-import type { AgentConfig, Message, ToolCall } from "./types.js";
+import type { AgentConfig, Message, ToolCall, ToolDefinition } from "./types.js";
 import { WorkflowRuntime } from "./workflow-runtime.js";
 import { WorkflowBuilder } from "./workflow-types.js";
 import { DiscoveryRegistry } from "./discovery-registry.js";
@@ -60,16 +61,45 @@ import {
   apiKeyRequiredForEndpoint,
   isLoopbackEndpoint,
 } from "./providers/presets.js";
+import {
+  isHttpEndpoint,
+  publishProcessLlmSession,
+  resolveLlmSettings,
+  resolveProviderApiKey,
+  validateModelName,
+  type LlmFieldSources,
+} from "./providers/resolve-llm.js";
 import { LlmHttpClient, type LlmChatResponse } from "./providers/llm-client.js";
+import {
+  callModelWithRetry,
+  resolveModelRetryPolicy,
+  type ModelRetryEvent,
+} from "./providers/model-retry.js";
+import { resolveCostBudgetSignal } from "./cost-budget.js";
 import { RuntimeServices } from "./runtime-services.js";
 import { ExecutionEventBus } from "./execution/event-bus.js";
+import { RuntimeEventJournal } from "./runtime/event-journal.js";
+import { SessionActor } from "./runtime/session-actor.js";
+import { SessionLease } from "./runtime/session-lease.js";
+import { getBackgroundTaskRegistry } from "./runtime/background-tasks.js";
+import { resolveAgentRuntimeMode, type AgentRuntimeMode } from "./runtime/mode.js";
+import type { PromptExecutionResult, SessionSnapshot } from "./runtime/types.js";
+import { projectSessionEvents } from "./runtime/session-projector.js";
+import { redactPromptDiagnostics } from "./harness/prompt-envelope.js";
 import { RecoveryController } from "./execution/recovery-controller.js";
 import { RunTraceStore } from "./execution/run-trace-store.js";
+import { reconcileInterruptedSession } from "./session/interrupted-run.js";
 import type { ExecutionEvent, RecoveryState, RunOutcome } from "./execution/types.js";
 import { UsageLedger } from "./usage-ledger.js";
 import type { UsageLedgerSnapshot } from "./usage-ledger.js";
 import { installJsonHooks, type JsonHookRunner } from "./hooks/json-hooks.js";
+import { claimUntrustedWorkspaceHint } from "./guard/workspace-trust.js";
 import { loadRoleCatalog } from "./agents/role-loader.js";
+import {
+  filterToolsForRole,
+  normalizeSubAgentRole,
+  roleAllowlistIncludesMcp,
+} from "./agents/roles.js";
 import {
   formatRecoveryInstruction,
   formatRecoveryPause,
@@ -85,7 +115,9 @@ import {
   buildPromptInspectSnapshot,
   reflectiveThink,
 } from "./agent/system-prompt.js";
+import { selectToolsForRequest } from "./harness/tool-capability.js";
 import {
+  canWriteMidTurnCheckpoint,
   runInnerIterationLoop,
   runOuterAgentLoop,
   type InnerLoopOutcome,
@@ -105,9 +137,10 @@ const EXPLICIT_ENABLE_VALUES = new Set(["1", "true", "on", "yes"]);
 export class MissingApiKeyError extends Error {
   readonly code = "QLING_API_KEY_MISSING";
 
-  constructor() {
+  constructor(message?: string) {
     super(
-      "未配置模型 API Key。请运行 `qling setup`，或设置 QLING_LLM_API_KEY、DEEPSEEK_API_KEY、OPENAI_API_KEY；使用本地 Ollama 时可将 endpoint 设为 http://localhost:11434/v1。"
+      message ??
+        "未配置模型 API Key。请运行 `qling setup`，或为当前 provider 设置 QLING_LLM_API_KEY / 对应的 <PROVIDER>_API_KEY；使用本地 Ollama 时可将 endpoint 设为 http://localhost:11434/v1。"
     );
     this.name = "MissingApiKeyError";
   }
@@ -161,6 +194,8 @@ export class AgentLoop extends AgentEventEmitter {
   private config: AgentConfig;
   private turnCount = 0;
   private runtimeRootDir: string;
+  /** Raw file-state directory before path.resolve, so "" / "." cannot become cwd. */
+  private requestedFileStateDir: string;
   private memoryDir: string;
   private loggingConfig: NonNullable<AgentConfig["logging"]>;
 
@@ -199,6 +234,13 @@ export class AgentLoop extends AgentEventEmitter {
   private runTraceStore: RunTraceStore;
   private activeRun: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null = null;
   private runAbortController: AbortController | null = null;
+  private readonly backgroundTerminationPromises = new Set<Promise<void>>();
+  private readonly agentRuntimeMode: AgentRuntimeMode = resolveAgentRuntimeMode();
+  private runtimeJournal: RuntimeEventJournal | null = null;
+  private sessionActor: SessionActor | null = null;
+  private sessionActorId: string | null = null;
+  private sessionActorReset: Promise<void> | null = null;
+  private sessionLease: SessionLease | null = null;
 
   // --- v0.3 Getters (Management) ---
   getWorkflowRuntime(): WorkflowRuntime { return this.workflowRuntime; }
@@ -206,6 +248,12 @@ export class AgentLoop extends AgentEventEmitter {
   getDiscoveryRegistry(): DiscoveryRegistry { return this.discoveryRegistry; }
   getMissionManager(): MissionManager { return this.missionManager; }
   getRuntimeRootDir(): string { return this.runtimeRootDir; }
+  getAgentRuntimeMode(): AgentRuntimeMode { return this.agentRuntimeMode; }
+  getRuntimeSnapshot(): SessionSnapshot | null { return this.sessionActor?.getSnapshot() ?? null; }
+  async refreshRuntimeSnapshot(): Promise<SessionSnapshot | null> {
+    if (this.agentRuntimeMode !== "actor") return this.getRuntimeSnapshot();
+    return (await this.ensureSessionActor()).getSnapshot();
+  }
   getWorkspaceDir(): string { return this.config.runtime?.workspaceDir ?? process.cwd(); }
   getMessagesSnapshot(): Message[] { return this.messages.map((message) => ({ ...message })); }
   getVerificationCommand(): string | null { return this.verificationCommand; }
@@ -222,6 +270,7 @@ export class AgentLoop extends AgentEventEmitter {
   } {
     const state = this.recoveryController.applyAction(action);
     if ((action === "cancel" || action === "edit") && this.activeRun) {
+      this.scheduleBackgroundTermination(this.activeRun.runId);
       this.executionEventBus.completeRun(this.activeRun.runId, "canceled");
       this.activeRun = null;
     }
@@ -306,34 +355,59 @@ export class AgentLoop extends AgentEventEmitter {
   // 轻量观测指标
   private compactionCount = 0;
   private retryCountTotal = 0;
+  private modelRetryBudget: { remaining: number } = { remaining: 20 };
+  private stickyModel: string | null = null;
+  private llmActivityNotice: string | null = null;
+  private startupProvider = "deepseek";
+  private llmSources: LlmFieldSources = {
+    provider: "default",
+    endpoint: "default",
+    model: "default",
+    apiKey: "default",
+  };
   private toolCallTotal = 0;
   private toolFailureTotal = 0;
   private jsonHookRunner: JsonHookRunner | null = null;
 
-  constructor(config: Partial<AgentConfig> = {}) {
+  constructor(config: Partial<AgentConfig> & { llmSources?: LlmFieldSources } = {}) {
     super();
-    const provider = config.provider ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
-    const endpoint =
-      config.endpoint ??
-      process.env.QLING_LLM_ENDPOINT ??
-      process.env.OPENAI_BASE_URL ??
-      process.env.DEEPSEEK_BASE_URL ??
-      (provider === "openai"
-        ? "https://api.openai.com/v1"
-        : provider === "ollama" || provider === "local"
-          ? "http://localhost:11434/v1"
-          : "https://api.deepseek.com");
-
-    const rawApiKey =
-      config.apiKey ??
-      process.env.QLING_LLM_API_KEY ??
-      process.env.DEEPSEEK_API_KEY ??
-      process.env.OPENAI_API_KEY ??
-      "";
-    const apiKey = resolveSessionApiKey(rawApiKey, endpoint, provider);
+    const resolved = resolveLlmSettings(
+      {
+        provider: config.provider,
+        endpoint: config.endpoint,
+        model: config.model,
+        apiKey: config.apiKey,
+        sources: {
+          provider: config.llmSources?.provider ?? (config.provider ? "session" : undefined),
+          endpoint: config.llmSources?.endpoint ?? (config.endpoint ? "session" : undefined),
+          model: config.llmSources?.model ?? (config.model ? "session" : undefined),
+          apiKey:
+            config.llmSources?.apiKey ??
+            (config.apiKey !== undefined ? "session" : undefined),
+        },
+      },
+      process.env
+    );
+    const provider = resolved.provider;
+    const endpoint = resolved.endpoint;
+    const apiKey = resolveSessionApiKey(resolved.apiKey, endpoint, provider);
     if (!apiKey) {
-      throw new MissingApiKeyError();
+      const startup = String(process.env.QLING_LLM_STARTUP_PROVIDER ?? "").trim();
+      const refusal = resolveProviderApiKey(provider, process.env, {
+        startupProvider: startup || provider,
+      });
+      const switched = Boolean(startup) && startup !== provider;
+      throw new MissingApiKeyError(switched ? refusal.message : undefined);
     }
+    this.llmSources = resolved.sources;
+    if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
+      process.env.QLING_LLM_STARTUP_PROVIDER = provider;
+    }
+    this.startupProvider = process.env.QLING_LLM_STARTUP_PROVIDER || provider;
+    this.requestedFileStateDir =
+      config.runtime?.fileStateDir ??
+      process.env.QLING_FILE_STATE_DIR ??
+      DEFAULT_QLING_DIR;
     this.runtimeRootDir = path.resolve(
       config.runtime?.fileStateDir ??
         process.env.QLING_FILE_STATE_DIR ??
@@ -357,7 +431,7 @@ export class AgentLoop extends AgentEventEmitter {
       apiKey,
       provider,
       endpoint,
-      model: config.model ?? "deepseek-chat",
+      model: resolved.model,
       systemPrompt: config.systemPrompt ?? "",
       maxIterations: config.maxIterations ?? 50,
       tools: (config.tools ?? ALL_TOOLS).map((tool) => ({ ...tool })),
@@ -374,13 +448,26 @@ export class AgentLoop extends AgentEventEmitter {
         timeoutMs: config.runtime?.timeoutMs ?? 300_000,
         providerRetryLimit:
           config.runtime?.providerRetryLimit ??
-          Math.max(0, Number(process.env.QLING_LLM_MAX_RETRIES ?? 3) || 0),
+          resolveModelRetryPolicy().maxRetries,
       },
       logging: this.loggingConfig,
       experimental: {
         streaming: config.experimental?.streaming ?? false,
       },
+      subagent: config.subagent
+        ? {
+            parentSessionId: config.subagent.parentSessionId,
+            role: config.subagent.role,
+            mcpRegistry: config.subagent.mcpRegistry,
+          }
+        : undefined,
     };
+    publishProcessLlmSession({
+      provider: this.config.provider ?? provider,
+      endpoint: this.config.endpoint ?? endpoint,
+      model: this.config.model,
+      apiKey: this.config.apiKey,
+    });
     if (EXPLICIT_ENABLE_VALUES.has(String(process.env.QLING_EXPERIMENTAL_ANCHORED_EDIT ?? "").toLowerCase())) {
       this.config.tools = [...this.config.tools, ...ANCHORED_EDIT_TOOLS];
     }
@@ -400,7 +487,7 @@ export class AgentLoop extends AgentEventEmitter {
       workspaceDir: this.config.runtime?.workspaceDir || undefined,
     });
     {
-      const autoCfg = resolveAutoCompactConfig();
+      const autoCfg = resolveAutoCompactConfig(process.env, this.config.model);
       this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model);
     }
     this.knowledgeAdapter = new KnowledgeAgentAdapter(this.memoryStore);
@@ -441,7 +528,14 @@ export class AgentLoop extends AgentEventEmitter {
       model: this.config.model,
       workspaceDir: this.config.runtime?.workspaceDir ?? null,
       stateDir: this.runtimeRootDir,
+      fileCacheDir: this.config.runtime?.fileCacheDir ?? this.runtimeRootDir,
+      toolAllowlist: this.config.runtime?.toolAllowlist ?? null,
     });
+    this.runtimeServices.setParentScope(() => ({
+      sessionId: this.sessionId,
+      hookRunner: this.jsonHookRunner,
+      mcpRegistry: this.runtimeServices.getMcpRegistry(),
+    }));
     this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
 
@@ -455,6 +549,9 @@ export class AgentLoop extends AgentEventEmitter {
 
   private async init(): Promise<void> {
     await fs.mkdir(this.runtimeRootDir, { recursive: true });
+    if (this.agentRuntimeMode === "actor") {
+      await this.ensureSessionActor();
+    }
     await fs.mkdir(this.memoryDir, { recursive: true });
     await this.missionManager.init();
     await this.loadVerificationCommand();
@@ -463,6 +560,8 @@ export class AgentLoop extends AgentEventEmitter {
       stateDir: this.runtimeRootDir,
       workspaceDir: this.getWorkspaceDir(),
       sessionId: this.sessionId,
+      emitSessionStart: !this.config.subagent,
+      knownToolNames: this.config.tools.map((tool) => tool.name),
     });
 
     // v0.3 Sync dynamic discovery
@@ -620,49 +719,23 @@ export class AgentLoop extends AgentEventEmitter {
       this.otelTraceBridge = null;
     }
 
-    // MCP initialization
-    const mcpServersRaw = process.env.QLING_MCP_SERVERS;
-    if (mcpServersRaw) {
-      try {
-        const mcpConnTimeoutRaw = Number(process.env.QLING_MCP_CONNECTION_TIMEOUT_MS ?? "10000");
-        const mcpCallTimeoutRaw = Number(process.env.QLING_MCP_CALL_TIMEOUT_MS ?? "30000");
-        const mcpConnTimeout =
-          Number.isFinite(mcpConnTimeoutRaw) && mcpConnTimeoutRaw > 0 ? mcpConnTimeoutRaw : 10000;
-        const mcpCallTimeout =
-          Number.isFinite(mcpCallTimeoutRaw) && mcpCallTimeoutRaw > 0 ? mcpCallTimeoutRaw : 30000;
-        const servers = JSON.parse(mcpServersRaw) as Record<string, MCPServerConfig>;
-        const enabled = Object.values(servers).filter((s) => s.enabled);
-        if (enabled.length > 0) {
-          const registry = new MCPRegistry({
-            connection: mcpConnTimeout,
-            call: mcpCallTimeout,
-            maxOutputBytes: Number(process.env.QLING_MCP_MAX_OUTPUT_BYTES) || 20 * 1024,
-          });
-          for (const s of enabled) {
-            registry.registerServer(s);
-          }
-          this.runtimeServices.setMcpRegistry(registry);
-          const results = await registry.connectAll();
-          const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools());
-          if (mcpTools.length > 0) {
-            const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
-            this.config.tools = [
-              ...this.config.tools,
-              ...(exposure === "search" ? MCP_CATALOG_TOOLS : mcpTools),
-            ];
-            console.error("[MCP] Connected " + results.filter((r) => r.status === "connected").length + " servers, " + mcpTools.length + " tools");
-          }
-        }
-      } catch (err) {
-        console.error("[MCP] Init failed: " + (err as Error).message);
-      }
+    // MCP initialization. 子 agent 不新建连接；只有角色白名单显式包含 mcp__* 才复用父 registry。
+    if (this.config.subagent) {
+      this.inheritSubagentMcpTools(this.config.subagent);
+    } else {
+      await this.connectConfiguredMcpServers();
     }
 
     // Skills section registration
+    const workspaceForTrust = this.getWorkspaceDir();
+    const trustHint = claimUntrustedWorkspaceHint(workspaceForTrust);
+    if (trustHint) console.error(trustHint);
     try {
-      const skillDirs = getSkillDirs();
+      const skillDirs = getSkillDirs({ cwd: workspaceForTrust });
       const skills = await listSkills(skillDirs);
-      this.sectionRegistry.register(buildSkillsSection(skills));
+      const section = buildSkillsSection(skills);
+      if (trustHint) section.content = `${section.content}\n\n${trustHint}`;
+      this.sectionRegistry.register(section);
     } catch {
       // ignore
     }
@@ -684,6 +757,70 @@ export class AgentLoop extends AgentEventEmitter {
     // Guard M2: content filter custom patterns
     if (this.guardConfig.content_filter?.custom_patterns?.length > 0) {
       setCustomPatterns(this.guardConfig.content_filter.custom_patterns);
+    }
+  }
+
+  private inheritSubagentMcpTools(subagent: NonNullable<AgentConfig["subagent"]>): void {
+    const role = normalizeSubAgentRole(subagent.role);
+    if (!roleAllowlistIncludesMcp(role)) return;
+    const registry = subagent.mcpRegistry;
+    if (!registry) return;
+    this.runtimeServices.setMcpRegistry(registry as MCPRegistry, { own: false });
+    const allowedNames = this.config.runtime?.toolAllowlist
+      ? new Set(this.config.runtime.toolAllowlist)
+      : null;
+    const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
+    const candidates = exposure === "search"
+      ? MCP_CATALOG_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name))
+      : mcpToolsToNativeDefinitions(registry.getAllTools())
+          .filter((tool) => !allowedNames || allowedNames.has(tool.name));
+    const visible = filterToolsForRole(candidates, role);
+    if (visible.length > 0) {
+      this.config.tools = [...this.config.tools, ...visible];
+    }
+  }
+
+  private async connectConfiguredMcpServers(): Promise<void> {
+    const mcpServersRaw = process.env.QLING_MCP_SERVERS;
+    if (!mcpServersRaw) return;
+    try {
+      const mcpConnTimeoutRaw = Number(process.env.QLING_MCP_CONNECTION_TIMEOUT_MS ?? "10000");
+      const mcpCallTimeoutRaw = Number(process.env.QLING_MCP_CALL_TIMEOUT_MS ?? "30000");
+      const mcpConnTimeout =
+        Number.isFinite(mcpConnTimeoutRaw) && mcpConnTimeoutRaw > 0 ? mcpConnTimeoutRaw : 10000;
+      const mcpCallTimeout =
+        Number.isFinite(mcpCallTimeoutRaw) && mcpCallTimeoutRaw > 0 ? mcpCallTimeoutRaw : 30000;
+      const servers = JSON.parse(mcpServersRaw) as Record<string, MCPServerConfig>;
+      const enabled = Object.values(servers).filter((s) => s.enabled);
+      if (enabled.length > 0) {
+        const registry = new MCPRegistry({
+          connection: mcpConnTimeout,
+          call: mcpCallTimeout,
+          maxOutputBytes: Number(process.env.QLING_MCP_MAX_OUTPUT_BYTES) || 20 * 1024,
+        });
+        for (const s of enabled) {
+          registry.registerServer(s);
+        }
+        this.runtimeServices.setMcpRegistry(registry);
+        const results = await registry.connectAll();
+        const allowedNames = this.config.runtime?.toolAllowlist
+          ? new Set(this.config.runtime.toolAllowlist)
+          : null;
+        const mcpTools = mcpToolsToNativeDefinitions(registry.getAllTools())
+          .filter((tool) => !allowedNames || allowedNames.has(tool.name));
+        if (mcpTools.length > 0) {
+          const exposure = process.env.QLING_MCP_TOOL_EXPOSURE === "search" ? "search" : "eager";
+          this.config.tools = [
+            ...this.config.tools,
+            ...(exposure === "search"
+              ? MCP_CATALOG_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name))
+              : mcpTools),
+          ];
+          console.error("[MCP] Connected " + results.filter((r) => r.status === "connected").length + " servers, " + mcpTools.length + " tools");
+        }
+      }
+    } catch (err) {
+      console.error("[MCP] Init failed: " + (err as Error).message);
     }
   }
 
@@ -740,11 +877,77 @@ export class AgentLoop extends AgentEventEmitter {
     return outcome.text;
   }
 
+  async submitPromptDetailed(
+    prompt: string,
+    priority: "normal" | "interjection" = "normal"
+  ): Promise<PromptExecutionResult> {
+    await this.initPromise;
+    if (this.agentRuntimeMode === "legacy") {
+      this.addUserMessage(prompt);
+      const outcome = await this.runDetailed();
+      return {
+        status:
+          outcome.status === "succeeded"
+            ? "completed"
+            : outcome.status === "exhausted" || outcome.status === "paused"
+              ? "paused"
+              : outcome.status,
+        text: outcome.text,
+      };
+    }
+    const actor = await this.ensureSessionActor();
+    return await actor.dispatch({
+      type: priority === "interjection" ? "interject" : "submit_prompt",
+      prompt,
+    }) as PromptExecutionResult;
+  }
+
+  async submitPrompt(prompt: string, priority: "normal" | "interjection" = "normal"): Promise<string> {
+    const result = await this.submitPromptDetailed(prompt, priority);
+    if (result.status === "failed" || result.status === "canceled") {
+      const error = new Error(result.text) as Error & { code?: string };
+      error.name = result.status === "canceled" ? "AgentRunCanceledError" : "AgentRunFailedError";
+      error.code = result.status === "canceled" ? "RUN_CANCELED" : "RUN_FAILED";
+      throw error;
+    }
+    return result.text;
+  }
+
+  async interjectPrompt(prompt: string): Promise<string> {
+    return this.submitPrompt(prompt, "interjection");
+  }
+
+  async waitForRuntimeIdle(): Promise<void> {
+    await this.sessionActor?.waitForIdle();
+  }
+
+  async resumeRuntimeSession(): Promise<void> {
+    if (this.agentRuntimeMode !== "actor") throw new Error("actor runtime is not enabled");
+    const actor = await this.ensureSessionActor();
+    await actor.dispatch({ type: "resume_session" });
+  }
+
+  async cancelRuntimeTurn(reason = "user_canceled"): Promise<boolean> {
+    if (this.agentRuntimeMode !== "actor" || !this.sessionActor) {
+      const canceled = this.cancelActiveRun();
+      await this.waitForBackgroundTerminations();
+      return canceled;
+    }
+    const canceled = this.cancelActiveRun();
+    await this.sessionActor.dispatch({ type: "cancel_turn", reason });
+    await this.waitForBackgroundTerminations();
+    return canceled;
+  }
+
   async runDetailed(): Promise<RunOutcome> {
     await this.initPromise;
+    this.ensureSessionLease();
     if (this.runAbortController) throw new Error("agent run already in progress");
     const controller = new AbortController();
     this.runAbortController = controller;
+    const retryPolicy = resolveModelRetryPolicy();
+    this.modelRetryBudget = { remaining: retryPolicy.runRetryBudget };
+    this.stickyModel = null;
     try {
       return await runOuterAgentLoop({
         sessionId: this.sessionId,
@@ -762,6 +965,7 @@ export class AgentLoop extends AgentEventEmitter {
         executeInner: () => this.executeRunInternal(),
         isCanceled: () => controller.signal.aborted,
         providerRetryLimit: this.config.runtime?.providerRetryLimit,
+        checkpointSession: () => this.checkpointSession(),
         onProviderRetry: () => {
           this.retryCountTotal++;
         },
@@ -774,9 +978,34 @@ export class AgentLoop extends AgentEventEmitter {
   cancelActiveRun(): boolean {
     const controller = this.runAbortController;
     if (!controller || controller.signal.aborted) return false;
+    const runId = this.activeRun?.runId;
     controller.abort();
     this.approvalGate.cancelAll();
+    if (runId) this.scheduleBackgroundTermination(runId);
     return true;
+  }
+
+  private scheduleBackgroundTermination(runId: string): void {
+    const pending = (async () => {
+      const { getBackgroundTaskRegistry } = await import("./runtime/background-tasks.js");
+      await getBackgroundTaskRegistry(this.runtimeRootDir).terminateOwned({
+        workspaceDir: this.getWorkspaceDir(),
+        sessionId: this.sessionId,
+        runId,
+        leaseToken: this.sessionLease?.token,
+      });
+    })().catch((error) => {
+      this.emit("background_cancel_failed", runId, error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+      this.backgroundTerminationPromises.delete(pending);
+    });
+    this.backgroundTerminationPromises.add(pending);
+  }
+
+  private async waitForBackgroundTerminations(): Promise<void> {
+    while (this.backgroundTerminationPromises.size > 0) {
+      await Promise.allSettled([...this.backgroundTerminationPromises]);
+    }
   }
 
   pauseActiveRun(): boolean {
@@ -790,6 +1019,105 @@ export class AgentLoop extends AgentEventEmitter {
 
   private async executeRunInternal(): Promise<InnerLoopOutcome> {
     await this.initPromise;
+    const workspaceDir = this.config.runtime?.workspaceDir || process.cwd();
+    const checkpointStore = this.activeRun ? new (await import("./runtime/run-checkpoint.js")).RunCheckpointStore({
+      stateDir: this.config.runtime?.fileStateDir ?? this.runtimeRootDir,
+      workspaceDir,
+      runId: this.activeRun.runId,
+    }) : undefined;
+    const restoredCheckpoint = await checkpointStore?.loadLatest() ?? null;
+    let restoredProgressState = restoredCheckpoint?.progressState;
+    let checkpointUnknownOutcome: string[] | null = null;
+    const backgroundModule = await import("./runtime/background-tasks.js");
+    const backgroundRegistry = backgroundModule.getBackgroundTaskRegistry(this.runtimeRootDir);
+    // Unsettled outcomes survive run cancellation and are inherited by the
+    // next run in this session. They cannot leak across workspace/session.
+    const backgroundOwner = { workspaceDir, sessionId: this.sessionId, leaseToken: this.sessionLease?.token };
+    const ownedBackgroundTasks = backgroundRegistry.listUnsettledOwned(backgroundOwner);
+    const durablyReconciled = new Set(restoredProgressState?.reconciledSideEffectIds ?? []);
+    for (const task of ownedBackgroundTasks) {
+      if (task.status !== "reconciliation_pending" || !durablyReconciled.has(task.taskId) || !restoredProgressState?.activeMutationId) continue;
+      try { backgroundRegistry.completeUnknownOutcomeReconciliation(task.taskId, backgroundOwner); }
+      catch { /* keep it pending below so the operator can retry idempotently */ }
+    }
+    const backgroundUnknownOutcomeIds = ownedBackgroundTasks
+      .filter((task) => {
+        const current = backgroundRegistry.get(task.taskId);
+        return current?.accountingStatus !== "settled"
+          || current?.status === "running"
+          || current?.status === "unknown_outcome"
+          || current?.status === "reconciliation_pending";
+      })
+      .map((task) => task.taskId);
+    if (restoredCheckpoint) {
+      const assessment = await checkpointStore!.assessWorkspace(restoredCheckpoint);
+      this.turnCount = Math.max(this.turnCount, restoredCheckpoint.sequence);
+      this.sessionPromptTokens = Math.max(this.sessionPromptTokens, restoredCheckpoint.usage.promptTokens);
+      this.sessionCompletionTokens = Math.max(this.sessionCompletionTokens, restoredCheckpoint.usage.completionTokens);
+      this.sessionTokens = Math.max(this.sessionTokens, restoredCheckpoint.usage.totalTokens);
+      this.toolCallTotal = Math.max(this.toolCallTotal, restoredCheckpoint.toolMetrics.calls);
+      this.toolFailureTotal = Math.max(this.toolFailureTotal, restoredCheckpoint.toolMetrics.failures);
+      this.emit(assessment.consistent ? "checkpoint_restored" : "checkpoint_unknown_outcome", {
+        sequence: restoredCheckpoint.sequence,
+        mismatches: assessment.mismatches,
+      });
+      if (!assessment.consistent) checkpointUnknownOutcome = assessment.mismatches;
+      if (!assessment.consistent && restoredProgressState) {
+        restoredProgressState = {
+          ...restoredProgressState,
+          phase: "repair",
+          latestVerificationVerdict: "blocked",
+          recoveryEpisode: restoredProgressState.recoveryEpisode
+            ? { ...restoredProgressState.recoveryEpisode, phase: "repair", reason: "request_timeout" }
+            : undefined,
+        };
+      }
+    }
+    if (backgroundUnknownOutcomeIds.length > 0) {
+      const initial = restoredProgressState ?? { sequence: restoredCheckpoint?.sequence ?? 0, phase: "explore" as const };
+      restoredProgressState = {
+        ...initial,
+        pendingSideEffectIds: [...new Set([...(initial.pendingSideEffectIds ?? []), ...backgroundUnknownOutcomeIds])].sort(),
+      };
+    }
+    if (checkpointUnknownOutcome) {
+      if (checkpointStore && restoredCheckpoint) {
+        const activeMutationId = restoredProgressState?.activeMutationId
+          ?? restoredCheckpoint.recoveryEpisode?.mutationId
+          ?? `unknown-outcome-${this.activeRun?.runId ?? "run"}`;
+        const blockedIdentity = await (await import("./runtime/project-profile.js")).resolveProjectProfileIdentity(workspaceDir);
+        const activeMutationWorkspaceFingerprint = `${blockedIdentity.revision}:${blockedIdentity.dirtyFingerprint}`;
+        const blockedProgressState = {
+          sequence: restoredCheckpoint.sequence + 1,
+          phase: "repair" as const,
+          activeRootCauseId: restoredProgressState?.activeRootCauseId,
+          activeMutationId,
+          activeMutationWorkspaceFingerprint,
+          latestVerificationVerdict: "blocked" as const,
+          pendingSideEffectIds: restoredProgressState?.pendingSideEffectIds ?? backgroundUnknownOutcomeIds,
+        };
+        await checkpointStore.replaceWithBlockedBaseline({
+          sequence: blockedProgressState.sequence,
+          phase: "repair",
+          progressState: blockedProgressState,
+          usage: restoredCheckpoint.usage,
+          toolMetrics: restoredCheckpoint.toolMetrics,
+          latestVerification: {
+            verdict: "blocked",
+            fingerprint: `unknown_outcome:${checkpointUnknownOutcome.join("|")}`,
+          },
+        }, `workspace mismatch: ${checkpointUnknownOutcome.join(", ")}`);
+      }
+      this.recoveryController.pauseActiveRun();
+      return {
+        status: "paused",
+        text: `恢复暂停：checkpoint 后工作区状态发生变化（${checkpointUnknownOutcome.join(", ")}），写操作结果为 unknown_outcome。请确认工作区或重新验证后再继续。`,
+      };
+    }
+    const projectProfile = await (await import("./runtime/project-profile.js")).inspectProjectProfileCached({
+      workspaceDir,
+      requestedRuntime: (process.env.QLING_CODE_RUNTIME as "auto" | "native" | "wsl" | undefined) ?? "auto",
+    });
     const counters: TokenCounters = {
       sessionTokens: this.sessionTokens,
       sessionPromptTokens: this.sessionPromptTokens,
@@ -800,6 +1128,7 @@ export class AgentLoop extends AgentEventEmitter {
       messages: this.messages,
       turnCount: this.turnCount,
       sessionId: this.sessionId,
+      sessionLeaseToken: this.sessionLease?.token,
       maxIterations: this.config.maxIterations,
       toolRepeatLimit: Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6),
       parseRetries: this.config.runtime?.parseRetries ?? 0,
@@ -819,21 +1148,54 @@ export class AgentLoop extends AgentEventEmitter {
       approvalGate: this.approvalGate,
       knowledgeAdapter: this.knowledgeAdapter,
       memoryStore: this.memoryStore,
-      workspaceDir: this.config.runtime?.workspaceDir || process.cwd(),
+      workspaceDir,
+      fileStateDir: this.runtimeRootDir,
+      ownedPaths: this.config.runtime?.ownedPaths,
       workflowRuntime: this.workflowRuntime,
       executionEventBus: this.executionEventBus,
       recoveryController: this.recoveryController,
       verifier: this.verifier,
       usageLedger: this.usageLedger,
       dispatchTool: this.runtimeServices.dispatchTool,
+      recordRuntimeTool: this.runtimeJournal
+        ? (record: import("./runtime/types.js").RuntimeToolCallRecord) => this.runtimeJournal!.recordToolCall(record)
+        : undefined,
+      checkpointStore,
+      initialProgressState: restoredProgressState ?? (restoredCheckpoint ? {
+        sequence: restoredCheckpoint.sequence,
+        phase: restoredCheckpoint.phase,
+        activeRootCauseId: restoredCheckpoint.recoveryEpisode?.rootCauseId,
+        activeMutationId: restoredCheckpoint.recoveryEpisode?.mutationId,
+        latestVerificationVerdict: "blocked",
+        recoveryEpisode: restoredCheckpoint.recoveryEpisode,
+      } : undefined),
+      deterministicVerificationAvailable: Boolean(this.verificationCommand || projectProfile.testCommands.length > 0),
+      requireWorkspaceMutation: /^(?:1|true|yes|on)$/i.test(String(process.env.QLING_REQUIRE_WORKSPACE_MUTATION ?? "")),
+      projectProfile,
       buildSystemPrompt: () => this.buildSystemPrompt(),
-      chat: (systemPrompt: string, overrides?: Record<string, unknown>) =>
-        this.chat(systemPrompt, overrides ?? {}),
+      chat: async (systemPrompt: string, overrides?: Record<string, unknown>) => {
+        try {
+          return await this.chat(systemPrompt, overrides ?? {});
+        } finally {
+          host.retryCountTotal = this.retryCountTotal;
+        }
+      },
       emit: (event: string, ...args: unknown[]) => this.emit(event, ...args),
-      runVerificationCommand: (cmd: string) => this.runVerificationCommand(cmd),
+      runVerificationCommand: (cmd: string, runtime?: "native" | "wsl") => this.runVerificationCommand(cmd, runtime),
       getRecoveryState: () => this.getRecoveryState(),
       reflectiveThink: (tc: ToolCall) => this.reflectiveThink(tc),
       checkAutoDream: () => this.checkAutoDream(),
+      runStopHook: (input: { lastAssistantText: string; stopHookActive: boolean }) => {
+        if (!this.jsonHookRunner) return Promise.resolve({ blocked: false });
+        return this.jsonHookRunner.runStop(input);
+      },
+      checkpointStateDir: this.requestedFileStateDir,
+      checkpointSession: () => {
+        if (!canWriteMidTurnCheckpoint(this.requestedFileStateDir)) {
+          return Promise.resolve(undefined);
+        }
+        return this.checkpointSession();
+      },
     };
     const result = await runInnerIterationLoop(host);
     // write back mutable counters from host
@@ -889,6 +1251,23 @@ export class AgentLoop extends AgentEventEmitter {
     return this.config.endpoint ?? "";
   }
 
+  /** Request credential. Callers must not write this value to logs or the UI. */
+  getApiKey(): string {
+    return this.config.apiKey;
+  }
+
+  getStartupProvider(): string {
+    return this.startupProvider;
+  }
+
+  getLlmFieldSources(): LlmFieldSources {
+    return { ...this.llmSources };
+  }
+
+  getLlmActivityNotice(): string | null {
+    return this.llmActivityNotice;
+  }
+
   setModel(model: string): void {
     this.applyLlmSession({ model });
   }
@@ -896,38 +1275,54 @@ export class AgentLoop extends AgentEventEmitter {
   /**
    * 进程内切换 LLM 会话态（model / provider / endpoint / apiKey）。
    * 默认不写盘；同步更新 QLING_LLM_* 环境变量以便后续子组件读取。
+   * provider 变化且未显式给出 apiKey 时清空旧 key，避免把上一供应商的密钥发给新主机。
    */
   applyLlmSession(patch: LlmSessionPatch): { provider: string; endpoint: string; model: string } {
+    const previousProvider = this.config.provider ?? "";
+    if (typeof patch.model === "string" && patch.model.trim()) {
+      const invalid = validateModelName(patch.model);
+      if (invalid) throw new Error(invalid);
+    }
+    if (typeof patch.endpoint === "string" && patch.endpoint.trim() && !isHttpEndpoint(patch.endpoint.trim())) {
+      throw new Error("endpoint 必须是 http(s) URL");
+    }
+    const providerChanged =
+      typeof patch.provider === "string" &&
+      Boolean(patch.provider.trim()) &&
+      patch.provider.trim() !== previousProvider;
+
     if (typeof patch.provider === "string" && patch.provider.trim()) {
       this.config.provider = patch.provider.trim();
       process.env.QLING_LLM_PROVIDER = this.config.provider;
+      this.llmSources.provider = "session";
     }
     if (typeof patch.endpoint === "string" && patch.endpoint.trim()) {
       this.config.endpoint = patch.endpoint.trim();
       process.env.QLING_LLM_ENDPOINT = this.config.endpoint;
+      this.llmSources.endpoint = "session";
     }
+    let modelChanged = false;
     if (typeof patch.model === "string" && patch.model.trim()) {
       this.config.model = patch.model.trim();
       process.env.QLING_LLM_MODEL = this.config.model;
-      {
-        const autoCfg = resolveAutoCompactConfig();
-        this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model, {
-          minSummaryChars: Number(process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS) || 500,
-          maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
-        });
-      }
+      this.llmSources.model = "session";
+      modelChanged = true;
     }
     if (typeof patch.apiKey === "string") {
-      const nextKey = resolveSessionApiKey(
+      this.config.apiKey = resolveSessionApiKey(
         patch.apiKey,
         this.config.endpoint ?? "",
         this.config.provider ?? ""
       );
-      if (nextKey) {
-        this.config.apiKey = nextKey;
-      }
+      this.llmSources.apiKey = "session";
+    } else if (providerChanged) {
+      this.config.apiKey = resolveSessionApiKey(
+        "",
+        this.config.endpoint ?? "",
+        this.config.provider ?? ""
+      );
+      this.llmSources.apiKey = "session";
     } else {
-      // endpoint/provider 切到本地时，若当前 key 为空则填占位
       const ensured = resolveSessionApiKey(
         this.config.apiKey ?? "",
         this.config.endpoint ?? "",
@@ -935,13 +1330,19 @@ export class AgentLoop extends AgentEventEmitter {
       );
       if (ensured) this.config.apiKey = ensured;
     }
+    if (modelChanged) this.refreshCompactor();
 
-    // Keep HTTP client in sync with session endpoint / key
     this.llmClient.reconfigure({
       endpoint: this.config.endpoint ?? "",
       apiKey: this.config.apiKey,
       timeoutMs: this.resolveLlmRequestTimeout(),
       provider: this.config.provider,
+    });
+    publishProcessLlmSession({
+      provider: this.config.provider ?? "unknown",
+      endpoint: this.config.endpoint ?? "",
+      model: this.config.model,
+      apiKey: this.config.apiKey,
     });
     this.verifier = new VerificationAgent(this.llmClient, this.config.model);
     this.configureCompactorSummarizer();
@@ -951,6 +1352,15 @@ export class AgentLoop extends AgentEventEmitter {
       endpoint: this.config.endpoint ?? "",
       model: this.config.model,
     };
+  }
+
+  private refreshCompactor(): void {
+    const autoCfg = resolveAutoCompactConfig(process.env, this.config.model);
+    this.compactor = new ContextCompactor(autoCfg.maxTokens, this.config.model, {
+      minSummaryChars: Number(process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS) || 500,
+      maxSummaryAttempts: Number(process.env.QLING_COMPACTION_MAX_ATTEMPTS) || 3,
+      breakerThreshold: Number(process.env.QLING_COMPACTION_BREAKER) || 3,
+    });
   }
 
   getToolCount(): number {
@@ -967,6 +1377,7 @@ export class AgentLoop extends AgentEventEmitter {
     this.usageLedger.reset();
     this.memoryStore.resetSession();
     this.sectionRegistry.clearCache();
+    this.compactor.resetBreaker();
   }
 
   setChannel(channel: Channel): void {
@@ -975,6 +1386,23 @@ export class AgentLoop extends AgentEventEmitter {
 
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  getTools(): ToolDefinition[] {
+    return this.config.tools;
+  }
+
+  setTools(tools: ToolDefinition[]): void {
+    this.config.tools = tools.map((tool) => ({ ...tool }));
+    this.pipeline.setToolDefs(this.config.tools);
+  }
+
+  getJsonHookRunner(): JsonHookRunner | null {
+    return this.jsonHookRunner;
+  }
+
+  getSessionLeaseToken(): string | undefined {
+    return this.sessionLease?.token;
   }
 
   getPermissionMode(): "allow" | "deny" | "ask" {
@@ -1033,13 +1461,25 @@ export class AgentLoop extends AgentEventEmitter {
 
   private configureCompactorSummarizer(): void {
     this.compactor.setSummarizer(async ({ systemPrompt, text, maxTokens }) => {
-      const response = await this.llmClient.chatCompletions({
-        model: this.config.model,
-        systemPrompt,
-        messages: [{ role: "user", content: text }],
-        tools: [],
-        overrides: { max_tokens: maxTokens, temperature: 0 },
+      const policy = resolveModelRetryPolicy();
+      const model = this.stickyModel || this.config.model;
+      const response = await callModelWithRetry({
+        policy,
+        models: [model],
+        allowFallback: false,
+        retryCap: 2,
         signal: this.runAbortController?.signal,
+        runBudget: this.modelRetryBudget,
+        costExhausted: () => this.isCostBudgetExhausted(),
+        call: (nextModel) => this.llmClient.chatCompletions({
+          model: nextModel,
+          systemPrompt,
+          messages: [{ role: "user", content: text }],
+          tools: [],
+          overrides: { max_tokens: maxTokens, temperature: 0 },
+          signal: this.runAbortController?.signal,
+        }),
+        onEvent: (event) => this.noteModelRetry(event, false),
       });
       return response.content;
     });
@@ -1081,32 +1521,70 @@ export class AgentLoop extends AgentEventEmitter {
     const fromId = this.sessionId;
     // 先落盘源会话，避免分叉丢未保存变更
     await this.checkpointSession();
+    const previousCreatedAt = this.sessionCreatedAt;
+    const previousLease = this.sessionLease;
+    const nextSessionId = "session-" + Date.now();
+    const nextLease = this.acquireSessionLease(nextSessionId, this.getWorkspaceDir());
 
-    this.sessionId = "session-" + Date.now();
-    this.sessionCreatedAt = new Date().toISOString();
-    this.pipeline.setSessionId(this.sessionId);
-    this.memoryStore.resetSession();
-    this.sectionRegistry.clearCache();
+    try {
+      await this.prepareSessionSwitch();
+      this.sessionId = nextSessionId;
+      this.sessionCreatedAt = new Date().toISOString();
+      this.pipeline.setSessionId(this.sessionId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      this.sessionLease = nextLease;
 
-    const saveName = resolveForkName(nameHint ? [nameHint] : undefined, this.sessionId);
-    await this.sessionRegistry.save(this.captureSessionSnapshot(saveName));
+      const saveName = resolveForkName(nameHint ? [nameHint] : undefined, this.sessionId);
+      await this.sessionRegistry.save(this.captureSessionSnapshot(saveName));
+      if (previousLease && previousLease !== nextLease) previousLease.release();
 
-    const summary = this.getSessionSummary();
-    return {
-      ...summary,
-      name: saveName,
-      forkedFrom: fromId,
-    };
+      const summary = this.getSessionSummary();
+      return {
+        ...summary,
+        name: saveName,
+        forkedFrom: fromId,
+      };
+    } catch (error) {
+      this.sessionId = fromId;
+      this.sessionCreatedAt = previousCreatedAt;
+      this.pipeline.setSessionId(fromId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      this.sessionLease = previousLease;
+      if (nextLease && nextLease !== previousLease) nextLease.release();
+      throw error;
+    }
   }
 
   async shutdown(): Promise<void> {
     this.cancelActiveRun();
+    await this.waitForBackgroundTerminations();
+    try {
+      const { getBackgroundTaskRegistry } = await import("./runtime/background-tasks.js");
+      await getBackgroundTaskRegistry(this.runtimeRootDir).terminateOwned({
+        workspaceDir: this.getWorkspaceDir(),
+        sessionId: this.sessionId,
+        leaseToken: this.sessionLease?.token,
+      });
+    } catch (error) {
+      this.emit("background_cancel_failed", this.activeRun?.runId ?? "session", error instanceof Error ? error.message : String(error));
+    }
+    this.sessionLease?.release();
+    this.sessionLease = null;
     try {
       await this.initPromise;
     } catch {
       // ignore init failure in shutdown path
     }
     this.approvalGate.cancelAll();
+    if (this.sessionActor) {
+      await this.sessionActor.close();
+      this.sessionActor = null;
+      this.sessionActorId = null;
+    }
+    this.runtimeJournal?.close();
+    this.runtimeJournal = null;
     if (this.jsonHookRunner) {
       await this.jsonHookRunner.sessionEnd({ sessionId: this.sessionId, status: "shutdown" });
     }
@@ -1221,10 +1699,12 @@ export class AgentLoop extends AgentEventEmitter {
   // --- Session Persistence ---
 
   async checkpointSession(): Promise<string> {
+    this.ensureSessionLease();
     return this.sessionRegistry.save(this.captureSessionSnapshot(this.sessionId));
   }
 
   async saveSession(name?: string): Promise<string> {
+    this.ensureSessionLease();
     const sessionName = name ?? defaultSessionSaveName();
     return this.sessionRegistry.save(this.captureSessionSnapshot(sessionName));
   }
@@ -1247,7 +1727,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (!snapshot) {
       return null;
     }
-    return this.hydrateSessionSnapshot(snapshot);
+    return await this.hydrateSessionSnapshot(snapshot);
   }
 
   async restoreLatestSession(): Promise<SavedSessionSummary | null> {
@@ -1255,7 +1735,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (!snapshot) {
       return null;
     }
-    return this.hydrateSessionSnapshot(snapshot);
+    return await this.hydrateSessionSnapshot(snapshot);
   }
 
 
@@ -1275,32 +1755,227 @@ export class AgentLoop extends AgentEventEmitter {
     });
   }
 
-  private hydrateSessionSnapshot(snapshot: SavedSessionSnapshot): SavedSessionSummary {
+  private async hydrateSessionSnapshot(snapshot: SavedSessionSnapshot): Promise<SavedSessionSummary> {
     const patch = applySessionSnapshot(snapshot);
-    this.messages = patch.messages;
-    this.turnCount = patch.turnCount;
-    this.sessionTokens = patch.sessionTokens;
-    this.sessionPromptTokens = patch.sessionPromptTokens;
-    this.sessionCompletionTokens = patch.sessionCompletionTokens;
-    this.tokenUsageSource = patch.tokenUsageSource;
-    this.compactionCount = patch.compactionCount;
-    this.activeRun = patch.activeRun;
-    this.recoveryController.restoreState(patch.recoveryState);
-    this.sessionId = patch.sessionId;
-    this.sessionCreatedAt = patch.sessionCreatedAt;
-    this.pipeline.setSessionId(this.sessionId);
-    this.memoryStore.resetSession();
-    this.sectionRegistry.clearCache();
-    if (this.config.runtime) {
-      this.config = {
-        ...this.config,
-        runtime: {
-          ...this.config.runtime,
-          workspaceDir: patch.workspaceDir ?? this.config.runtime.workspaceDir,
-        },
-      };
+    const previous = {
+      messages: this.messages,
+      turnCount: this.turnCount,
+      sessionTokens: this.sessionTokens,
+      sessionPromptTokens: this.sessionPromptTokens,
+      sessionCompletionTokens: this.sessionCompletionTokens,
+      tokenUsageSource: this.tokenUsageSource,
+      compactionCount: this.compactionCount,
+      activeRun: this.activeRun,
+      recoveryState: this.getRecoveryState(),
+      sessionId: this.sessionId,
+      sessionCreatedAt: this.sessionCreatedAt,
+      config: this.config,
+      lease: this.sessionLease,
+    };
+    const targetWorkspaceDir = patch.workspaceDir ?? this.getWorkspaceDir();
+    const targetLease = this.acquireSessionLease(patch.sessionId, targetWorkspaceDir);
+
+    try {
+      await this.prepareSessionSwitch();
+      this.messages = patch.messages;
+      this.turnCount = patch.turnCount;
+      this.sessionTokens = patch.sessionTokens;
+      this.sessionPromptTokens = patch.sessionPromptTokens;
+      this.sessionCompletionTokens = patch.sessionCompletionTokens;
+      this.tokenUsageSource = patch.tokenUsageSource;
+      this.compactionCount = patch.compactionCount;
+      this.activeRun = patch.activeRun;
+      this.recoveryController.restoreState(patch.recoveryState);
+      this.sessionId = patch.sessionId;
+      this.sessionCreatedAt = patch.sessionCreatedAt;
+      this.pipeline.setSessionId(this.sessionId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      if (this.config.runtime) {
+        this.config = {
+          ...this.config,
+          runtime: {
+            ...this.config.runtime,
+            workspaceDir: targetWorkspaceDir,
+          },
+        };
+      }
+      this.hookManager.setWorkspaceDir(targetWorkspaceDir);
+      this.sessionLease = targetLease;
+      if (previous.lease && previous.lease !== targetLease) previous.lease.release();
+      try {
+        const reconciled = await reconcileInterruptedSession({
+          activeRun: this.activeRun,
+          recoveryStatus: this.getRecoveryState()?.status ?? null,
+          messages: this.messages,
+          traceStore: this.runTraceStore,
+        });
+        if (reconciled.interrupted) {
+          this.messages = reconciled.messages;
+          this.activeRun = reconciled.activeRun;
+          try {
+            await this.sessionRegistry.save(this.captureSessionSnapshot(snapshot.name));
+          } catch (error) {
+            console.warn(
+              `[interrupted-run] 中断恢复后的会话未能写回: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+      } catch (error) {
+        console.warn(
+          `[interrupted-run] 中断检测失败，继续加载原会话: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return patch.summary;
+    } catch (error) {
+      this.messages = previous.messages;
+      this.turnCount = previous.turnCount;
+      this.sessionTokens = previous.sessionTokens;
+      this.sessionPromptTokens = previous.sessionPromptTokens;
+      this.sessionCompletionTokens = previous.sessionCompletionTokens;
+      this.tokenUsageSource = previous.tokenUsageSource;
+      this.compactionCount = previous.compactionCount;
+      this.activeRun = previous.activeRun;
+      this.recoveryController.restoreState(previous.recoveryState);
+      this.sessionId = previous.sessionId;
+      this.sessionCreatedAt = previous.sessionCreatedAt;
+      this.config = previous.config;
+      this.hookManager.setWorkspaceDir(this.getWorkspaceDir());
+      this.pipeline.setSessionId(previous.sessionId);
+      this.memoryStore.resetSession();
+      this.sectionRegistry.clearCache();
+      this.sessionLease = previous.lease;
+      if (targetLease && targetLease !== previous.lease) targetLease.release();
+      throw error;
     }
-    return patch.summary;
+  }
+
+  private ensureSessionLease(): void {
+    if (this.sessionLease?.sessionId === this.sessionId) {
+      this.sessionLease.assertOwned();
+      return;
+    }
+    this.sessionLease = this.acquireSessionLease(this.sessionId, this.getWorkspaceDir());
+  }
+
+  private acquireSessionLease(sessionId: string, workspaceDir: string): SessionLease | null {
+    if (process.env.QLING_FEATURES_RELIABILITY_V2 !== "true") return null;
+    if (this.sessionLease?.sessionId === sessionId) {
+      this.sessionLease.assertOwned();
+      return this.sessionLease;
+    }
+    return SessionLease.acquire({
+      stateDir: this.runtimeRootDir,
+      sessionId,
+      workspaceDir,
+    });
+  }
+
+  private assertSessionSwitchSafe(): void {
+    if (process.env.QLING_FEATURES_RELIABILITY_V2 !== "true") return;
+    this.sessionLease?.assertOwned();
+    const unsettled = getBackgroundTaskRegistry(this.runtimeRootDir).listUnsettledOwned({
+      workspaceDir: this.getWorkspaceDir(),
+      sessionId: this.sessionId,
+      leaseToken: this.sessionLease?.token,
+    });
+    if (unsettled.length > 0) {
+      throw new Error(`当前会话仍有未结算后台任务，不能切换或分叉：${unsettled.map((task) => task.taskId).join(", ")}`);
+    }
+  }
+
+  private async prepareSessionSwitch(): Promise<void> {
+    if (this.runAbortController || this.activeRun) {
+      throw new Error("当前前台任务尚未结束，不能切换或分叉会话");
+    }
+    await this.waitForBackgroundTerminations();
+    const staleActor = this.sessionActor;
+    this.sessionActor = null;
+    this.sessionActorId = null;
+    if (staleActor) await staleActor.close();
+    await this.sessionActorReset;
+    this.sessionActorReset = null;
+    this.runtimeJournal?.close();
+    this.runtimeJournal = null;
+    this.assertSessionSwitchSafe();
+  }
+
+  private async ensureSessionActor(): Promise<SessionActor> {
+    await this.sessionActorReset;
+    this.ensureSessionLease();
+    if (this.sessionActor && this.sessionActorId === this.sessionId) return this.sessionActor;
+    if (this.sessionActor) await this.sessionActor.close();
+    this.runtimeJournal?.close();
+
+    const journal = new RuntimeEventJournal({
+      stateDir: path.join(this.runtimeRootDir, "runtime"),
+      sessionId: this.sessionId,
+    });
+    await journal.init();
+    const restored = await journal.restore();
+    const interrupted = await journal.inspectInterruptedTools();
+    const initialSnapshot = projectSessionEvents(restored.snapshot, restored.events);
+    if (initialSnapshot.activeRun || interrupted.unknownOutcome.length > 0 || (initialSnapshot.state === "queued" && initialSnapshot.promptQueue.length > 0)) {
+      if (initialSnapshot.activeRun) {
+        const interruptedRun = initialSnapshot.activeRun;
+        const recoveredId = `recovered_${interruptedRun.turnId}`;
+        if (!initialSnapshot.promptQueue.some((item) => item.id === recoveredId)) {
+          initialSnapshot.promptQueue.unshift({
+            id: recoveredId,
+            prompt: interruptedRun.prompt,
+            priority: "normal",
+            queuedAt: interruptedRun.startedAt,
+          });
+        }
+      }
+      initialSnapshot.state = "paused";
+      initialSnapshot.pauseReason = interrupted.unknownOutcome.length > 0
+        ? "unconfirmed_mutating_tool_outcome"
+        : initialSnapshot.activeRun
+          ? "interrupted_active_run"
+          : "recovered_prompt_queue";
+      initialSnapshot.activeRun = null;
+      initialSnapshot.recentEvidence = [
+        ...initialSnapshot.recentEvidence,
+        ...interrupted.unknownOutcome.map((tool) => `unknown_outcome:${tool.tool}:${tool.toolCallId}`),
+      ].slice(-20);
+    }
+    if (interrupted.retryable.length > 0) {
+      initialSnapshot.recentEvidence = [
+        ...initialSnapshot.recentEvidence,
+        ...interrupted.retryable.map((tool) => `retryable_interrupted_tool:${tool.tool}:${tool.toolCallId}`),
+      ].slice(-20);
+    }
+
+    const actor = new SessionActor({
+      sessionId: this.sessionId,
+      journal,
+      initialSnapshot,
+      snapshotEveryEvents: 1,
+      executePrompt: async ({ prompt, signal }) => {
+        const cancel = () => this.cancelActiveRun();
+        signal.addEventListener("abort", cancel, { once: true });
+        try {
+          this.addUserMessage(prompt);
+          const outcome = await this.runDetailed();
+          return {
+            status:
+              outcome.status === "succeeded"
+                ? "completed"
+                : outcome.status === "exhausted" || outcome.status === "paused"
+                  ? "paused"
+                  : outcome.status,
+            text: outcome.text,
+          };
+        } finally {
+          signal.removeEventListener("abort", cancel);
+        }
+      },
+    });
+    this.runtimeJournal = journal;
+    this.sessionActor = actor;
+    this.sessionActorId = this.sessionId;
+    return actor;
   }
 
   /** 自我反思循环 (v0.5 M2) */
@@ -1328,6 +2003,13 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   private async chat(systemPrompt: string, overrides: Record<string, any> = {}): Promise<LlmChatResponse> {
+    const requestTools = process.env.QLING_FEATURES_RELIABILITY_V2 === "true"
+      ? selectToolsForRequest(
+          this.config.tools,
+          this.messages.slice(-6).map((message) => message.content).join("\n"),
+          8
+        )
+      : this.config.tools;
     const promptLayers = buildPromptInspectSnapshot(systemPrompt, this.messages);
     await this.maybeDumpInspect("prompt", {
       turn: this.turnCount,
@@ -1339,24 +2021,135 @@ export class AgentLoop extends AgentEventEmitter {
       model: this.config.model,
       systemPrompt,
       messageCount: this.messages.length,
-      toolCount: this.config.tools.length,
+      toolCount: requestTools.length,
+      totalToolCount: this.config.tools.length,
       overrides,
     });
 
-    return this.llmClient.chatCompletions({
-      model: this.config.model,
-      systemPrompt,
-      messages: this.messages,
-      tools: this.config.tools,
-      overrides,
+    const policy = resolveModelRetryPolicy();
+    const primary = this.stickyModel || this.config.model;
+    const models = [primary, ...policy.fallbackModels.filter((model) => model !== primary)];
+    let partial = false;
+    return callModelWithRetry({
+      policy,
+      models,
       signal: this.runAbortController?.signal,
-      stream: Boolean(this.config.experimental?.streaming),
-      onTextDelta: (delta) => {
-        try { this.emit("response_delta", delta); } catch { /* TUI rendering is best-effort */ }
+      runBudget: this.modelRetryBudget,
+      costExhausted: () => this.isCostBudgetExhausted(),
+      call: (model) => {
+        partial = false;
+        return this.llmClient.chatCompletions({
+          model,
+          systemPrompt,
+          messages: this.messages,
+          tools: requestTools,
+          overrides,
+          signal: this.runAbortController?.signal,
+          stream: Boolean(this.config.experimental?.streaming),
+          onTextDelta: (delta) => {
+            partial = true;
+            try { this.emit("response_delta", delta); } catch { /* TUI rendering is best-effort */ }
+          },
+          onStreamFallback: (reason) => {
+            this.llmActivityNotice = "stream→non-stream";
+            try { this.emit("stream_fallback", reason); } catch { /* TUI rendering is best-effort */ }
+          },
+        });
       },
-      onStreamFallback: (reason) => {
-        try { this.emit("stream_fallback", reason); } catch { /* TUI rendering is best-effort */ }
-      },
+      onEvent: (event) => this.noteModelRetry(event, partial),
+    });
+  }
+
+  private isCostBudgetExhausted(): boolean {
+    return resolveCostBudgetSignal({
+      promptTokens: this.sessionPromptTokens,
+      completionTokens: this.sessionCompletionTokens,
+    }).exhausted;
+  }
+
+  private noteModelRetry(event: ModelRetryEvent, partialText: boolean): void {
+    if (event.type === "model_retry") {
+      this.retryCountTotal++;
+      this.llmActivityNotice = `↻ retry ${event.attempt}/${event.max}`;
+      this.emit("model_retry", {
+        attempt: event.attempt,
+        max: event.max,
+        delayMs: event.delayMs,
+        kind: event.kind,
+        status: event.status,
+        model: event.model,
+      });
+      if (partialText) {
+        try {
+          this.emit(
+            "response_delta",
+            `\n[模型连接中断，已丢弃上段输出，第 ${event.attempt}/${event.max} 次重试…]\n`,
+          );
+        } catch { /* TUI rendering is best-effort */ }
+      }
+      console.error(
+        `[model-retry] ${event.kind} ${event.attempt}/${event.max} wait ${event.delayMs}ms model=${event.model}` +
+          (event.status ? ` status=${event.status}` : ""),
+      );
+      this.emitModelRetryExecution("model_retry_scheduled", {
+        attempt: event.attempt,
+        max: event.max,
+        delayMs: event.delayMs,
+        kind: event.kind,
+        status: event.status,
+        requestId: event.requestId,
+        model: event.model,
+      });
+      return;
+    }
+    if (event.type === "model_fallback") {
+      this.stickyModel = event.to;
+      this.emit("model_fallback", { from: event.from, to: event.to, reason: event.reason });
+      const notice = `\n[已切换到备用模型 ${event.to}]\n`;
+      try { this.emit("response_delta", notice); } catch { /* TUI rendering is best-effort */ }
+      this.emit("repair", `已切换到备用模型 ${event.to}`, "model_fallback", event.reason);
+      console.error(`[model-fallback] ${event.from} -> ${event.to} (${event.reason})`);
+      this.emitModelRetryExecution("model_fallback_activated", {
+        from: event.from,
+        to: event.to,
+        kind: event.reason,
+      });
+      return;
+    }
+    if (event.type === "model_retry_recovered") {
+      this.llmActivityNotice = null;
+      this.emitModelRetryExecution("model_retry_recovered", {
+        attempts: event.attempts,
+        elapsedMs: event.elapsedMs,
+        model: event.model,
+      });
+      return;
+    }
+    this.llmActivityNotice = null;
+    this.emitModelRetryExecution("model_retry_exhausted", {
+      attempts: event.attempts,
+      elapsedMs: event.elapsedMs,
+      lastKind: event.lastKind,
+      models: event.models,
+      status: event.status,
+      requestId: event.requestId,
+      model: event.model,
+    });
+  }
+
+  private emitModelRetryExecution(
+    type: string,
+    modelRetry: NonNullable<ExecutionEvent["modelRetry"]>,
+  ): void {
+    const runId = this.activeRun?.runId;
+    if (!runId) return;
+    this.executionEventBus.emit({
+      runId,
+      sessionId: this.sessionId,
+      type,
+      stage: "provider",
+      status: type === "model_retry_exhausted" ? "failed" : "recovering",
+      modelRetry,
     });
   }
 
@@ -1373,8 +2166,8 @@ export class AgentLoop extends AgentEventEmitter {
     this.verificationCommand = await loadVerificationCommandFile(this.getWorkspaceDir());
   }
 
-  runVerificationCommand(cmd: string): Promise<{ code: number; stdout: string; stderr: string }> {
-    return runShellCommand(cmd, this.getWorkspaceDir());
+  runVerificationCommand(cmd: string, runtime: "native" | "wsl" = "native"): Promise<{ code: number; stdout: string; stderr: string }> {
+    return runShellCommand(cmd, this.getWorkspaceDir(), runtime);
   }
 
   private async checkAutoDream(): Promise<void> {
@@ -1402,11 +2195,33 @@ export class AgentLoop extends AgentEventEmitter {
     if (kind === "prompt" && !this.loggingConfig.inspectPrompt) return;
     if (kind === "request" && !this.loggingConfig.inspectRequest) return;
     try {
+      const includeContent = process.env.QLING_INSPECT_INCLUDE_CONTENT === "true";
+      const sanitize = (value: unknown, key = ""): unknown => {
+        if (typeof value === "string") {
+          if (/(?:authorization|cookie|token|secret|password|credential|api.?key|database.?url)/i.test(key)) return "[REDACTED]";
+          const redacted = redactPromptDiagnostics(value);
+          if (!includeContent && /^(?:prompt|systemPrompt|content|arguments|input|output)$/i.test(key)) {
+            return { sha256: createHash("sha256").update(redacted).digest("hex"), length: redacted.length };
+          }
+          return redacted;
+        }
+        if (Array.isArray(value)) return value.map((item) => sanitize(item));
+        if (value && typeof value === "object") {
+          if (!includeContent && /^(?:arguments|input|output)$/i.test(key)) {
+            const serialized = redactPromptDiagnostics(JSON.stringify(value));
+            return { sha256: createHash("sha256").update(serialized).digest("hex"), length: serialized.length };
+          }
+          return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([childKey, child]) => [childKey, sanitize(child, childKey)]));
+        }
+        return value;
+      };
+      await fs.mkdir(this.loggingConfig.inspectDumpDir, { recursive: true, mode: 0o700 });
+      await fs.chmod(this.loggingConfig.inspectDumpDir, 0o700).catch(() => undefined);
       const file = path.join(
         this.loggingConfig.inspectDumpDir,
         `${String(this.turnCount).padStart(4, "0")}_${Date.now()}_${kind}.json`
       );
-      await fs.writeFile(file, JSON.stringify(payload, null, 2), "utf-8");
+      await fs.writeFile(file, JSON.stringify(sanitize(payload), null, 2), { encoding: "utf-8", mode: 0o600 });
     } catch {
       // inspect dump failure should not block execution
     }

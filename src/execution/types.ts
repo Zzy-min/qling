@@ -7,7 +7,8 @@ export type ExecutionRunStatus =
   | "exhausted"
   | "succeeded"
   | "failed"
-  | "canceled";
+  | "canceled"
+  | "interrupted";
 
 export type FailureCategory =
   | "provider_transient"
@@ -56,11 +57,31 @@ export interface ExecutionEvent {
   stage?: string;
   status?: ExecutionRunStatus;
   tool?: string;
+  /** Workspace-relative target for file tools; absolute paths are never emitted. */
+  toolTarget?: string;
   category?: FailureCategory;
   fingerprint?: string;
   durationMs?: number;
   progress?: ProgressSnapshot;
   recoveryAction?: string;
+  /** The tool call was not executed because a runtime policy redirected it. */
+  policyRedirect?: boolean;
+  /** Model retry telemetry. Never includes keys, Authorization, or request bodies. */
+  modelRetry?: {
+    attempt?: number;
+    max?: number;
+    delayMs?: number;
+    kind?: string;
+    status?: number;
+    requestId?: string;
+    model?: string;
+    attempts?: number;
+    elapsedMs?: number;
+    lastKind?: string;
+    models?: string[];
+    from?: string;
+    to?: string;
+  };
 }
 
 export interface RecoveryDecision {

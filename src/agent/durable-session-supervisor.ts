@@ -153,17 +153,29 @@ export class DurableSessionSupervisor {
 
     while (goal && goal.status === "active") {
       const turn = await this.executePromptTurn(sessionId, prompt);
-      const outcome = await controller.afterTurn({
-        transcript: SessionGoalController.messagesToTranscript(turn.messages),
-        stats: {
-          turnCount: turn.stats.turnCount,
-          tokens: turn.stats.tokens,
-        },
-      });
+      let outcome;
+      try {
+        outcome = await controller.afterTurn({
+          transcript: SessionGoalController.messagesToTranscript(turn.messages),
+          stats: {
+            turnCount: turn.stats.turnCount,
+            tokens: turn.stats.tokens,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.log(`[durable-session] session=${sessionId} goal evaluator failed: ${message.slice(0, 500)}`);
+        return;
+      }
       if (outcome.status === "continue" && outcome.continuePrompt) {
         prompt = outcome.continuePrompt;
         goal = await controller.getGoalStatus();
         continue;
+      }
+      if (outcome.status === "paused" || outcome.status === "blocked") {
+        this.log(`[durable-session] session=${sessionId} goal ${outcome.status}: ${(outcome.reason ?? "").slice(0, 500)}`);
+      } else if (outcome.status === "evaluator_error") {
+        this.log(`[durable-session] session=${sessionId} goal evaluator failed: ${(outcome.reason ?? "").slice(0, 500)}`);
       }
       return;
     }

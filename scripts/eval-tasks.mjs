@@ -8,12 +8,24 @@ import { buildEvalRepoTasks } from "../dist/eval/repo-tasks.js";
 
 const asJson = process.argv.includes("--json");
 
-const report = await runEvalSuite({ tasks: buildEvalRepoTasks() });
+const report = await runEvalSuite({
+  tasks: buildEvalRepoTasks(),
+  evidence: {
+    executor: "component",
+    model: "none",
+    verifier: "environment",
+    claim: "Validates deterministic fixture mutation and verifier behavior.",
+    limitations: [
+      "Does not execute AgentLoop or measure autonomous coding success.",
+      "Must not be reported as an Agent task success rate.",
+    ],
+  },
+});
 if (asJson) {
   process.stdout.write(evalReportToJson(report) + "\n");
 } else {
   process.stdout.write(
-    formatEvalReport(report, { title: "🧪 Qling eval:tasks (repo fixtures)" }).join("\n") + "\n"
+    formatEvalReport(report, { title: "🧪 Qling eval:tasks (deterministic component fixtures)" }).join("\n") + "\n"
   );
 }
 

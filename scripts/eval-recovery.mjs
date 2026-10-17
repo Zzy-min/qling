@@ -98,4 +98,11 @@ console.log(JSON.stringify({
   fixtures: fixtures.length + 6,
   metrics,
   mode: "deterministic-no-model",
+  evidence: {
+    executor: "harness",
+    model: "none",
+    verifier: "assertion",
+    claim: "Validates deterministic failure classification, recovery mapping, and circuit breakers.",
+    limitations: ["Does not measure whether a real model changes strategy successfully."],
+  },
 }));

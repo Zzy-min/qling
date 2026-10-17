@@ -2,6 +2,7 @@ import type { MetricEvent } from "../metrics/types.js";
 import type { MissionStatus } from "../mission/types.js";
 import type { SessionTaskStatus } from "../session/session-scheduler.js";
 import type { WorkflowCheckpoint } from "../workflow-types.js";
+import type { SessionBudgetSnapshot, SessionState } from "../runtime/types.js";
 
 export type DashboardTaskKind = "mission" | "loop" | "workflow";
 export type DashboardTaskStatus =
@@ -55,6 +56,10 @@ export interface DashboardAgentLive {
   sessionId: string;
   turnCount: number;
   ready: boolean;
+  actorState?: SessionState;
+  activeRunId?: string;
+  queuedPrompts?: number;
+  runtimeBudget?: SessionBudgetSnapshot;
 }
 
 export interface DashboardBudget {
@@ -72,6 +77,7 @@ export interface DashboardSnapshot {
     daemonHealthy: boolean;
     daemonSource: "daemon" | "local";
     permissionMode: string;
+    actorState?: SessionState;
   };
   summary: Record<DashboardTaskStatus | "total", number>;
   tasks: DashboardTask[];

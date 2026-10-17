@@ -7,6 +7,8 @@ let tuiActive = false;
 /** chat/repl 启动阶段：Agent 初始化日志静默 */
 let bootQuiet = false;
 let installed = false;
+type TuiConsoleLevel = "error" | "warn" | "log";
+let tuiSink: ((level: TuiConsoleLevel, text: string) => void) | null = null;
 
 const original = {
   error: console.error.bind(console),
@@ -18,6 +20,7 @@ const original = {
 export function resetConsoleGuardForTests(): void {
   tuiActive = false;
   bootQuiet = false;
+  tuiSink = null;
   if (installed) {
     console.error = original.error;
     console.warn = original.warn;
@@ -110,11 +113,27 @@ function installOnce(): void {
 
   console.error = (...args: unknown[]) => {
     if (shouldQuiet(args)) return;
+    if (tuiActive && tuiSink) {
+      tuiSink("error", textOf(args));
+      return;
+    }
     original.error(...args);
   };
   console.warn = (...args: unknown[]) => {
     if (shouldQuiet(args)) return;
+    if (tuiActive && tuiSink) {
+      tuiSink("warn", textOf(args));
+      return;
+    }
     original.warn(...args);
+  };
+  console.log = (...args: unknown[]) => {
+    if (shouldQuiet(args)) return;
+    if (tuiActive && tuiSink) {
+      tuiSink("log", textOf(args));
+      return;
+    }
+    original.log(...args);
   };
 }
 
@@ -130,9 +149,12 @@ export function leaveBootQuietMode(): void {
 }
 
 /** TUI start 时调用 */
-export function enterTuiQuietMode(): void {
+export function enterTuiQuietMode(
+  sink?: (level: TuiConsoleLevel, text: string) => void
+): void {
   installOnce();
   tuiActive = true;
+  tuiSink = sink ?? null;
   // TUI 期间保持 boot quiet，避免退出 boot 后异步日志又冒出来
   bootQuiet = true;
 }
@@ -141,6 +163,7 @@ export function enterTuiQuietMode(): void {
 export function leaveTuiQuietMode(): void {
   tuiActive = false;
   bootQuiet = false;
+  tuiSink = null;
 }
 
 export function isTuiQuietMode(): boolean {
@@ -157,5 +180,9 @@ export function backgroundLog(message: string): void {
 }
 
 export function forceConsoleError(...args: unknown[]): void {
+  if (tuiActive && tuiSink) {
+    tuiSink("error", textOf(args));
+    return;
+  }
   original.error(...args);
 }

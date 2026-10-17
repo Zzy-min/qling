@@ -384,6 +384,10 @@ test("g1 mode cycle handler redraws input in place without submit", async () => 
       // 模拟 Shift+Tab：不离开输入框
       ui.dispatchKey("\x1b[Z");
       assert.equal(cycles, 1);
+      ui.dispatchKey("\x1b[1;2Z");
+      ui.dispatchKey("\x1b[9;2u");
+      ui.dispatchKey("\x1b[27;2;9~");
+      assert.equal(cycles, 4);
       const plain = stripAnsi(getOutput());
       // 应看到 plan 角标/能力底栏重绘，而不是 › Mode: 文本行
       assert.match(plain, /plan/i);

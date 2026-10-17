@@ -1,5 +1,5 @@
 import { writeFile, mkdir } from "fs/promises";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import {
@@ -109,6 +109,7 @@ function isDangerousPath(filePath: string): string | null {
 export async function runWrite(args: {
   path: string;
   content: string;
+  __qling_workspace_dir?: string;
 }): Promise<ToolResult> {
   const inputPath = String(args.path ?? "").trim();
   if (!inputPath) {
@@ -125,6 +126,7 @@ export async function runWrite(args: {
   }
 
   const roots = getRuntimeRootsFromEnv();
+  if (args.__qling_workspace_dir) roots.workspaceDir = resolve(args.__qling_workspace_dir);
   const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
   const profile = resolveSandboxProfile();
   if (isWriteBlockedByProfile(profile)) {

@@ -13,6 +13,13 @@ export interface MCPServerConfig {
   headers?: Record<string, string>;
   connection_timeout_ms?: number;
   call_timeout_ms?: number;
+  /** per-server 输出上限（字节），优先于 QLING_MCP_MAX_OUTPUT_BYTES。 */
+  max_output_bytes?: number;
+}
+
+export interface MCPToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
 }
 
 export interface MCPToolDefinition {
@@ -20,6 +27,7 @@ export interface MCPToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  annotations?: MCPToolAnnotations;
 }
 
 export interface MCPConnectResult {

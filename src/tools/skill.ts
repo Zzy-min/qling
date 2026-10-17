@@ -6,10 +6,10 @@
 
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
-import { homedir } from "os";
 import { resolve, join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { isWorkspaceTrusted, resolveQlingHome } from "../guard/workspace-trust.js";
 import { toolError, toolSuccess } from "./error-utils.js";
 import { listSkills, searchSkills, parseSkillFile } from "../skills/registry.js";
 import {
@@ -27,11 +27,13 @@ export function getPackageRootForSkills(): string {
 /**
  * Skill 查找路径（对标 Grok 08-skills 发现顺序的轻量子集）。
  *
- * 优先级（后写的不覆盖先写的：catalog 先出现优先）：
- * 1. 包内 bundled skills
- * 2. 用户：~/.qling · ~/.grok · ~/.agents · ~/.claude · ~/.cursor
- * 3. 工作区：skills · .qling · .grok · .agents · .claude · .cursor
+ * 优先级（先出现优先，项目 skill 永远不能覆盖同名用户 skill）：
+ * 1. 用户：~/.qling · ~/.grok · ~/.agents · ~/.claude · ~/.cursor
+ * 2. 工作区（仅已受信）：skills · .qling · .grok · .agents · .claude · .cursor
+ * 3. 包内 bundled skills
  * 4. 可选 Hermes（QLING_INCLUDE_HERMES_SKILLS=1）
+ *
+ * 未受信工作区跳过全部 cwd/工作区级目录。QLING_TRUST_ALL_WORKSPACES=true 恢复加载，仍不覆盖用户 skill。
  *
  * 兼容开关（默认开，与 Grok 类似）：
  * - QLING_CLAUDE_SKILLS_ENABLED=0 关闭 .claude 扫描
@@ -41,7 +43,12 @@ export function getPackageRootForSkills(): string {
  *
  * 支持 name="foo" 与 name="@scope/foo"。
  */
-export function getSkillDirs(): string[] {
+export function getSkillDirs(options?: {
+  cwd?: string;
+  homeDir?: string;
+  env?: NodeJS.ProcessEnv;
+}): string[] {
+  const env = options?.env ?? process.env;
   const dirs: string[] = [];
   const seen = new Set<string>();
   const add = (p: string) => {
@@ -51,7 +58,7 @@ export function getSkillDirs(): string[] {
     dirs.push(abs);
   };
   const envOn = (key: string, defaultOn = true): boolean => {
-    const raw = String(process.env[key] ?? "")
+    const raw = String(env[key] ?? "")
       .trim()
       .toLowerCase();
     if (!raw) return defaultOn;
@@ -60,30 +67,34 @@ export function getSkillDirs(): string[] {
     return defaultOn;
   };
 
-  const cwd = process.cwd();
-  const home = homedir();
+  const cwd = resolve(options?.cwd ?? process.cwd());
+  const pinnedHome = options?.homeDir
+    ? resolve(options.homeDir)
+    : (String(env.QLING_HOME ?? "").trim() ? resolveQlingHome(env) : undefined);
+  const home = pinnedHome ?? resolveQlingHome(env);
+  const projectDirs: string[] = [];
+  const addProject = (p: string) => {
+    projectDirs.push(resolve(p));
+  };
 
-  // catalog / curate 采用「先出现优先」。顺序对标 Grok：
-  // Local (cwd) > User (home) > bundled（包内垫底，不抢项目同名 skill）
-  // 1) 当前工作区 local
-  add(resolve(cwd, "skills"));
-  add(resolve(cwd, ".qling", "skills"));
+  // 先出现优先：用户 > 受信工作区 > bundled。项目同名 skill 不能覆盖用户 skill。
+  addProject(resolve(cwd, "skills"));
+  addProject(resolve(cwd, ".qling", "skills"));
   if (envOn("QLING_GROK_SKILLS_ENABLED")) {
-    add(resolve(cwd, ".grok", "skills"));
-    add(resolve(cwd, ".grok", "commands"));
+    addProject(resolve(cwd, ".grok", "skills"));
+    addProject(resolve(cwd, ".grok", "commands"));
   }
   if (envOn("QLING_AGENTS_SKILLS_ENABLED")) {
-    add(resolve(cwd, ".agents", "skills"));
+    addProject(resolve(cwd, ".agents", "skills"));
   }
   if (envOn("QLING_CLAUDE_SKILLS_ENABLED")) {
-    add(resolve(cwd, ".claude", "skills"));
-    add(resolve(cwd, ".claude", "commands"));
+    addProject(resolve(cwd, ".claude", "skills"));
+    addProject(resolve(cwd, ".claude", "commands"));
   }
   if (envOn("QLING_CURSOR_SKILLS_ENABLED")) {
-    add(resolve(cwd, ".cursor", "skills"));
+    addProject(resolve(cwd, ".cursor", "skills"));
   }
 
-  // 2) 用户全局
   add(join(home, ".qling", "skills"));
   if (envOn("QLING_GROK_SKILLS_ENABLED")) {
     add(join(home, ".grok", "skills"));
@@ -100,15 +111,17 @@ export function getSkillDirs(): string[] {
     add(join(home, ".cursor", "skills"));
   }
 
-  // 3) 随包 bundled（无同名覆盖时仍可用）
+  if (isWorkspaceTrusted(cwd, pinnedHome ? { homeDir: pinnedHome, env } : { env })) {
+    for (const dir of projectDirs) add(dir);
+  }
+
   add(join(getPackageRootForSkills(), "skills"));
 
-  // 4) 可选 Hermes 兼容路径（默认关闭）
-  const includeHermes = String(process.env.QLING_INCLUDE_HERMES_SKILLS ?? "")
+  const includeHermes = String(env.QLING_INCLUDE_HERMES_SKILLS ?? "")
     .trim()
     .toLowerCase();
   if (includeHermes === "1" || includeHermes === "true" || includeHermes === "yes") {
-    const hermesHome = process.env.HERMES_HOME;
+    const hermesHome = env.HERMES_HOME;
     if (hermesHome && hermesHome.trim()) {
       add(join(hermesHome.trim(), "skills"));
     }

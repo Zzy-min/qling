@@ -13,7 +13,19 @@ import {
 import { buildEvalLlmTasks } from "../dist/eval/llm-tasks.js";
 
 const asJson = process.argv.includes("--json");
-const report = await runEvalSuite({ tasks: buildEvalLlmTasks() });
+const report = await runEvalSuite({
+  tasks: buildEvalLlmTasks(),
+  evidence: {
+    executor: "component",
+    model: "real",
+    verifier: "assertion",
+    claim: "Validates provider gating and chat-completions connectivity only.",
+    limitations: [
+      "Does not execute AgentLoop, tools, recovery, or repository tasks.",
+      "Must not be reported as a real-model Agent capability score.",
+    ],
+  },
+});
 
 if (asJson) {
   process.stdout.write(evalReportToJson(report) + "\n");

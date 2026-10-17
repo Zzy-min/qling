@@ -96,16 +96,46 @@ export function getRoleDefinition(role: SubAgentRole): RoleDefinition {
   return ROLE_DEFINITIONS[role];
 }
 
+const MCP_WILDCARDS = new Set(["mcp__*", "mcp__**"]);
+
+/** 白名单条目是否显式放行 MCP 工具（通配或具体 mcp__ 名字）。内置角色都不是。 */
+export function isMcpAllowEntry(entry: string): boolean {
+  const text = entry.trim();
+  return MCP_WILDCARDS.has(text) || text.startsWith("mcp__");
+}
+
+export function allowEntryMatchesTool(entry: string, toolName: string): boolean {
+  if (toolName === "subtask") return false;
+  const text = entry.trim();
+  if (text === toolName) return true;
+  return MCP_WILDCARDS.has(text) && toolName.startsWith("mcp__");
+}
+
+export function roleAllowlistIncludesMcp(role: SubAgentRole): boolean {
+  return ROLE_DEFINITIONS[role].allowedTools.some((entry) => isMcpAllowEntry(entry));
+}
+
+/**
+ * 按显式白名单过滤。mcp__* / mcp__** 才会匹配 mcp__ 工具；
+ * 未列出的 use_tool / search_tool 不会因 MCP 通配被放行。始终剔除 subtask。
+ */
+export function filterToolsByAllowlist<T extends { name: string }>(
+  tools: T[] | undefined,
+  allowedTools: readonly string[]
+): T[] {
+  return (tools ?? []).filter(
+    (tool) => tool.name !== "subtask" && allowedTools.some((entry) => allowEntryMatchesTool(entry, tool.name))
+  );
+}
+
 /**
  * 按角色过滤工具；始终剔除 subtask，防止嵌套。
  */
-export function filterToolsForRole(
-  tools: ToolDefinition[] | undefined,
+export function filterToolsForRole<T extends { name: string }>(
+  tools: T[] | undefined,
   role: SubAgentRole
-): ToolDefinition[] {
-  const def = ROLE_DEFINITIONS[role];
-  const allow = new Set(def.allowedTools);
-  return (tools ?? []).filter((t) => t.name !== "subtask" && allow.has(t.name));
+): T[] {
+  return filterToolsByAllowlist(tools, ROLE_DEFINITIONS[role].allowedTools);
 }
 
 export interface SubAgentReturnContract {

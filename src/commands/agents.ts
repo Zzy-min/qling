@@ -7,6 +7,7 @@ import { SlashCommand } from "./types.js";
 import type { SlashCommandContext } from "./runtime.js";
 import { formatRolesHelp } from "../agents/roles.js";
 import { formatLoadedRoles, loadRoleCatalog } from "../agents/role-loader.js";
+import { getSubagentCoordinator } from "../agents/coordinator.js";
 
 function resolveStateDir(context: SlashCommandContext): string {
   const loop = context.agentLoop as Record<string, any>;
@@ -43,7 +44,7 @@ export const agentsCommand: SlashCommand = {
   name: "/agents",
   aliases: ["/代理"],
   description: "查看子代理角色说明与本地后台 mission 分组",
-  usage: "/agents [roles|missions]",
+  usage: "/agents [roles|missions|active]",
   execute: async (args, context) => {
     const sub = String(args ?? "").trim().toLowerCase();
     const roles = await loadRoleCatalog({
@@ -59,6 +60,18 @@ export const agentsCommand: SlashCommand = {
     if (sub === "missions" || sub === "使命" || sub === "mission") {
       const missions = await listLocalMissionsReadOnly(resolveStateDir(context));
       context.writeLine(renderAgentsView(missions));
+      return;
+    }
+    if (sub === "active" || sub === "活动" || sub === "tasks") {
+      const tasks = getSubagentCoordinator().list();
+      if (tasks.length === 0) {
+        context.writeLine("当前没有受控子代理任务。");
+        return;
+      }
+      for (const task of tasks) {
+        const ownership = task.spec.ownedPaths.length > 0 ? ` ownership=${task.spec.ownedPaths.join(",")}` : "";
+        context.writeLine(`${task.spec.id}  ${task.status}  ${task.spec.role}${ownership}`);
+      }
       return;
     }
     // 默认：角色 + mission 摘要

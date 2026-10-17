@@ -166,3 +166,140 @@ test("context-compactor: invalid provider summaries fall back locally without fa
   assert.doesNotMatch(text, /摘要失败|无 API Key|摘要生成失败/);
   assert.equal(outcome.messages[0].synthetic_reason, "compaction_summary");
 });
+
+test("context-compactor: preserves the runtime side-effect ledger", async () => {
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => "A sufficiently detailed summary that remains valid after compaction.",
+    minSummaryChars: 20,
+  });
+  const ledger = {
+    role: "user",
+    content: "<run_side_effects>\n- C:\\repo\\a.txt：创建\n</run_side_effects>",
+    synthetic_reason: "run_side_effects",
+    synthetic_key: "run-side-effects-v1",
+  };
+  const outcome = await compactor.compactDetailed([
+    ledger,
+    { role: "user", content: "old task" },
+    { role: "assistant", content: "old response" },
+    { role: "user", content: "latest task" },
+    { role: "assistant", content: "latest response" },
+  ], 1);
+  assert.equal(outcome.status, "compacted");
+  const preserved = outcome.messages.filter(
+    (message) => message.synthetic_reason === "run_side_effects"
+  );
+  assert.equal(preserved.length, 1);
+  assert.equal(preserved[0].content, ledger.content);
+});
+
+test("context-compactor: emits a verifiable recovery checkpoint", async () => {
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => "A sufficiently detailed recovery summary for the checkpoint.",
+    minSummaryChars: 20,
+  });
+  const source = Array.from({ length: 10 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `message-${index}-${"x".repeat(100)}`,
+  }));
+  const outcome = await compactor.compactDetailed(source, 2);
+  assert.equal(outcome.status, "compacted");
+  assert.match(outcome.checkpoint.beforeHash, /^[a-f0-9]{64}$/);
+  assert.match(outcome.checkpoint.afterHash, /^[a-f0-9]{64}$/);
+  assert.equal(outcome.checkpoint.sourceMessageCount, source.length);
+  assert.equal(outcome.checkpoint.resultMessageCount, outcome.messages.length);
+});
+
+test("context-compactor: breaker skips the summarizer after consecutive short summaries", async () => {
+  let calls = 0;
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => {
+      calls++;
+      return "";
+    },
+    minSummaryChars: 200,
+    maxSummaryAttempts: 2,
+    breakerThreshold: 3,
+  });
+  const source = [
+    { role: "user", content: "first real request" },
+    { role: "assistant", content: "old answer" },
+    { role: "user", content: "second request" },
+    { role: "assistant", content: "second answer" },
+    { role: "user", content: "latest real request" },
+    { role: "assistant", content: "latest answer" },
+  ];
+
+  const first = await compactor.compactDetailed(source, 1);
+  assert.equal(first.status, "compacted");
+  assert.equal(first.summarySource, "local");
+  assert.equal(first.consecutiveFailures, 2);
+  assert.equal(first.breakerOpen, false);
+  assert.equal(calls, 2);
+
+  const second = await compactor.compactDetailed(source, 1);
+  assert.equal(second.status, "compacted");
+  assert.equal(second.summarySource, "local");
+  assert.equal(second.consecutiveFailures, 3);
+  assert.equal(second.breakerOpen, true);
+  assert.equal(calls, 3);
+
+  const third = await compactor.compactDetailed(source, 1);
+  assert.equal(third.status, "compacted");
+  assert.equal(third.summarySource, "local");
+  assert.equal(third.breakerOpen, true);
+  assert.equal(calls, 3, "open breaker must not call the provider summarizer");
+  assert.match(third.messages.map((message) => message.content).join("\n"), /确定性本地摘要/);
+
+  compactor.resetBreaker();
+  const recovered = await compactor.compactDetailed(source, 1);
+  assert.equal(recovered.breakerOpen, false);
+  assert.equal(calls, 5, "resetBreaker restores summarizer attempts");
+});
+
+test("context-compactor: a valid summary resets consecutive failures", async () => {
+  let summary = "";
+  const compactor = new ContextCompactor(1, "test", {
+    summarizer: async () => summary,
+    minSummaryChars: 200,
+    maxSummaryAttempts: 1,
+    breakerThreshold: 2,
+  });
+  const source = [
+    { role: "user", content: "first real request" },
+    { role: "assistant", content: "old answer" },
+    { role: "user", content: "second request" },
+    { role: "assistant", content: "second answer" },
+    { role: "user", content: "latest real request" },
+    { role: "assistant", content: "latest answer" },
+  ];
+
+  const failed = await compactor.compactDetailed(source, 1);
+  assert.equal(failed.summarySource, "local");
+  assert.equal(failed.consecutiveFailures, 1);
+  assert.equal(failed.breakerOpen, false);
+
+  summary = "A valid and sufficiently detailed summary that comfortably exceeds the threshold.".padEnd(260, " z");
+  const succeeded = await compactor.compactDetailed(source, 1);
+  assert.equal(succeeded.summarySource, "llm");
+  assert.equal(succeeded.consecutiveFailures, 0);
+  assert.equal(succeeded.breakerOpen, false);
+});
+
+test("context-compactor: compacted output is passed through history repair", async () => {
+  const compactor = new ContextCompactor(1, "test");
+  const outcome = await compactor.compactDetailed([
+    { role: "user", content: "task a" },
+    { role: "assistant", content: "answer a" },
+    { role: "user", content: "task b" },
+    { role: "assistant", content: "answer b" },
+    { role: "tool", tool_call_id: "orphan", content: "stray tool output" },
+  ], 1);
+
+  assert.equal(outcome.status, "compacted");
+  assert.deepEqual(outcome.historyRepair.strippedToolResultIds, ["orphan"]);
+  assert.equal(
+    outcome.messages.some((message) => message.tool_call_id === "orphan"),
+    false,
+  );
+});

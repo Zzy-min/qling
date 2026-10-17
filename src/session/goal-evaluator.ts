@@ -1,8 +1,14 @@
+import { getProviderPreset } from "../providers/presets.js";
+import { resolveActiveLlm, resolveProviderApiKey } from "../providers/resolve-llm.js";
+
 type GoalFetch = typeof fetch;
+
+export type GoalEvaluatorError = "network" | "timeout" | "no_key" | "unparseable";
 
 export interface GoalEvaluationResult {
   done: boolean;
   reason: string;
+  error?: GoalEvaluatorError;
 }
 
 export interface GoalEvaluatorOptions {
@@ -47,15 +53,26 @@ export class GoalEvaluator {
   private readonly fetchImpl: GoalFetch;
 
   constructor(options: GoalEvaluatorOptions = {}) {
-    this.provider = options.provider ?? process.env.QLING_GOAL_EVALUATOR_PROVIDER ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
+    const active = resolveActiveLlm(process.env);
+    this.provider = options.provider ?? process.env.QLING_GOAL_EVALUATOR_PROVIDER ?? active.provider;
+    const sameProvider = this.provider === active.provider;
     const endpoint =
       options.endpoint ??
       process.env.QLING_GOAL_EVALUATOR_ENDPOINT ??
-      process.env.QLING_LLM_ENDPOINT ??
-      (this.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com");
+      (sameProvider ? active.endpoint : getProviderPreset(this.provider)?.endpoint || active.endpoint);
     this.endpoint = resolveChatEndpoint(endpoint);
-    this.apiKey = options.apiKey ?? process.env.QLING_GOAL_EVALUATOR_API_KEY ?? process.env.QLING_LLM_API_KEY ?? "";
-    this.model = options.model ?? process.env.QLING_GOAL_EVALUATOR_MODEL ?? process.env.QLING_LLM_MODEL ?? "deepseek-chat";
+    this.apiKey =
+      options.apiKey ??
+      process.env.QLING_GOAL_EVALUATOR_API_KEY ??
+      (sameProvider
+        ? active.apiKey
+        : resolveProviderApiKey(this.provider, process.env, {
+            startupProvider: process.env.QLING_LLM_STARTUP_PROVIDER || active.provider,
+          }).apiKey);
+    this.model =
+      options.model ??
+      process.env.QLING_GOAL_EVALUATOR_MODEL ??
+      (sameProvider ? active.model : getProviderPreset(this.provider)?.model || active.model);
     this.timeoutMs = options.timeoutMs ?? Number(process.env.QLING_GOAL_EVALUATOR_TIMEOUT_MS ?? "30000");
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
@@ -68,6 +85,7 @@ export class GoalEvaluator {
       return {
         done: false,
         reason: "goal evaluator 缺少 API key，无法确认条件达成",
+        error: "no_key",
       };
     }
 
@@ -100,11 +118,33 @@ ${input.transcript.slice(-12_000)}`;
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`goal evaluator http ${response.status}`);
+        return {
+          done: false,
+          reason: `goal evaluator http ${response.status}`,
+          error: "network",
+        };
       }
-      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      let data: { choices?: { message?: { content?: string } }[] };
+      try {
+        data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      } catch {
+        return {
+          done: false,
+          reason: "goal evaluator 返回了不可解析结果",
+          error: "unparseable",
+        };
+      }
       const content = data.choices?.[0]?.message?.content ?? "";
       return this.parse(content);
+    } catch (error) {
+      const reason = error instanceof Error && error.message ? error.message : "goal evaluator failed";
+      const name = error instanceof Error ? error.name : "";
+      const timedOut = name === "AbortError" || name === "TimeoutError" || /timeout|aborted/i.test(reason);
+      return {
+        done: false,
+        reason,
+        error: timedOut ? "timeout" : "network",
+      };
     } finally {
       clearTimeout(timer);
     }
@@ -112,9 +152,9 @@ ${input.transcript.slice(-12_000)}`;
 
   parse(raw: string): GoalEvaluationResult {
     try {
-      const parsed = JSON.parse(stripCodeFences(raw)) as GoalEvaluationResult;
+      const parsed = JSON.parse(stripCodeFences(raw)) as Partial<GoalEvaluationResult>;
       if (typeof parsed.done === "boolean" && typeof parsed.reason === "string") {
-        return parsed;
+        return { done: parsed.done, reason: parsed.reason };
       }
     } catch {
       // fall through
@@ -122,6 +162,7 @@ ${input.transcript.slice(-12_000)}`;
     return {
       done: false,
       reason: raw.trim() || "goal evaluator 返回了不可解析结果",
+      error: "unparseable",
     };
   }
 }

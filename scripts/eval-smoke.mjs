@@ -7,7 +7,15 @@ import { runEvalSuite, formatEvalReport, evalReportToJson } from "../dist/eval/r
 
 const asJson = process.argv.includes("--json");
 
-const report = await runEvalSuite();
+const report = await runEvalSuite({
+  evidence: {
+    executor: "harness",
+    model: "none",
+    verifier: "assertion",
+    claim: "Validates local safety, tool, and configuration components.",
+    limitations: ["Does not measure autonomous task completion."],
+  },
+});
 if (asJson) {
   process.stdout.write(evalReportToJson(report) + "\n");
 } else {

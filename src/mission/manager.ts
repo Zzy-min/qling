@@ -17,12 +17,33 @@ import {
 const TERMINAL_STATUSES = new Set<MissionStatus>(["succeeded", "exhausted", "failed", "canceled"]);
 const PAUSABLE_STATUSES = new Set<MissionStatus>(["queued", "running", "blocked"]);
 
+/** Existence probe only. Callers must pass signal 0; this wrapper never chooses another signal. */
+export type MissionProcessProbe = (pid: number, signal: 0) => boolean;
+
+function defaultMissionProcessProbe(pid: number, signal: 0): boolean {
+  return process.kill(pid, signal);
+}
+
+export function isMissionOwnerAlive(
+  pid: number | undefined,
+  probe: MissionProcessProbe = defaultMissionProcessProbe,
+): boolean {
+  if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
+  try {
+    return probe(pid as number, 0) !== false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export class MissionManager {
   private stateDir: string;
   private missions: Map<string, Mission> = new Map();
+  private readonly processProbe: MissionProcessProbe;
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, options: { processProbe?: MissionProcessProbe } = {}) {
     this.stateDir = path.join(stateDir, "missions");
+    this.processProbe = options.processProbe ?? defaultMissionProcessProbe;
   }
 
   async init(): Promise<void> {
@@ -30,6 +51,7 @@ export class MissionManager {
       await fs.mkdir(this.stateDir, { recursive: true });
     }
     await this.loadMissions();
+    await this.reconcileInterruptedMissions();
   }
 
   async createMission(
@@ -82,6 +104,7 @@ export class MissionManager {
     const previousStatus = mission.status;
 
     mission.status = status;
+    if (status === "running") mission.ownerPid = process.pid;
     if (error) mission.error = error;
     else if (status !== "failed") delete mission.error;
     mission.updatedAt = Date.now();
@@ -145,6 +168,23 @@ export class MissionManager {
   async refresh(): Promise<void> {
     this.missions.clear();
     await this.loadMissions();
+    await this.reconcileInterruptedMissions();
+  }
+
+  /**
+   * Startup reconciliation moves running missions with no live owner
+   * (including legacy snapshots that omit ownerPid) to paused. Paused is the
+   * existing status resumeMission already accepts, so an explicit resume can
+   * queue them again. This never starts or continues a mission by itself.
+   */
+  private async reconcileInterruptedMissions(): Promise<void> {
+    const orphaned = [...this.missions.values()].filter(
+      (mission) => mission.status === "running" && !isMissionOwnerAlive(mission.ownerPid, this.processProbe),
+    );
+    for (const mission of orphaned) {
+      if (this.missions.get(mission.id)?.status !== "running") continue;
+      await this.updateStatus(mission.id, "paused", undefined, { reason: "interrupted_on_restart" });
+    }
   }
 
   async getMissionLogs(id: string): Promise<MissionEvent[]> {

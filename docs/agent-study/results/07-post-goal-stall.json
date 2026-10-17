@@ -1,0 +1,16 @@
+{
+  "sameReason": {
+    "autoTurns": 2,
+    "finalStatus": "paused_no_progress",
+    "goalPreserved": true,
+    "evaluatorErrorTurns": 0,
+    "approxTokens": 41
+  },
+  "evaluatorThrows": {
+    "autoTurns": 2,
+    "finalStatus": "paused_infra",
+    "goalPreserved": true,
+    "evaluatorErrorTurns": 2,
+    "approxTokens": 41
+  }
+}

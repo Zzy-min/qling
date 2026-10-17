@@ -6,7 +6,10 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 import { parseFrontmatter, scanSkillDirs, searchSkills, clearSkillCache } from "../../dist/skills/registry.js";
 import { runSkill } from "../../dist/tools/skill.js";
@@ -14,12 +17,21 @@ import { runSkill } from "../../dist/tools/skill.js";
 async function withSkillDir(fn) {
   const dir = await mkdtemp(join(tmpdir(), "qling-skill-"));
   const prevCwd = process.cwd();
+  const prevTrust = process.env.QLING_TRUST_ALL_WORKSPACES;
+  const prevHome = process.env.QLING_HOME;
   try {
+    process.env.QLING_HOME = join(dir, "home");
+    process.env.QLING_TRUST_ALL_WORKSPACES = "true";
+    await mkdir(process.env.QLING_HOME, { recursive: true });
     process.chdir(dir);
     await mkdir(join(dir, "skills"), { recursive: true });
     await fn(dir);
   } finally {
     process.chdir(prevCwd);
+    if (prevTrust === undefined) delete process.env.QLING_TRUST_ALL_WORKSPACES;
+    else process.env.QLING_TRUST_ALL_WORKSPACES = prevTrust;
+    if (prevHome === undefined) delete process.env.QLING_HOME;
+    else process.env.QLING_HOME = prevHome;
     await rm(dir, { recursive: true, force: true });
     clearSkillCache();
   }
@@ -229,7 +241,7 @@ describe("runSkill", () => {
 
 describe("built-in opencli skill documentation", () => {
   it("documents browser_act cross-step sessions accurately", async () => {
-    const content = await readFile(join(process.cwd(), "skills", "opencli", "SKILL.md"), "utf8");
+    const content = await readFile(join(repoRoot, "skills", "opencli", "SKILL.md"), "utf8");
     assert.doesNotMatch(content, /browser_act（须 QLING_BROWSER_ACT=1，无跨步会话）/);
     assert.match(content, /browser_act.*session.*保活|browser_act.*跨步会话/is);
   });

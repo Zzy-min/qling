@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { MissionManager } from "../../dist/mission/manager.js";
+import { MissionManager, isMissionOwnerAlive } from "../../dist/mission/manager.js";
 
 async function withTempDir(run) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-mission-"));
@@ -126,5 +126,165 @@ test("mission manager serializes 100 concurrent snapshot updates", async () => {
     const reloaded = new MissionManager(stateDir);
     await reloaded.init();
     assert.equal(reloaded.getMission(mission.id)?.metrics.totalTurns, 99);
+  });
+});
+
+function missionSnapshot(spec) {
+  return {
+    sessionId: "session-test",
+    description: "d",
+    lastContext: [],
+    metrics: { startTime: 1, totalTurns: 0, totalTokens: 0, totalToolCalls: 0 },
+    createdAt: 1,
+    updatedAt: 1,
+    ...spec,
+  };
+}
+
+test("isMissionOwnerAlive probes with signal 0 only", () => {
+  const signals = [];
+  assert.equal(isMissionOwnerAlive(7, (pid, signal) => {
+    signals.push(signal);
+    assert.equal(pid, 7);
+    return true;
+  }), true);
+  assert.deepEqual(signals, [0]);
+
+  const deadSignals = [];
+  assert.equal(isMissionOwnerAlive(8, (_pid, signal) => {
+    deadSignals.push(signal);
+    const error = new Error("esrch");
+    error.code = "ESRCH";
+    throw error;
+  }), false);
+  assert.deepEqual(deadSignals, [0]);
+
+  const permSignals = [];
+  assert.equal(isMissionOwnerAlive(9, (_pid, signal) => {
+    permSignals.push(signal);
+    const error = new Error("perm");
+    error.code = "EPERM";
+    throw error;
+  }), true);
+  assert.deepEqual(permSignals, [0]);
+  assert.equal(isMissionOwnerAlive(undefined), false);
+  assert.equal(isMissionOwnerAlive(0), false);
+});
+
+test("mission reconcile pauses only running missions whose owner is dead", async () => {
+  await withTempDir(async (stateDir) => {
+    const signals = [];
+    const specs = [
+      { id: "msn_queued", name: "queued", status: "queued" },
+      { id: "msn_paused", name: "paused", status: "paused" },
+      { id: "msn_ok", name: "ok", status: "succeeded" },
+      { id: "msn_blocked", name: "blocked", status: "blocked" },
+      { id: "msn_dead", name: "dead", status: "running", ownerPid: 424242 },
+      { id: "msn_legacy", name: "legacy", status: "running" },
+    ];
+    await fs.mkdir(path.join(stateDir, "missions"), { recursive: true });
+    for (const spec of specs) {
+      await fs.writeFile(
+        path.join(stateDir, "missions", `${spec.id}.json`),
+        JSON.stringify(missionSnapshot(spec)),
+      );
+    }
+
+    const manager = new MissionManager(stateDir, {
+      processProbe: (pid, signal) => {
+        signals.push({ pid, signal });
+        const error = new Error("esrch");
+        error.code = "ESRCH";
+        throw error;
+      },
+    });
+    await manager.init();
+
+    assert.equal(manager.listMissions().length, specs.length);
+    assert.equal(manager.getMission("msn_queued").status, "queued");
+    assert.equal(manager.getMission("msn_paused").status, "paused");
+    assert.equal(manager.getMission("msn_ok").status, "succeeded");
+    assert.equal(manager.getMission("msn_blocked").status, "blocked");
+    assert.equal(manager.getMission("msn_dead").status, "paused");
+    assert.equal(manager.getMission("msn_legacy").status, "paused");
+    assert.deepEqual(signals, [{ pid: 424242, signal: 0 }]);
+    const logs = await manager.getMissionLogs("msn_dead");
+    assert.equal(logs.some((event) =>
+      event.type === "state_changed"
+      && event.data.to === "paused"
+      && event.data.reason === "interrupted_on_restart"
+    ), true);
+
+    const again = new MissionManager(stateDir, {
+      processProbe: () => {
+        throw new Error("reconcile must not probe a mission that is no longer running");
+      },
+    });
+    await again.init();
+    assert.equal(again.listMissions().length, specs.length);
+    assert.equal(again.getMission("msn_dead").status, "paused");
+    assert.equal(again.getMission("msn_queued").status, "queued");
+  });
+});
+
+test("mission reconcile pauses an ownerless running mission for explicit resume and keeps a live owner", async () => {
+  await withTempDir(async (stateDir) => {
+    await fs.mkdir(path.join(stateDir, "missions"), { recursive: true });
+    await fs.writeFile(
+      path.join(stateDir, "missions", "msn_legacy.json"),
+      JSON.stringify(missionSnapshot({ id: "msn_legacy", name: "legacy", status: "running" })),
+    );
+    await fs.writeFile(
+      path.join(stateDir, "missions", "msn_live.json"),
+      JSON.stringify(missionSnapshot({ id: "msn_live", name: "live", status: "running", ownerPid: process.pid })),
+    );
+
+    const manager = new MissionManager(stateDir, {
+      processProbe: (pid, signal) => {
+        assert.equal(signal, 0);
+        return pid === process.pid;
+      },
+    });
+    await manager.init();
+    assert.equal(manager.getMission("msn_legacy").status, "paused");
+    assert.equal(manager.getMission("msn_live").status, "running");
+
+    const resumed = await manager.resumeMission("msn_legacy", "operator resume");
+    assert.equal(resumed.status, "queued");
+    assert.notEqual(resumed.status, "running");
+    assert.equal(manager.getMission("msn_live").status, "running");
+    const logs = await manager.getMissionLogs("msn_legacy");
+    assert.equal(logs.some((event) =>
+      event.type === "state_changed"
+      && event.data.to === "paused"
+      && event.data.reason === "interrupted_on_restart"
+    ), true);
+    assert.equal(logs.some((event) => event.type === "control" && event.data.action === "resume"), true);
+    assert.equal(logs.some((event) => event.type === "state_changed" && event.data.to === "running"), false);
+  });
+});
+
+test("mission reconcile uses process.kill(pid, 0) and keeps a live owner running", async () => {
+  await withTempDir(async (stateDir) => {
+    const manager = new MissionManager(stateDir);
+    await manager.init();
+    const mission = await manager.createMission("Live", "stay running", "session-test");
+    await manager.updateStatus(mission.id, "running");
+    assert.equal(manager.getMission(mission.id).ownerPid, process.pid);
+
+    const signals = [];
+    const original = process.kill;
+    process.kill = (pid, signal) => {
+      signals.push(signal);
+      return original.call(process, pid, signal);
+    };
+    try {
+      const reloaded = new MissionManager(stateDir);
+      await reloaded.init();
+      assert.equal(reloaded.getMission(mission.id)?.status, "running");
+      assert.deepEqual(signals, [0]);
+    } finally {
+      process.kill = original;
+    }
   });
 });
