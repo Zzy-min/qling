@@ -81,7 +81,7 @@
     "daemon": "node dist/daemon.js",
     "prepare": "npm run build",
     "dev": "tsc --watch",
-    "test": "npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\"",
+    "test": "npm run build && node --experimental-test-module-mocks --import ./tests/setup/isolate.mjs --test \"tests/unit/**/*.test.mjs\"",
     "test:smoke": "npm run build && node --test \"tests/smoke/**/*.test.mjs\"",
     "eval:smoke": "npm run build && node scripts/eval-smoke.mjs",
     "eval:recovery": "npm run build && node scripts/eval-recovery.mjs",
@@ -103,7 +103,7 @@
     "sync:scoop-bucket": "node scripts/sync-scoop-bucket.mjs",
     "build:portable-win": "node scripts/build-portable-win.mjs",
     "sync:winget-sha": "node scripts/sync-winget-sha.mjs",
-    "ci:check": "npm run dashboard:test && npm run build && node --experimental-test-module-mocks --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/eval-anchored-edit.mjs && node scripts/eval-harness.mjs && node scripts/eval-context.mjs && node scripts/eval-memory.mjs && node scripts/eval-long-run.mjs && node scripts/eval-multi-agent.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
+    "ci:check": "npm run dashboard:test && npm run build && node --experimental-test-module-mocks --import ./tests/setup/isolate.mjs --test \"tests/unit/**/*.test.mjs\" && node --test \"tests/smoke/**/*.test.mjs\" && node scripts/eval-smoke.mjs && node scripts/eval-tasks.mjs && node scripts/eval-anchored-edit.mjs && node scripts/eval-harness.mjs && node scripts/eval-context.mjs && node scripts/eval-memory.mjs && node scripts/eval-long-run.mjs && node scripts/eval-multi-agent.mjs && node scripts/validate-packaging.mjs && node scripts/dep-layers.mjs --strict"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.2.1",

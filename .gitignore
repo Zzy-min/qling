@@ -33,3 +33,7 @@ Thumbs.db
 dist-portable/
 *.tgz
 
+# Runtime leaks (tests and shell redirects)
+sessions/
+nul
+

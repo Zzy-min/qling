@@ -6,7 +6,10 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 import { parseFrontmatter, scanSkillDirs, searchSkills, clearSkillCache } from "../../dist/skills/registry.js";
 import { runSkill } from "../../dist/tools/skill.js";
@@ -238,7 +241,7 @@ describe("runSkill", () => {
 
 describe("built-in opencli skill documentation", () => {
   it("documents browser_act cross-step sessions accurately", async () => {
-    const content = await readFile(join(process.cwd(), "skills", "opencli", "SKILL.md"), "utf8");
+    const content = await readFile(join(repoRoot, "skills", "opencli", "SKILL.md"), "utf8");
     assert.doesNotMatch(content, /browser_act（须 QLING_BROWSER_ACT=1，无跨步会话）/);
     assert.match(content, /browser_act.*session.*保活|browser_act.*跨步会话/is);
   });
