@@ -114,3 +114,37 @@ Other tracked changes: .github/workflows/ci.yml, .gitignore, README.md (+17, com
 8. `ci: typecheck, test:changed, per-commit typecheck job`.
 
 Run `npm run typecheck` before each commit, or verify the series with `git rebase -x "npm run typecheck"`.
+
+## Commits (local only, not pushed; branch codex/agent-friendly-14, on top of ffdf824)
+
+All 6 commits were checked out one at a time in a temporary worktree and run through `tsc --noEmit` (same effect as `git rebase -x "npm run typecheck"`). Each returned 0.
+
+| Commit | Title | Per-commit typecheck |
+|---|---|---|
+| e039e35 | build(deps): declare @ast-grep packages used by repo-index | 0 |
+| 27c25c3 | feat(providers): port model retry, single key resolver and refreshed presets | 0 |
+| 876c0d9 | test: isolate unit tests in a temp cwd with scrubbed env and root-leak guard | 0 |
+| 7bb3f00 | ci: add lint:invariants with a shrink-only baseline | 0 |
+| 4aff601 | ci: add typecheck, test:changed and per-commit typecheck job | 0 |
+| ce7e985 | docs(agent-study): add brief 14 analysis, implementation brief and RESULT | 0 |
+
+How this differs from the suggested 8 commits: briefs 12, 13, 13b, 13c and item 1 were merged into 27c25c3. agent-loop.ts, presets.ts, llm-client.ts and config.ts carry interleaved hunks from all four briefs, and splitting them would have meant changing code. No functional code was changed for the split.
+
+Final checks on ce7e985 (same as before committing):
+- tsc 0.
+- npm test: 1486 / 1485 / 0 fail / 1 skip.
+- eval:recovery: ok 15.
+- eval:tasks: passed.
+- lint:invariants: strict ok.
+
+Pre-commit checks:
+- No secrets: only fake sk-* keys in test files.
+- No .env, auth files, sessions/, nul, logs or temp files.
+- node_modules is ignored (this includes the hand-copied better_sqlite3.node).
+- No hunks from the user's own uncommitted work.
+- The extra env write is `src/agent-loop.ts:404` `QLING_LLM_STARTUP_PROVIDER`, from brief 13, identical to the main checkout, and intended.
+
+State after committing:
+- Working tree clean.
+- Temporary verification worktree removed.
+- Main checkout `git status` unchanged.
