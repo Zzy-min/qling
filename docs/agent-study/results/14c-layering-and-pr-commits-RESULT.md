@@ -69,3 +69,11 @@ An empty range checks `head.sha` once. Per commit, dependency install is unchang
 - No new trust boundary. History repair still only rewrites the in-memory message list the compactor and main loop already passed it.
 - The workflow refuses base/head values that are not 40 hex characters before `git fetch` / `git rev-list`. `before` is used only after the same check, and a fetch of `before` cannot fail the job by itself (`|| true`); a missing or non-ancestor `before` falls back to the PR range.
 - No `.env`, auth files, or dependency changes.
+
+## Known-bad commit exception
+
+SHA `7aaea91f385d5ee4ec34c8e7a271c130a7c62be7` only. It is pre-PR history. Typechecking that commit alone fails with TS2307 (cannot find `../runtime/project-profile.js` / `./managed-command.js`). It predates brief 14.
+
+The `per-commit-typecheck` loop exact-matches that full SHA, skips it, and prints one line saying why. No other workflow logic changed.
+
+This is acceptable because the user chose option A: `pull_request` `base.sha..head.sha` still contains the commit, and dropping it would rewrite history, which cannot be done without a force push.
