@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { repairHistory } from "../../dist/context-history-repair.js";
+import { repairHistory } from "../../dist/pipeline/context-history-repair.js";
 
 function assistant(id, extra = {}) {
   return {

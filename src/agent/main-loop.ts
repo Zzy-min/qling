@@ -40,7 +40,7 @@ import { RunEfficiencyGuard } from "./run-efficiency.js";
 import type { ProgressState } from "./run-efficiency.js";
 import type { ProjectProfile } from "../runtime/project-profile.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
-import { repairHistory } from "../context-history-repair.js";
+import { repairHistory } from "../pipeline/context-history-repair.js";
 import { resolveCostBudgetSignal } from "../cost-budget.js";
 import { stopHookMaxContinuations } from "../hooks/json-hooks.js";
 

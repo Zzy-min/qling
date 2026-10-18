@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { repairHistory } from "../../dist/context-history-repair.js";
+import { repairHistory } from "../../dist/pipeline/context-history-repair.js";
 import { RunTraceStore } from "../../dist/execution/run-trace-store.js";
 import {
   INTERRUPTED_RUN_REMINDER,

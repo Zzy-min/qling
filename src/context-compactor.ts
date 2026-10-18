@@ -5,7 +5,7 @@
 
 import { Message } from "./types.js";
 import { DEFAULT_MODEL } from "./providers/presets.js";
-import { repairHistory, type HistoryRepairReport } from "./context-history-repair.js";
+import { repairHistory, type HistoryRepairReport } from "./pipeline/context-history-repair.js";
 import * as path from "path";
 import { createHash } from "node:crypto";
 
