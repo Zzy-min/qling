@@ -82,6 +82,20 @@ export class RecoveryController {
     };
   }
 
+  completeRun(status: "succeeded" | "failed" | "exhausted" | "canceled"): RecoveryState | null {
+    if (!this.state) return null;
+    this.fingerprintCounts.clear();
+    if (status === "succeeded") {
+      this.state = undefined;
+      return null;
+    }
+    this.state = {
+      ...this.state,
+      status: status === "canceled" ? "canceled" : "failed",
+    };
+    return this.getRecoveryState();
+  }
+
   restoreState(state: RecoveryState | null | undefined): void {
     this.fingerprintCounts.clear();
     this.state = state

@@ -417,11 +417,8 @@ async function main() {
 
   // v0.4 / Phase 1.4 Onboarding（仅交互模式；非 TTY 跳过）
   if (decision.mode === "chat" || decision.mode === "repl") {
-    const needSetup = !(
-      process.env.QLING_LLM_API_KEY?.trim() ||
-      process.env.DEEPSEEK_API_KEY?.trim() ||
-      process.env.OPENAI_API_KEY?.trim()
-    );
+    const { hasAnyConfiguredApiKey } = await import("./providers/resolve-llm.js");
+    const needSetup = !hasAnyConfiguredApiKey(process.env);
     await checkOnboarding({
       stateDir: decision.global.fileStateDir,
       needSetup,
@@ -807,7 +804,14 @@ async function main() {
   }
 
   if (decision.mode === "config") {
-    console.log(formatLocalConfigReport(buildLocalConfigReport(loaded.config)).join("\n"));
+    console.log(formatLocalConfigReport(buildLocalConfigReport(loaded.config), loaded.llmSources).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "models") {
+    const { runModelsCli } = await import("./providers/remote-models.js");
+    const code = await runModelsCli(decision.subArgs, loaded.config, process.env);
+    if (code !== 0) process.exitCode = code;
     return;
   }
 
@@ -826,7 +830,35 @@ async function main() {
   }
 
   if (decision.mode === "hooks") {
+    const [sub, name] = decision.subArgs;
+    if (sub === "disable" || sub === "enable") {
+      const { disableHook, enableHook } = await import("./hooks/disabled-hooks.js");
+      if (!name || !name.trim() || name.trim().startsWith("#")) {
+        console.error(`用法: qling hooks ${sub} <name>`);
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        if (sub === "disable") await disableHook(stateDir, name);
+        else await enableHook(stateDir, name);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+        return;
+      }
+      console.log(sub === "disable" ? `已禁用 hook: ${name.trim()}` : `已启用 hook: ${name.trim()}`);
+      return;
+    }
     console.log(formatLocalHooksReport(buildLocalHooksReport(loaded.config.guard)).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "trust" || decision.mode === "untrust") {
+    const { runTrustCommand, runUntrustCommand } = await import("./cli/trust-control.js");
+    const code = await (decision.mode === "trust" ? runTrustCommand : runUntrustCommand)(decision.subArgs, {
+      cwd: loaded.config.runtime.workspace_dir ?? process.cwd(),
+    });
+    if (code !== 0) process.exitCode = code;
     return;
   }
 
@@ -1057,12 +1089,11 @@ async function main() {
   }
   const tools = buildToolRegistry({ staticEnabled });
 
-  const agentConfig: Partial<AgentConfig> = {
-    apiKey:
-      loaded.config.llm.api_key ||
-      process.env.DEEPSEEK_API_KEY ||
-      process.env.OPENAI_API_KEY ||
-      "",
+  const agentConfig: Partial<AgentConfig> & {
+    llmSources?: import("./providers/resolve-llm.js").LlmFieldSources;
+  } = {
+    apiKey: loaded.config.llm.api_key || "",
+    llmSources: loaded.llmSources,
     provider: loaded.config.llm.provider,
     endpoint: loaded.config.llm.endpoint,
     model: loaded.config.llm.model,
@@ -1085,7 +1116,7 @@ async function main() {
       inspectDumpDir: loaded.config.logging.inspect_dump_dir,
     },
     experimental: {
-      // Headless, Mission and ACP remain complete-response by default.
+      // Headless and Mission stay complete-response. ACP opts into streaming below.
       streaming: decision.mode === "chat" && loaded.config.experimental.streaming_chat,
     },
   };
@@ -1098,6 +1129,7 @@ async function main() {
     }
     await runAcpStdioServer((cwd) => new AgentLoop({
       ...agentConfig,
+      experimental: { ...agentConfig.experimental, streaming: true },
       tools: buildToolRegistry({ staticEnabled }),
       runtime: {
         ...agentConfig.runtime!,
@@ -1379,6 +1411,7 @@ async function main() {
       const repl = new StreamingREPL(agent, {
         continueSession: decision.global.continueSession,
         resumeSession: decision.global.resumeSession,
+        tuiMode: decision.global.tuiMode,
       });
       await repl.start();
       return;

@@ -57,7 +57,8 @@ function normalizeDecision(value: unknown, fallback: PermissionDecision): Permis
 function normalizeRules(rules: PermissionRuleLike[] | undefined): PermissionRule[] {
   return (rules ?? []).map((rule) => ({
     tool_pattern: safeText(rule.tool_pattern, "*"),
-    decision: normalizeDecision(rule.decision, "ask"),
+    // 安全默认（与 config.ts / PermissionMatrix 一致）：缺省/非法 decision → deny
+    decision: normalizeDecision(rule.decision, "deny"),
     reason: safeText(rule.reason, ""),
   })).map((rule) => ({
     ...rule,
@@ -84,7 +85,8 @@ export function buildLocalPermissionsReport(input: LocalPermissionsReportInput):
     defaultMode: safeText(input.defaultMode, "allow"),
     rules: (input.rules ?? []).map((rule) => ({
       toolPattern: safeText(rule.tool_pattern, "*"),
-      decision: safeText(rule.decision, "ask"),
+      // 与 normalizeRules 保持一致：缺省 decision 显示为 deny
+      decision: safeText(rule.decision, "deny"),
       reason: safeText(rule.reason, ""),
     })).map((rule) => ({
       ...rule,

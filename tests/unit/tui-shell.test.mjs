@@ -205,6 +205,31 @@ test("padVisible aligns to target width for mixed CJK", () => {
   assert.equal(visibleWidth(padded), 10);
 });
 
+test("tui shell degrades cleanly at 60, 80 and 120 columns", () => {
+  for (const width of [60, 80, 120]) {
+    const top = formatTopBar({
+      productName: "轻灵",
+      englishName: "Qling",
+      version: "1.3.1",
+      workspace: "中文工作区",
+      model: "local-agent-model",
+      ready: true,
+      tokens: 12_400,
+      branch: "feature/refined-dashboard",
+      sessionMode: "agent",
+      permissionMode: "ask",
+      width,
+    });
+    assert.equal(top.length, 2);
+    for (const line of top) assert.ok(visibleWidth(line) <= width);
+    assert.match(top.join("\n"), /轻灵 Qling/);
+
+    const input = formatInputFrame({ placeholder: "输入中文任务并保留核心权限提示", width });
+    const frameWidth = visibleWidth(input[0]);
+    for (const line of input) assert.equal(visibleWidth(line), frameWidth);
+  }
+});
+
 test("formatToolOutputCard footer is bilingual for expand/collapse", () => {
   const long = Array.from({ length: 20 }, (_, i) => `line-${i}`).join("\n");
   const collapsed = formatToolOutputCard(long, { expand: false });

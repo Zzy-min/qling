@@ -5,6 +5,8 @@
 
 import { ToolDefinition, ToolResult } from "../types.js";
 import axios from "axios";
+import { getProviderPreset } from "../providers/presets.js";
+import { resolveActiveLlm, resolveProviderApiKey } from "../providers/resolve-llm.js";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -80,13 +82,23 @@ export async function runVisionAnalyze(args: {
   prompt: string;
   detail?: "low" | "high" | "auto";
 }): Promise<ToolResult> {
-  // 1. 优先级：Vision 专用变量 > LLM 通用变量 > 默认值
-  const provider = process.env.QLING_VISION_PROVIDER || process.env.QLING_LLM_PROVIDER || "openai";
-  const model = process.env.QLING_VISION_MODEL || process.env.QLING_LLM_MODEL || "gpt-4o";
-  const apiKey = process.env.QLING_LLM_API_KEY || process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || "";
+  // 1. 优先级：Vision 专用变量 > 当前生效 LLM（按 provider 取 key，不跨供应商回退）
+  const active = resolveActiveLlm(process.env);
+  const provider = process.env.QLING_VISION_PROVIDER || active.provider;
+  const model =
+    process.env.QLING_VISION_MODEL ||
+    (provider === active.provider ? active.model : getProviderPreset(provider)?.model || active.model);
+  const resolvedKey = provider === active.provider
+    ? active.apiKey
+    : resolveProviderApiKey(provider, process.env, {
+        startupProvider: process.env.QLING_LLM_STARTUP_PROVIDER || active.provider,
+      }).apiKey;
+  const apiKey = resolvedKey || "";
 
   // 2. 解析 Endpoint
-  let endpoint = process.env.QLING_VISION_ENDPOINT || process.env.QLING_LLM_ENDPOINT;
+  let endpoint =
+    process.env.QLING_VISION_ENDPOINT ||
+    (provider === active.provider ? active.endpoint : getProviderPreset(provider)?.endpoint || "");
   if (!endpoint) {
     endpoint = provider === "openai"
       ? "https://api.openai.com/v1/chat/completions"

@@ -22,3 +22,22 @@ test("auto compact can be disabled and tuned via env", () => {
     10
   );
 });
+
+test("auto compact uses the known model window when config window is unset", () => {
+  const kimi = resolveAutoCompactConfig({}, "kimi-k3");
+  assert.equal(kimi.budgetSource, "model");
+  assert.equal(kimi.windowTokens, 1000000);
+  assert.equal(kimi.maxTokens, 850000);
+  const deepseek = resolveAutoCompactConfig({}, "deepseek-flash");
+  assert.equal(deepseek.budgetSource, "model");
+  assert.equal(deepseek.windowTokens, 1000000);
+  assert.equal(deepseek.maxTokens, 850000);
+  assert.ok(deepseek.maxTokens > 6000);
+});
+
+test("unknown model keeps the legacy 6000 trigger and labels it", () => {
+  const unknown = resolveAutoCompactConfig({}, "not-a-real-model");
+  assert.equal(unknown.budgetSource, "legacy");
+  assert.equal(unknown.maxTokens, 6000);
+  assert.equal(unknown.windowTokens, null);
+});

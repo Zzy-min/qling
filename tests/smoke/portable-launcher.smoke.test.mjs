@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -101,10 +101,20 @@ windowsTest(
       return;
     }
 
-    const artifact = resolve(configuredArtifact);
-    assert.ok(existsSync(artifact), `portable artifact does not exist: ${artifact}`);
+    const artifactZip = resolve(configuredArtifact);
+    assert.ok(existsSync(artifactZip), `portable ZIP does not exist: ${artifactZip}`);
+    assert.match(artifactZip, /\.zip$/i, "QLING_PORTABLE_ARTIFACT must point to the release ZIP");
     const root = mkdtempSync(join(tmpdir(), "qling-built-artifact-link-"));
     try {
+      const extracted = join(root, "extracted");
+      mkdirSync(extracted, { recursive: true });
+      execFileSync(
+        "tar.exe",
+        ["-xf", artifactZip, "-C", extracted],
+        { encoding: "utf8", timeout: 20_000 },
+      );
+      const artifact = join(extracted, "qling-win-x64", "qling.exe");
+      assert.ok(existsSync(artifact), `portable launcher missing after extraction: ${artifact}`);
       const link = join(root, "qling.exe");
       try {
         symlinkSync(artifact, link, "file");

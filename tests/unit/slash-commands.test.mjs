@@ -41,12 +41,21 @@ async function withTempDir(fn) {
 async function withSkillWorkspace(fn) {
   const dir = await mkdtemp(join(tmpdir(), "qling-slash-skill-"));
   const previousCwd = process.cwd();
+  const prevTrust = process.env.QLING_TRUST_ALL_WORKSPACES;
+  const prevHome = process.env.QLING_HOME;
   try {
+    process.env.QLING_HOME = join(dir, "home");
+    process.env.QLING_TRUST_ALL_WORKSPACES = "true";
+    await mkdir(process.env.QLING_HOME, { recursive: true });
     process.chdir(dir);
     await mkdir(join(dir, "skills"), { recursive: true });
     await fn(dir);
   } finally {
     process.chdir(previousCwd);
+    if (prevTrust === undefined) delete process.env.QLING_TRUST_ALL_WORKSPACES;
+    else process.env.QLING_TRUST_ALL_WORKSPACES = prevTrust;
+    if (prevHome === undefined) delete process.env.QLING_HOME;
+    else process.env.QLING_HOME = prevHome;
     await rm(dir, { recursive: true, force: true });
     clearSkillCache();
   }
@@ -86,6 +95,8 @@ function createContext(overrides = {}) {
     daemonSessionApi: overrides.daemonSessionApi,
     statusLine: overrides.statusLine,
     writeClipboard: overrides.writeClipboard,
+    repaintChrome: overrides.repaintChrome,
+    clearConversationView: overrides.clearConversationView,
     setImmediatePrompt: overrides.setImmediatePrompt ?? (() => {}),
     setInputDraft: overrides.setInputDraft ?? (() => {}),
     onRecoveryStateChanged: overrides.onRecoveryStateChanged ?? (() => {}),
@@ -250,6 +261,22 @@ test("slash direct local skill invocation loads skill and built-ins keep priorit
     assert.equal(await handleSlashCommand("/clear", ctx), true);
     assert.doesNotMatch(lines.join("\n"), /Clear Skill/);
   });
+});
+
+test("slash clear resets both agent context and the active conversation view", async () => {
+  let resetCount = 0;
+  let viewClearCount = 0;
+  const { ctx } = createContext({
+    agentLoop: {
+      reset: () => { resetCount++; },
+      checkpointSession: async () => {},
+    },
+    clearConversationView: () => { viewClearCount++; },
+  });
+
+  assert.equal(await handleSlashCommand("/clear", ctx), true);
+  assert.equal(resetCount, 1);
+  assert.equal(viewClearCount, 1);
 });
 
 test("slash help includes loop/tasks/compact", async () => {

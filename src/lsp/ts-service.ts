@@ -3,6 +3,7 @@
 // 启用：QLING_LSP=1；依赖可选 peer/dev 的 typescript 包
 // ============================================================
 
+import { createHash } from "crypto";
 import { readFileSync, existsSync, statSync } from "fs";
 import { relative, resolve, extname } from "path";
 
@@ -78,6 +79,35 @@ interface ServiceBundle {
 
 const cache = new Map<string, ServiceBundle>();
 
+interface ObservedScript {
+  stamp: string;
+  hash: string;
+  version: string;
+}
+
+const observedScripts = new Map<string, ObservedScript>();
+
+/**
+ * LanguageService reuses a snapshot while getScriptVersion is unchanged.
+ * mtime and size miss a same-tick rewrite of an equal-length file, so the
+ * version also carries a content hash.
+ */
+function scriptVersion(fileName: string): string {
+  try {
+    const stat = statSync(fileName);
+    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    const hash = createHash("sha256").update(readFileSync(fileName)).digest("hex");
+    const observed = observedScripts.get(fileName);
+    if (observed && observed.stamp === stamp && observed.hash === hash) return observed.version;
+    const version = `${stamp}:${hash}`;
+    observedScripts.set(fileName, { stamp, hash, version });
+    return version;
+  } catch {
+    observedScripts.delete(fileName);
+    return "0";
+  }
+}
+
 function createLanguageService(ts: TsModule, workspaceDir: string): ServiceBundle {
   const root = resolve(workspaceDir);
   const configPath = ts.findConfigFile(root, ts.sys.fileExists.bind(ts.sys), "tsconfig.json");
@@ -124,14 +154,7 @@ function createLanguageService(ts: TsModule, workspaceDir: string): ServiceBundl
       for (const f of extraFiles) set.add(f);
       return Array.from(set);
     },
-    getScriptVersion: (fileName) => {
-      try {
-        const stat = statSync(fileName);
-        return `${stat.mtimeMs}:${stat.size}`;
-      } catch {
-        return "0";
-      }
-    },
+    getScriptVersion: (fileName) => scriptVersion(fileName),
     getScriptSnapshot: (fileName) => {
       const text = readFile(fileName);
       if (text === undefined) return undefined;
@@ -181,6 +204,7 @@ export function resetTsServiceCache(): void {
     }
   }
   cache.clear();
+  observedScripts.clear();
 }
 
 function rel(workspaceDir: string, abs: string): string {
@@ -318,13 +342,7 @@ export function getOrCreateServiceForFile(
   const host: import("typescript").LanguageServiceHost = {
     getCompilationSettings: () => options,
     getScriptFileNames: () => [file],
-    getScriptVersion: () => {
-      try {
-        return String(statSync(file).mtimeMs);
-      } catch {
-        return "0";
-      }
-    },
+    getScriptVersion: (fileName) => scriptVersion(fileName || file),
     getScriptSnapshot: (fileName) => {
       try {
         return ts.ScriptSnapshot.fromString(readFileSync(fileName, "utf8"));

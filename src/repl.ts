@@ -176,8 +176,12 @@ export class Repl {
         console.log("\n🎋 轻灵正在思考...\n");
 
         try {
-          this.agent.addUserMessage(currentPrompt);
-          const response = await this.agent.run();
+          const response = (this.agent as any).getAgentRuntimeMode?.() === "actor"
+            ? await this.agent.submitPrompt(currentPrompt)
+            : await (async () => {
+                this.agent.addUserMessage(currentPrompt!);
+                return this.agent.run();
+              })();
           await this.agent.checkpointSession();
           console.log(`\n${response}\n`);
         } catch (err) {
@@ -226,6 +230,12 @@ export class Repl {
         console.log(`✅ goal 已达成: ${goalResult.reason ?? "条件满足"}\n`);
       } else if (goalResult.status === "cleared") {
         console.log(`⚠️ goal 已停止: ${goalResult.reason ?? "已清除"}\n`);
+      } else if (goalResult.status === "paused") {
+        console.log(`⚠️ goal 已暂停: ${goalResult.reason ?? "已暂停"}。使用 /goal resume 恢复。\n`);
+      } else if (goalResult.status === "blocked") {
+        console.log(`⚠️ goal 已阻塞: ${goalResult.reason ?? "已阻塞"}\n`);
+      } else if (goalResult.status === "evaluator_error") {
+        console.log(`⚠️ goal 评估失败: ${goalResult.reason ?? "评估器不可用"}\n`);
       }
     } catch (err) {
       console.error(`⚠️ goal 评估失败: ${err instanceof Error ? err.message : String(err)}\n`);

@@ -68,7 +68,7 @@ function makeHarness(factory) {
   return { server, connection, ctx: connection.agent, updates, permissions };
 }
 
-test("acp: initialize advertises only implemented baseline capabilities", async (t) => {
+test("acp: initialize advertises loadSession without opening mcp or prompt capabilities", async (t) => {
   const fake = new FakeAgent("acp-init");
   const h = makeHarness(() => fake);
   t.after(async () => { h.connection.close(); await h.server.shutdown(); });
@@ -79,7 +79,7 @@ test("acp: initialize advertises only implemented baseline capabilities", async 
   assert.equal(result.protocolVersion, acp.PROTOCOL_VERSION);
   assert.equal(result.agentInfo.name, "qling");
   assert.deepEqual(result.agentCapabilities.promptCapabilities, {});
-  assert.equal(result.agentCapabilities.loadSession, false);
+  assert.equal(result.agentCapabilities.loadSession, true);
   assert.equal(result.agentCapabilities.mcpCapabilities, undefined);
 });
 

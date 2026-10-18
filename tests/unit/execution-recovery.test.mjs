@@ -102,6 +102,21 @@ test("recovery controller pauses after two identical no-progress failures", () =
   assert.equal(controller.getRecoveryState().remainingStrategyAttempts, 2);
 });
 
+test("recovery controller clears successful runs and terminalizes failures", () => {
+  const succeeded = new RecoveryController();
+  succeeded.startRun({ runId: "run_success", sessionId: "session_1", originalTask: "inspect" });
+  assert.equal(succeeded.completeRun("succeeded"), null);
+  assert.throws(() => succeeded.getRecoveryState(), /recovery run has not started/);
+
+  const failed = new RecoveryController();
+  failed.startRun({ runId: "run_failed", sessionId: "session_1", originalTask: "inspect" });
+  assert.equal(failed.completeRun("failed")?.status, "failed");
+
+  const canceled = new RecoveryController();
+  canceled.startRun({ runId: "run_canceled", sessionId: "session_1", originalTask: "inspect" });
+  assert.equal(canceled.completeRun("canceled")?.status, "canceled");
+});
+
 test("recovery controller enforces four total strategy attempts", () => {
   const controller = new RecoveryController({ sameFingerprintLimit: 2, strategyAttemptLimit: 4 });
   controller.startRun({ runId: "run_budget", sessionId: "session_1", originalTask: "fix" });

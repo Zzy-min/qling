@@ -2,6 +2,8 @@
 // G3.3 — 会话级 Remembered Grant（用户批准后本会话免再问）
 // ============================================================
 
+import { splitShell } from "./shell-split.js";
+
 export type GrantScope = "session";
 
 export interface PermissionGrant {
@@ -18,6 +20,28 @@ function normalizeTool(name: string): string {
   return String(name ?? "")
     .trim()
     .toLowerCase();
+}
+
+/**
+ * grant 复用边界（对标 Grok「宽脚本不得命中窄授权」）：
+ * bash 仅在命令是单段且非复杂语法时复用；多段 / `$(...)` / `bash -c` 等
+ * 必须重新走审批。非 bash 工具维持原行为。
+ */
+function isGrantReusableFor(
+  toolName: string,
+  args?: Record<string, unknown> | null
+): boolean {
+  if (normalizeTool(toolName) !== "bash") return true;
+  const record = args && typeof args === "object" ? (args as Record<string, unknown>) : null;
+  const raw = record?.command ?? record?.cmd;
+  if (typeof raw !== "string" || !raw.trim()) {
+    // 无命令信息：无法判定，沿用旧行为
+    return true;
+  }
+  const { segments, complex } = splitShell(raw);
+  if (complex) return false;
+  if (segments.length > 1) return false;
+  return true;
 }
 
 export class PermissionGrantStore {
@@ -43,8 +67,9 @@ export class PermissionGrantStore {
     return { ...grant };
   }
 
-  hasAllow(toolName: string): boolean {
-    return this.grants.has(normalizeTool(toolName));
+  hasAllow(toolName: string, args?: Record<string, unknown> | null): boolean {
+    if (!this.grants.has(normalizeTool(toolName))) return false;
+    return isGrantReusableFor(toolName, args);
   }
 
   get(toolName: string): PermissionGrant | null {

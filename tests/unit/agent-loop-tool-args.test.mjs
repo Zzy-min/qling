@@ -1,7 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import { AgentLoop } from "../../dist/agent-loop.js";
+
+let stateDir = "";
+
+test.beforeEach(async () => {
+  stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-tool-args-"));
+});
+
+test.afterEach(async () => {
+  if (stateDir) await fs.rm(stateDir, { recursive: true, force: true });
+});
 
 function snapshotEnv() {
   return {
@@ -34,8 +47,8 @@ test("agent-loop: tool arguments tolerate loose json within parse retries", asyn
     maxIterations: 3,
     runtime: {
       workspaceDir: process.cwd(),
-      fileCacheDir: process.cwd(),
-      fileStateDir: process.cwd(),
+      fileCacheDir: stateDir,
+      fileStateDir: stateDir,
       maxSteps: 3,
       parseRetries: 3,
       toolRepeatLimit: 6,
@@ -97,8 +110,8 @@ test("agent-loop: invalid tool arguments become tool error instead of crashing",
     maxIterations: 3,
     runtime: {
       workspaceDir: process.cwd(),
-      fileCacheDir: process.cwd(),
-      fileStateDir: process.cwd(),
+      fileCacheDir: stateDir,
+      fileStateDir: stateDir,
       maxSteps: 3,
       parseRetries: 1,
       toolRepeatLimit: 6,
@@ -148,7 +161,7 @@ test("agent-loop: invalid tool arguments become tool error instead of crashing",
   }
 });
 
-test("agent-loop: tool repeat limit blocks repeated identical calls", async () => {
+test("agent-loop: tool repeat limit returns a structured error and allows recovery", async () => {
   const prev = snapshotEnv();
   process.env.QLING_MEMORY_WAL_ENABLED = "false";
   process.env.QLING_METRICS_ENABLED = "false";
@@ -159,8 +172,8 @@ test("agent-loop: tool repeat limit blocks repeated identical calls", async () =
     maxIterations: 3,
     runtime: {
       workspaceDir: process.cwd(),
-      fileCacheDir: process.cwd(),
-      fileStateDir: process.cwd(),
+      fileCacheDir: stateDir,
+      fileStateDir: stateDir,
       maxSteps: 3,
       parseRetries: 1,
       toolRepeatLimit: 1,
@@ -213,11 +226,11 @@ test("agent-loop: tool repeat limit blocks repeated identical calls", async () =
     agent.addUserMessage("run repeat limit test");
     const finalAnswer = await agent.run();
 
-    assert.match(finalAnswer, /执行已暂停/);
-    assert.match(finalAnswer, /repeated_action/);
-    assert.equal(pipelineCalls, 0);
+    assert.equal(finalAnswer, "done-repeat-limit");
+    assert.equal(pipelineCalls, 1);
     const toolMessages = agent.messages.filter((m) => m.role === "tool");
-    assert.equal(toolMessages.length, 0);
+    assert.equal(toolMessages.length, 2);
+    assert.match(toolMessages[1].content, /TOOL_REPEAT_LIMIT_EXCEEDED/);
     assert.equal(events.filter((event) => event.type === "loop_detected").length, 1);
     unsubscribe();
   } finally {
@@ -256,8 +269,8 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
     maxIterations: 1,
     runtime: {
       workspaceDir: process.cwd(),
-      fileCacheDir: process.cwd(),
-      fileStateDir: process.cwd(),
+      fileCacheDir: stateDir,
+      fileStateDir: stateDir,
       maxSteps: 1,
       parseRetries: 1,
       toolRepeatLimit: 6,
@@ -301,8 +314,8 @@ test("agent-loop: session token stats stay unknown when provider usage is missin
     maxIterations: 1,
     runtime: {
       workspaceDir: process.cwd(),
-      fileCacheDir: process.cwd(),
-      fileStateDir: process.cwd(),
+      fileCacheDir: stateDir,
+      fileStateDir: stateDir,
       maxSteps: 1,
       parseRetries: 1,
       toolRepeatLimit: 6,

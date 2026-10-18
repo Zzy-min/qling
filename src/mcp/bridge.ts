@@ -33,7 +33,9 @@ export function mcpToolsToNativeDefinitions(mcpTools: MCPToolDefinition[]): Tool
     name: mcpToolFullName(t.serverName, t.name),
     description: "[MCP:" + t.serverName + "] " + t.description,
     parameters: t.inputSchema as Record<string, unknown>,
-    readOnly: true,
+    // 未声明 annotations 的 MCP 工具一律视为可写（安全默认）。
+    readOnly: t.annotations?.readOnlyHint === true,
+    destructive: t.annotations?.destructiveHint === true,
     scenes: ["mcp"],
     priority: 4,
   }));

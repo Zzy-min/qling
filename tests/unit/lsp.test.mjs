@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { statSync, utimesSync } from "node:fs";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,14 +144,24 @@ test("runLsp refreshes symbols after a file changes", async () => {
   resetTsServiceCache();
   try {
     const file = join(dir, "demo.ts");
-    await writeFile(file, "export function oldName() { return 1; }\n", "utf8");
+    const oldText = "export function oldName() { return 1; }\n";
+    const newText = "export function newName() { return 2; }\n";
+    assert.equal(Buffer.byteLength(oldText), Buffer.byteLength(newText));
+    const fixed = new Date(Math.floor(Date.now() / 1000) * 1000);
+    await writeFile(file, oldText, "utf8");
+    utimesSync(file, fixed, fixed);
     process.env.QLING_LSP = "1";
     process.env.QLING_WORKSPACE_DIR = dir;
 
     const before = await runLsp({ action: "document_symbols", path: "demo.ts" });
     assert.match(String(before.output), /oldName/);
 
-    await writeFile(file, "export function newName() { return 2; }\n", "utf8");
+    const stamped = statSync(file);
+    await writeFile(file, newText, "utf8");
+    utimesSync(file, fixed, fixed);
+    const restamped = statSync(file);
+    assert.equal(restamped.mtimeMs, stamped.mtimeMs);
+    assert.equal(restamped.size, stamped.size);
     const after = await runLsp({ action: "document_symbols", path: "demo.ts" });
     assert.match(String(after.output), /newName/);
     assert.doesNotMatch(String(after.output), /oldName/);

@@ -15,6 +15,14 @@ import { EmbeddingClient } from "./memory/embedding.js";
 import * as crypto from "crypto";
 import type { MemoryOperation } from "./memory/consolidation.js";
 import { atomicWriteJson } from "./persistence/atomic-json.js";
+import {
+  MemoryCardIndex,
+  inferMemorySensitivity,
+  type MemoryCard,
+  type MemoryCardKind,
+  type MemoryCardScope,
+  type MemorySearchHit,
+} from "./memory/memory-card-index.js";
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -112,6 +120,96 @@ export async function migrateMisplacedWorkspaceCheckpoint(memoryDir: string): Pr
   return true;
 }
 
+// --- MMR 多样性重排（PersistedMemory 检索，避免近重复记忆占满 top-k）---
+
+/** 用户纠错标记（来源或内容约定，仓库统一口径）。 */
+function isCorrectionEntry(entry: Pick<PersistedEntry, "source" | "content">): boolean {
+  return entry.source === "user-correction"
+    || entry.content.includes("[用户纠错")
+    || entry.content.includes("必须遵守");
+}
+
+/** 解析 QLING_MEMORY_MMR_LAMBDA：0–1；缺省或非法回退 0.7；1 表示关闭 MMR。 */
+function resolveMmrLambda(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return 0.7;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 1) return 0.7;
+  return value;
+}
+
+/**
+ * 相似度分词：拉丁字符按 [^\p{L}\p{N}_] 切词并小写；
+ * CJK（汉字）追加字符 bigram，避免中文整句被当成单个 token 而失效。
+ */
+function similarityTokens(value: string): Set<string> {
+  const normalized = value.toLowerCase();
+  const tokens = new Set(
+    normalized.split(/[^\p{L}\p{N}_]+/u).filter((token) => token.length > 0)
+  );
+  for (const run of normalized.match(/\p{Script=Han}+/gu) ?? []) {
+    if (run.length < 2) {
+      tokens.add(run);
+      continue;
+    }
+    for (let index = 0; index + 2 <= run.length; index++) {
+      tokens.add(run.slice(index, index + 2));
+    }
+  }
+  return tokens;
+}
+
+function jaccardSimilarity(left: string, right: string): number {
+  const a = similarityTokens(left);
+  const b = similarityTokens(right);
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const token of a) if (b.has(token)) intersection++;
+  return intersection / (a.size + b.size - intersection);
+}
+
+interface ScoredMemoryEntry {
+  entry: PersistedEntry;
+  score: number;
+}
+
+/**
+ * 最大边际相关（MMR）重排：先保底选出纠错记忆，再对剩余名额做多样性选择。
+ * lambda>=1、n<=1 或 limit<=0 时不做重排，直接按原顺序截断。
+ */
+function mmrRerank(
+  scored: ScoredMemoryEntry[],
+  limit: number,
+  lambda: number
+): ScoredMemoryEntry[] {
+  if (limit <= 0) return [];
+  if (scored.length <= 1 || lambda >= 1) return scored.slice(0, limit);
+  const selected: ScoredMemoryEntry[] = [];
+  const remaining: ScoredMemoryEntry[] = [];
+  for (const candidate of scored) {
+    if (selected.length < limit && isCorrectionEntry(candidate.entry)) selected.push(candidate);
+    else remaining.push(candidate);
+  }
+  while (selected.length < limit && remaining.length > 0) {
+    let bestIndex = 0;
+    let bestMmr = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < remaining.length; index++) {
+      const candidate = remaining[index];
+      let maxSimilarity = 0;
+      for (const chosen of selected) {
+        const similarity = jaccardSimilarity(candidate.entry.content, chosen.entry.content);
+        if (similarity > maxSimilarity) maxSimilarity = similarity;
+      }
+      const mmr = lambda * candidate.score - (1 - lambda) * maxSimilarity;
+      if (mmr > bestMmr) {
+        bestMmr = mmr;
+        bestIndex = index;
+      }
+    }
+    selected.push(remaining.splice(bestIndex, 1)[0]);
+  }
+  return selected;
+}
+
 // --- PersistedMemory（长期存储，WAL 模式可选）---
 
 export class PersistedMemory {
@@ -157,7 +255,7 @@ export class PersistedMemory {
     }
   }
 
-  add(content: string, source: string, importance: number = 0.5): void {
+  add(content: string, source: string, importance: number = 0.5): PersistedEntry {
     const entry: PersistedEntry = {
       id: "mem_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
       content,
@@ -167,6 +265,7 @@ export class PersistedMemory {
     };
     this.entries.push(entry);
     this.entries.sort((a, b) => b.importance - a.importance);
+    return { ...entry };
   }
 
   remove(id: string): boolean {
@@ -224,10 +323,7 @@ export class PersistedMemory {
     const keywordResults = this.entries.map((e) => {
       let score = e.importance;
       // 用户纠错几乎不衰减，避免「记不住还犯错」
-      const isCorrection =
-        e.source === "user-correction" ||
-        e.content.includes("[用户纠错") ||
-        e.content.includes("必须遵守");
+      const isCorrection = isCorrectionEntry(e);
       const ageHours = (now - e.createdAt) / (1000 * 60 * 60);
       score *= isCorrection ? Math.pow(0.98, ageHours / 24) : Math.pow(0.9, ageHours / 24);
       if (isCorrection) score += 0.5;
@@ -301,10 +397,11 @@ export class PersistedMemory {
        merged.set(p.id, { entry: p, score: 2.0 });
     });
 
-    return Array.from(merged.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
-      .map((s) => s.entry);
+    const ranked = Array.from(merged.values()).sort((a, b) => b.score - a.score);
+    const lambda = resolveMmrLambda(process.env.QLING_MEMORY_MMR_LAMBDA);
+    // 取 limit*3 候选做 MMR，再截取 limit（lambda=1 时等价于改动前的纯相关度排序）。
+    const candidates = ranked.slice(0, limit * 3);
+    return mmrRerank(candidates, limit, lambda).map((s) => s.entry);
   }
 
   async syncCognitiveIndex(entries: PersistedEntry[]): Promise<void> {
@@ -587,6 +684,7 @@ export class MemoryStore {
   private config: typeof DEFAULT_CONFIG;
   private workspaceMemoryDir: string;
   private globalMemoryDir: string;
+  private cardIndex: MemoryCardIndex | null = null;
 
   constructor(memoryDir: string, config: Partial<typeof DEFAULT_CONFIG> & { workspaceDir?: string } = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -609,6 +707,12 @@ export class MemoryStore {
     await migrateMisplacedWorkspaceCheckpoint(this.workspaceMemoryDir);
     await this.globalPersisted.init();
     await this.persisted.init();
+    if (process.env.QLING_FEATURES_MEMORY_CARDS === "true") {
+      this.cardIndex = new MemoryCardIndex({ memoryDir: this.workspaceMemoryDir });
+      await this.cardIndex.init();
+      for (const entry of this.persisted.getAll()) this.upsertMemoryCard(entry, "workspace");
+      for (const entry of this.globalPersisted.getAll()) this.upsertMemoryCard(entry, "global");
+    }
   }
 
   setWAL(
@@ -637,6 +741,8 @@ export class MemoryStore {
   async shutdown(): Promise<void> {
     await this.globalPersisted.shutdown();
     await this.persisted.shutdown();
+    this.cardIndex?.close();
+    this.cardIndex = null;
   }
 
   async rebuildSemanticIndex(): Promise<void> {
@@ -650,9 +756,11 @@ export class MemoryStore {
   // --- Persisted（对外 API）---
   add(content: string, source: string, importance: number = 0.5, scope: "global" | "workspace" = "workspace"): void {
     if (scope === "global") {
-      this.globalPersisted.add(content, source, importance);
+      const entry = this.globalPersisted.add(content, source, importance);
+      this.upsertMemoryCard(entry, "global");
     } else {
-      this.persisted.add(content, source, importance);
+      const entry = this.persisted.add(content, source, importance);
+      this.upsertMemoryCard(entry, "workspace");
     }
   }
 
@@ -670,16 +778,19 @@ export class MemoryStore {
       .find((e) => e.source === "user-correction" && e.content.includes(fact.slice(0, 80)));
     if (existing) {
       this.globalPersisted.update(existing.id, { importance: 0.99, content: payload });
+      const refreshed = this.globalPersisted.getAll().find((entry) => entry.id === existing.id);
+      if (refreshed) this.upsertMemoryCard(refreshed, "global");
       await this.globalPersisted.saveToDisk();
       return existing.id;
     }
-    this.globalPersisted.add(payload, "user-correction", 0.99);
+    const created = this.globalPersisted.add(payload, "user-correction", 0.99);
+    this.upsertMemoryCard(created, "global");
     await this.globalPersisted.saveToDisk();
-    const all = this.globalPersisted.getAll();
-    return all[0]?.id ?? null;
+    return created.id;
   }
 
   remove(id: string, scope: "global" | "workspace" = "workspace"): boolean {
+    this.cardIndex?.remove(this.cardId(scope, id));
     if (scope === "global") {
       return this.globalPersisted.remove(id);
     } else {
@@ -688,11 +799,13 @@ export class MemoryStore {
   }
 
   update(id: string, updates: Partial<Pick<PersistedEntry, "content" | "importance">>, scope: "global" | "workspace" = "workspace"): boolean {
-    if (scope === "global") {
-      return this.globalPersisted.update(id, updates);
-    } else {
-      return this.persisted.update(id, updates);
+    const target = scope === "global" ? this.globalPersisted : this.persisted;
+    const updated = target.update(id, updates);
+    if (updated) {
+      const entry = target.getAll().find((candidate) => candidate.id === id);
+      if (entry) this.upsertMemoryCard(entry, scope);
     }
+    return updated;
   }
 
   applyOperations(ops: MemoryOperation[], scope: "global" | "workspace" = "workspace"): void {
@@ -716,6 +829,17 @@ export class MemoryStore {
   }
 
   async getRelevant(query: string, limit: number = 5): Promise<PersistedEntry[]> {
+    if (this.cardIndex) {
+      return this.cardIndex
+        .search(query, { scopes: ["workspace", "global"], limit })
+        .map((hit) => ({
+          id: hit.card.id,
+          content: hit.card.content,
+          source: `memory-card:${hit.card.kind}:${hit.card.scope}`,
+          createdAt: hit.card.createdAt,
+          importance: hit.card.importance,
+        }));
+    }
     const wsHits = await this.persisted.getRelevant(query, limit);
     const globalHits = await this.globalPersisted.getRelevant(query, limit);
 
@@ -730,9 +854,7 @@ export class MemoryStore {
     // Global memories get a weight multiplier of 0.7
     let globalCorrectionCount = 0;
     globalHits.forEach((entry, idx) => {
-      const isCorrection = entry.source === "user-correction"
-        || entry.content.includes("[用户纠错")
-        || entry.content.includes("必须遵守");
+      const isCorrection = isCorrectionEntry(entry);
       if (isCorrection && globalCorrectionCount++ >= 3) return;
       const score = (limit - idx) * 0.7;
       const key = "global:" + entry.id;
@@ -849,6 +971,52 @@ export class MemoryStore {
       workspace: this.persisted.getPersistenceStatus(),
       global: this.globalPersisted.getPersistenceStatus(),
     };
+  }
+
+  searchMemoryCards(query: string, options: { scopes?: MemoryCardScope[]; limit?: number } = {}): MemorySearchHit[] {
+    return this.cardIndex?.search(query, {
+      scopes: options.scopes ?? ["global", "workspace"],
+      limit: options.limit ?? 5,
+    }) ?? [];
+  }
+
+  getMemoryCard(id: string): MemoryCard | null {
+    return this.cardIndex?.get(id) ?? null;
+  }
+
+  getAlwaysVisibleMemoryCards(): MemoryCard[] {
+    return this.cardIndex?.getAlwaysVisible(["global", "workspace"]) ?? [];
+  }
+
+  private upsertMemoryCard(entry: PersistedEntry, scope: "global" | "workspace"): void {
+    if (!this.cardIndex) return;
+    const now = Date.now();
+    this.cardIndex.upsert({
+      id: this.cardId(scope, entry.id),
+      kind: this.inferMemoryKind(entry),
+      scope,
+      content: entry.content,
+      sourceEventIds: [],
+      confidence: Math.max(0.5, entry.importance),
+      importance: entry.importance,
+      sensitivity: inferMemorySensitivity(entry.content),
+      createdAt: entry.createdAt,
+      lastAccessedAt: now,
+    });
+  }
+
+  private cardId(scope: "global" | "workspace", id: string): string {
+    return `${scope}:${id}`;
+  }
+
+  private inferMemoryKind(entry: PersistedEntry): MemoryCardKind {
+    const content = entry.content.toLowerCase();
+    if (entry.source === "user-correction" || /必须|不要|禁止|must|never/.test(content)) return "constraint";
+    if (/偏好|prefer|喜欢/.test(content)) return "preference";
+    if (/失败|error|failed/.test(content)) return "failure";
+    if (/决定|采用|decision/.test(content)) return "decision";
+    if (/practice|最佳实践|正确流程/.test(content)) return "practice";
+    return "fact";
   }
 }
 

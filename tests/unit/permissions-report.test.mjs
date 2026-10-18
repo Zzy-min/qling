@@ -109,3 +109,23 @@ test("permissions explain falls back to default when no rule matches", () => {
   assert.match(text, /Matched\s*: default/);
   assert.match(text, /默认拒绝执行/);
 });
+
+test("permissions report treats a missing decision as deny", () => {
+  const report = buildLocalPermissionsReport({
+    defaultMode: "allow",
+    rules: [{ tool_pattern: "bash" }],
+    env: {},
+  });
+  assert.equal(report.rules[0].decision, "deny");
+
+  const explanation = explainLocalPermissionDecision(
+    {
+      defaultMode: "allow",
+      rules: [{ tool_pattern: "bash" }],
+      env: {},
+    },
+    "bash"
+  );
+  assert.equal(explanation.decision, "deny");
+  assert.match(formatPermissionExplanationReport(explanation).join("\n"), /默认拒绝执行/);
+});

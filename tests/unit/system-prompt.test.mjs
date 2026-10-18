@@ -1,13 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildRuntimeMetaSection,
   buildPromptInspectSnapshot,
+  buildMandatoryRulesReference,
+  assembleSystemPrompt,
   findLastUserMessageContent,
   heuristicReflect,
   sanitizeWorkspaceLabel,
 } from "../../dist/agent/system-prompt.js";
+import { buildDefaultRegistry } from "../../dist/pipeline/sections.js";
+import {
+  formatMandatoryRulesBlock,
+  loadMandatoryRuleFiles,
+} from "../../dist/agent/rule-files.js";
 
 test("findLastUserMessageContent returns last user text", () => {
   assert.equal(
@@ -92,4 +101,35 @@ test("heuristicReflect warns on destructive shell", () => {
     arguments: { cmd: "npm test" },
   });
   assert.equal(ok.decision, "proceed");
+});
+
+test("mandatory rules use a compact dynamic reference", () => {
+  const fullRules = "必须验证后再报告。".repeat(1000);
+  const reference = buildMandatoryRulesReference(fullRules);
+  assert.ok(reference.length < 220);
+  assert.match(reference, /system/);
+  assert.doesNotMatch(reference, /必须验证后再报告。必须验证后再报告。/);
+});
+
+test("assembled prompt contains one full mandatory-rules copy", async () => {
+  const messages = [];
+  const stateDir = path.join(os.homedir(), ".qling");
+  const rules = formatMandatoryRulesBlock(await loadMandatoryRuleFiles({
+    workspaceDir: process.cwd(),
+    stateDir,
+    homeDir: os.homedir(),
+  }));
+  const systemPrompt = await assembleSystemPrompt({
+    baseSystemPrompt: "base",
+    sectionRegistry: buildDefaultRegistry([]),
+    memoryStore: { getRelevant: async () => [] },
+    messages,
+    workspaceDir: process.cwd(),
+    runtimeRootDir: process.cwd(),
+  });
+  assert.equal(systemPrompt.split(rules).length - 1, 1);
+  const dynamic = messages.find((message) => message.synthetic_reason === "dynamic_context");
+  assert.match(dynamic?.content ?? "", /<mandatory_rules_ref/);
+  assert.doesNotMatch(dynamic?.content ?? "", /<mandatory_rules priority=/);
+  assert.equal((dynamic?.content ?? "").includes(rules), false);
 });

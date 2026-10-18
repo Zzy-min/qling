@@ -4,10 +4,10 @@ import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "knowledge" | "connect" | "acp";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp" | "models";
 
-const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect", "acp"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "knowledge", "connect", "acp"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "版本": "version",
@@ -31,6 +31,8 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "MCP": "mcp",
   "外部工具": "mcp",
   "钩子": "hooks",
+  "信任": "trust",
+  "取消信任": "untrust",
   "记忆": "memory",
   "使命": "mission",
   "代理": "agents",
@@ -43,6 +45,7 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "connect": "connect",
   "连接器": "connect",
   "ACP": "acp",
+  "模型": "models",
 };
 
 interface TopLevelCommandSuggestion {
@@ -257,6 +260,21 @@ export function parseCliArgs(args: string[]): CliResolution {
     if (arg === "--tui" || arg === "-t") {
       modeFromAliasChat = true;
       warnings.push("`--tui` is deprecated, use `qling chat` instead.");
+      continue;
+    }
+    if (arg === "--tui-mode" || arg.startsWith("--tui-mode=")) {
+      const inline = arg.startsWith("--tui-mode=") ? arg.slice("--tui-mode=".length) : null;
+      const value = String(inline ?? args[i + 1] ?? "").trim().toLowerCase();
+      if (!["auto", "fullscreen", "classic"].includes(value)) {
+        return {
+          kind: "error",
+          code: "CLI_INVALID_OPTION_VALUE",
+          message: "--tui-mode 仅支持 auto、fullscreen 或 classic。",
+          exitCode: 2,
+        };
+      }
+      global.tuiMode = value as "auto" | "fullscreen" | "classic";
+      if (inline === null) i++;
       continue;
     }
     if (arg === "--repl" || arg === "-r") {
@@ -629,6 +647,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
 主要用法:
   ${binName}                          # 默认进入流式 TUI（chat）
   ${binName} chat                     # 显式进入流式 TUI
+  ${binName} --tui-mode fullscreen    # 强制全屏 TUI（auto|fullscreen|classic）
   ${binName} --continue               # 恢复最近一次交互会话
   ${binName} --resume <session>       # 恢复指定交互会话
   ${binName} repl                     # 简易 REPL
@@ -639,6 +658,11 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName} setup                    # 快速配置 LLM 提供商（不保存 API key 到 .env）
   ${binName} --version                # 打印版本（亦支持 -V / version）
   ${binName} help                     # 显示帮助
+
+TUI 环境变量:
+  QLING_TUI_MODE=auto|fullscreen|classic
+  QLING_TUI_ICONS=unicode|nerd        # 默认 unicode；Nerd Font 需显式启用
+  QLING_TUI_THEME=bamboo|night|mono
 
 管理命令:
   ${binName} daemon start             # 启动后台守护进程
@@ -663,8 +687,14 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName} permissions              # 查看本地权限默认策略与规则
   ${binName} permissions explain <tool> # 解释指定工具的权限决策
   ${binName} config                   # 查看本地配置摘要（密钥脱敏）
+  ${binName} models [--all]           # 默认只列当前服务商（远端失败回退该服务商预设，不打印 key）；--all 列出全部预设且不请求其他服务商
   ${binName} mcp                      # MCP 状态 / list / presets / add / remove
   ${binName} hooks                    # 查看本地 hooks/guard 配置摘要
+  ${binName} hooks disable <name>     # 按名称禁用 JSON hook（不影响权限判定）
+  ${binName} hooks enable <name>      # 重新启用 JSON hook
+  ${binName} trust [dir]              # 将工作区标记为受信（默认当前目录）
+  ${binName} trust --list             # 列出 ~/.qling/trusted-workspaces
+  ${binName} untrust [dir]            # 取消工作区受信标记
   ${binName} agents                   # 按状态分组查看后台任务
   ${binName} 代理                     # agents 的中文别名
   ${binName} logs <id>                # 查看特定使命日志（top-level alias）
@@ -717,7 +747,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
 兼容别名:
   ${binName} --tui, --repl, --once "task", "task"
 中文别名:
-  ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 检查点 [name] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 记忆 | 使命 | 代理 | 日志 <id>
+  ${binName} 帮助 | 诊断 | 状态 | 存储 | 导出列表 [count] | 会话列表 [count] | 检查点 [name] | 任务 | 目标 | 隐私 | 上下文 | 快捷键 | 状态线 | 回顾 | 权限 | 配置 | 外部工具 | 钩子 | 信任 | 取消信任 | 记忆 | 使命 | 代理 | 日志 <id>
 
 本地边界:
   help / doctor / privacy / config 只读本地状态；不会调用模型或联网。

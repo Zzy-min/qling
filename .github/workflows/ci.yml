@@ -48,3 +48,123 @@ jobs:
       - name: Build + Unit
         run: npm run test
         shell: bash
+
+  # Every PR commit must typecheck on its own (catches "doesn't compile until split").
+  per-commit-typecheck:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck each commit
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # pull_request base.sha..head.sha is the whole unmerged branch, not
+          # "what this push added". On synchronize, before..head is that push.
+          # opened/reopened have no previous tip, so they use the PR range.
+          # Do not start the range at merge-base(base, head): that walks every
+          # commit since the branch point, including history that never compiled.
+          is_sha() {
+            [[ "${1:-}" =~ ^[0-9a-fA-F]{40}$ ]]
+          }
+          if ! is_sha "$PR_BASE_SHA" || ! is_sha "$PR_HEAD_SHA"; then
+            echo "refusing to typecheck: PR base/head is missing or not a 40-char SHA" >&2
+            exit 1
+          fi
+          ensure_commit() {
+            local sha="$1"
+            if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+              return 0
+            fi
+            git fetch --no-tags origin "$sha"
+            git cat-file -e "${sha}^{commit}"
+          }
+          ensure_commit "$PR_BASE_SHA"
+          ensure_commit "$PR_HEAD_SHA"
+          zero="0000000000000000000000000000000000000000"
+          commits=""
+          range_desc=""
+          if [ "${EVENT_ACTION:-}" = "synchronize" ] && is_sha "${EVENT_BEFORE:-}" && [ "$EVENT_BEFORE" != "$zero" ]; then
+            if ! git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$EVENT_BEFORE" || true
+            fi
+            if git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$EVENT_BEFORE" "$PR_HEAD_SHA"; then
+              commits="$(git rev-list --reverse "${EVENT_BEFORE}..${PR_HEAD_SHA}")"
+              range_desc="synchronize ${EVENT_BEFORE}..${PR_HEAD_SHA} (commits added by this push)"
+            else
+              echo "before ${EVENT_BEFORE} is missing or not an ancestor of head; falling back to the PR range"
+              commits="$(git rev-list --reverse "${PR_BASE_SHA}..${PR_HEAD_SHA}")"
+              range_desc="pr ${PR_BASE_SHA}..${PR_HEAD_SHA} (synchronize fallback)"
+            fi
+          else
+            echo "action ${EVENT_ACTION:-unknown}: using PR range base.sha..head.sha"
+            commits="$(git rev-list --reverse "${PR_BASE_SHA}..${PR_HEAD_SHA}")"
+            range_desc="pr ${PR_BASE_SHA}..${PR_HEAD_SHA} (action=${EVENT_ACTION:-unknown})"
+          fi
+          if [ -z "$commits" ]; then
+            commits="$(git rev-parse "$PR_HEAD_SHA")"
+            echo "empty range; checking head only"
+          fi
+          echo "typecheck range: ${range_desc}"
+          prev_lock=""
+          typecheck_one() {
+            local sha="$1"
+            echo "typecheck $sha"
+            git checkout --force "$sha"
+            local lock="none"
+            if [ -f package-lock.json ]; then
+              lock="$(git hash-object package-lock.json)"
+            fi
+            if [ "$lock" != "$prev_lock" ]; then
+              echo "dependencies changed; reinstalling"
+              if [ -f package-lock.json ]; then
+                npm ci
+              elif [ -f package.json ]; then
+                npm install
+              fi
+              prev_lock="$lock"
+            fi
+            if [ ! -f package.json ]; then
+              echo "skip $sha: no package.json"
+              return 0
+            fi
+            # Older commits compile with tsc but have no typecheck script.
+            # Fall back to tsc --noEmit when tsconfig exists so those commits
+            # are still checked. Skip only when there is nothing to typecheck.
+            if node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync("package.json","utf8")); process.exit(p.scripts && typeof p.scripts.typecheck === "string" && p.scripts.typecheck.length ? 0 : 1)'; then
+              npm run typecheck
+            elif [ -f tsconfig.json ]; then
+              echo "commit $sha has no typecheck script; falling back to tsc --noEmit"
+              npx tsc --noEmit
+            else
+              echo "skip $sha: no typecheck script and no tsconfig.json"
+            fi
+          }
+          for sha in $commits; do
+            # pre-PR history commit; typechecking it alone fails with TS2307
+            # (cannot find ../runtime/project-profile.js / ./managed-command.js);
+            # it predates brief 14. Exact full sha only.
+            if [ "$sha" = "7aaea91f385d5ee4ec34c8e7a271c130a7c62be7" ]; then
+              echo "skip $sha: pre-PR history; typechecking it alone fails with TS2307 (cannot find ../runtime/project-profile.js / ./managed-command.js); predates brief 14"
+              continue
+            fi
+            typecheck_one "$sha"
+          done

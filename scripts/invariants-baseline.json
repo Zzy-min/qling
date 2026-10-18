@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "note": "Per-rule per-file hit counts under src/. --strict fails when a count rises. Counts may only shrink; rerun --write-baseline after a real decrease.",
+  "rules": {
+    "provider-key-fallback": {
+      "description": "provider-key fallback outside resolve-llm",
+      "pattern": "(DEEPSEEK|OPENAI)_API_KEY",
+      "files": {}
+    },
+    "hard-coded-default-model": {
+      "description": "hard-coded default model outside presets",
+      "pattern": "\"(deepseek-chat|deepseek-flash|gpt-4o)\"",
+      "files": {
+        "src/config.ts": 1,
+        "src/eval/swebench-prediction.ts": 1
+      }
+    },
+    "process-env-write": {
+      "description": "process.env write outside config",
+      "pattern": "process\\.env\\.[A-Z_]+ =[^=]",
+      "files": {
+        "src/agent-loop.ts": 6,
+        "src/commands/claude-style.ts": 4,
+        "src/commands/mode.ts": 3,
+        "src/commands/permissions.ts": 4,
+        "src/index.ts": 3
+      }
+    },
+    "numeric-env-default": {
+      "description": "numeric env default inline (Number(process.env.X ?? n))",
+      "pattern": "Number\\(process\\.env\\.[A-Z_]+\\)? *(\\?\\?|\\|\\|) *\\d",
+      "files": {
+        "src/agent-loop.ts": 6,
+        "src/daemon.ts": 1,
+        "src/dashboard-server.ts": 1,
+        "src/hooks/json-hooks.ts": 2,
+        "src/tools/verify.ts": 1,
+        "src/tools/vision-analyze.ts": 1
+      }
+    },
+    "cwd-state-path": {
+      "description": "process.cwd() in runtime state paths",
+      "pattern": "process.cwd().*(session|state)",
+      "files": {
+        "src/config.ts": 1
+      }
+    }
+  }
+}

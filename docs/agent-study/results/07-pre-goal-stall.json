@@ -1,0 +1,16 @@
+{
+  "sameReason": {
+    "autoTurns": 13,
+    "finalStatus": "cleared",
+    "goalPreserved": false,
+    "evaluatorErrorTurns": 0,
+    "approxTokens": 243
+  },
+  "evaluatorThrows": {
+    "autoTurns": 13,
+    "finalStatus": "cleared",
+    "goalPreserved": false,
+    "evaluatorErrorTurns": 12,
+    "approxTokens": 243
+  }
+}

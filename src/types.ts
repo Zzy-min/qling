@@ -46,10 +46,16 @@ export interface Message {
 export type SyntheticReason =
   | "runtime_environment"
   | "dynamic_context"
+  | "project_preflight"
   | "compaction_summary"
   | "recovery_instruction"
+  | "efficiency_recovery"
+  | "verification_audit"
   | "date_reminder"
-  | "state_snapshot";
+  | "state_snapshot"
+  | "run_side_effects"
+  | "history_repair"
+  | "interrupted_run";
 
 // --- Agent Config ---
 
@@ -72,6 +78,8 @@ export interface AgentConfig {
     toolRepeatLimit: number;
     timeoutMs: number;
     providerRetryLimit?: number;
+    ownedPaths?: string[];
+    toolAllowlist?: string[];
   };
   logging?: {
     level: "debug" | "info" | "warn" | "error";
@@ -81,8 +89,25 @@ export interface AgentConfig {
     inspectDumpDir: string;
   };
   experimental?: {
-    /** Experimental text-token streaming; enabled only by the interactive chat entrypoint. */
+    /** Text-token streaming. Interactive chat follows streaming_chat; ACP enables it per session. */
     streaming: boolean;
+  };
+  /**
+   * 子 agent 标记。存在时 init 不发 SessionStart、不新建 MCP 连接。
+   * mcpRegistry 仅在角色白名单显式包含 mcp__* 时复用，且子 agent 不拥有其生命周期。
+   */
+  subagent?: {
+    parentSessionId: string;
+    role: string;
+    mcpRegistry?: {
+      getAllTools(): Array<{
+        serverName: string;
+        name: string;
+        description: string;
+        inputSchema: Record<string, unknown>;
+        annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+      }>;
+    };
   };
 }
 
@@ -328,6 +353,8 @@ export interface MCPServerConfig {
   transport?: "stdio" | "http";
   url?: string;
   headers?: Record<string, string>;
+  /** per-server 输出上限（字节），优先于 QLING_MCP_MAX_OUTPUT_BYTES。 */
+  max_output_bytes?: number;
 }
 
 // --- Subtask ---

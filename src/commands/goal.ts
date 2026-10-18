@@ -3,6 +3,7 @@ import { SlashCommand } from "./types.js";
 const CLEAR_ALIASES = new Set(["clear", "stop", "off", "reset", "none", "cancel"]);
 const STATUS_ALIASES = new Set(["status", "show", "list", "状态", "查看", "列表"]);
 const SET_ALIASES = new Set(["set", "设置"]);
+const RESUME_ALIASES = new Set(["resume", "恢复"]);
 const DAEMON_ALIASES = new Set(["daemon", "durable", "bg"]);
 
 function formatGoalStatus(goal: any): string[] {
@@ -60,6 +61,33 @@ export const goalCommand: SlashCommand = {
       context.writeLine("");
       context.writeLine(`🛑 已清除 goal: ${cleared.condition || "(空)"}`);
       context.writeLine("");
+      return;
+    }
+
+    if (RESUME_ALIASES.has(firstArg)) {
+      const resume = controller.resumeGoal ?? controller.resume;
+      if (typeof resume !== "function") {
+        context.writeError("❌ 当前 goal controller 不支持 resume。");
+        return;
+      }
+      try {
+        const resumed = await resume.call(controller);
+        const immediatePrompt = typeof controller.buildInitialPrompt === "function"
+          ? controller.buildInitialPrompt(resumed.condition)
+          : "";
+        if (immediatePrompt) context.setImmediatePrompt?.(immediatePrompt);
+        context.writeLine("");
+        context.writeLine("◎ /goal resume");
+        context.writeLine("-----------------------------------------");
+        context.writeLine(`条件     : ${resumed.condition || "(空)"}`);
+        context.writeLine(`状态     : ${resumed.status}`);
+        context.writeLine("说明     : 已从暂停恢复为 active，并重新启动自动续跑。");
+        context.writeLine("-----------------------------------------");
+        context.writeLine("");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        context.writeError(`❌ 无法恢复 goal: ${message}`);
+      }
       return;
     }
 
