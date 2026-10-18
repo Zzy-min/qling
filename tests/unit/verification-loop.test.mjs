@@ -15,6 +15,7 @@ import {
 } from "../../dist/execution/verification-loop.js";
 import { RecoveryController } from "../../dist/execution/recovery-controller.js";
 import { ExecutionEventBus } from "../../dist/execution/event-bus.js";
+import { createPassingPytestProbe } from "../helpers/python-probe.mjs";
 
 test("stagesSummary is honest when empty", () => {
   assert.match(stagesSummary(null), /none|未|none/i);
@@ -301,8 +302,9 @@ test("runWriteToolVerification uses the ProjectProfile targeted test after an in
     await import("node:fs/promises").then(({ mkdir }) => mkdir(join(workspaceDir, "pkg", "tests"), { recursive: true }));
     await writeFile(join(workspaceDir, "pkg", "module.py"), "VALUE = 2\n");
     await writeFile(join(workspaceDir, "pkg", "tests", "test_module.py"), "def test_value(): pass\n");
+    const pytest = await createPassingPytestProbe();
     const { inspectProjectProfile } = await import("../../dist/runtime/project-profile.js");
-    const profile = await inspectProjectProfile({ workspaceDir, requestedRuntime: "native" });
+    const profile = await inspectProjectProfile({ workspaceDir, requestedRuntime: "native", probe: pytest.probe });
     const recovery = new RecoveryController();
     recovery.startRun({ runId: "project-verify", sessionId: "s", originalTask: "fix module" });
     const commands = [];
@@ -335,6 +337,7 @@ test("runWriteToolVerification uses the ProjectProfile targeted test after an in
     );
     assert.equal(outcome.kind, "pass");
     assert.equal(commands.length, 0, "registered ProjectProfile commands use argv execution instead of a shell string");
+    await pytest.cleanup();
   } finally {
     await rm(workspaceDir, { recursive: true, force: true });
   }

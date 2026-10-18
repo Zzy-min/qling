@@ -206,11 +206,37 @@ export async function resolveProjectProfileIdentity(workspaceDir: string): Promi
   return { revision, dirtyFingerprint: hash.digest("hex") };
 }
 
+export interface ProjectEnvironmentProbe {
+  commandExists?: (command: string, runtime: "native" | "wsl") => Promise<boolean> | boolean;
+  pythonModuleAvailable?: (
+    executable: "python" | "python3",
+    moduleName: string,
+    runtime: "native" | "wsl",
+    cwd?: string,
+  ) => Promise<boolean> | boolean;
+  pythonDistributionAvailable?: (
+    executable: "python" | "python3",
+    distribution: string,
+    runtime: "native" | "wsl",
+  ) => Promise<boolean> | boolean;
+  /**
+   * Test-only spawn prefix for the selected Python executable.
+   * Displayed commands stay `python -m pytest`. Callers must pass this explicitly;
+   * it is never read from the environment or model tool arguments.
+   * Non-absolute executables are ignored.
+   */
+  pythonInvocation?: { executable: string; argsPrefix?: string[] };
+}
+
 export async function inspectProjectProfileCached(input: {
   workspaceDir: string;
   requestedRuntime?: CodeRuntime;
   posixRequired?: boolean;
+  probe?: ProjectEnvironmentProbe;
 }): Promise<ProjectProfile> {
+  // A probe is a per-call test seam. Caching it would leak one test's
+  // environment into another workspace with the same fingerprint.
+  if (input.probe) return inspectProjectProfile(input);
   const identity = await resolveProjectProfileIdentity(input.workspaceDir);
   const key = [
     path.resolve(input.workspaceDir),
@@ -404,8 +430,30 @@ export async function inspectProjectProfile(input: {
   workspaceDir: string;
   requestedRuntime?: CodeRuntime;
   posixRequired?: boolean;
+  probe?: ProjectEnvironmentProbe;
 }): Promise<ProjectProfile> {
   const root = path.resolve(input.workspaceDir);
+  const probe = input.probe;
+  const hasCommand = (command: string, runtime: "native" | "wsl") =>
+    probe?.commandExists ? Promise.resolve(probe.commandExists(command, runtime)).then(Boolean) : commandExists(command, runtime);
+  const hasPythonModule = (
+    executable: "python" | "python3",
+    moduleName: string,
+    runtime: "native" | "wsl",
+    cwd?: string,
+  ) => probe?.pythonModuleAvailable
+    ? Promise.resolve(probe.pythonModuleAvailable(executable, moduleName, runtime, cwd)).then(Boolean)
+    : pythonModuleAvailable(executable, moduleName, runtime, cwd);
+  const hasPythonDistribution = (
+    executable: "python" | "python3",
+    distribution: string,
+    runtime: "native" | "wsl",
+  ) => probe?.pythonDistributionAvailable
+    ? Promise.resolve(probe.pythonDistributionAvailable(executable, distribution, runtime)).then(Boolean)
+    : pythonDistributionAvailable(executable, distribution, runtime);
+  const pythonInvocation = probe?.pythonInvocation && path.isAbsolute(probe.pythonInvocation.executable)
+    ? probe.pythonInvocation
+    : undefined;
   const identity = await resolveProjectProfileIdentity(root);
   const manifests: string[] = [];
   const lockfiles: string[] = [];
@@ -465,7 +513,7 @@ export async function inspectProjectProfile(input: {
       ? "pnpm"
       : lockfiles.includes("yarn.lock") ? "yarn"
         : lockfiles.some((name) => name === "bun.lock" || name === "bun.lockb") ? "bun" : "npm";
-    if (await commandExists(packageManager, runtime)) {
+    if (await hasCommand(packageManager, runtime)) {
       const packageManagerExecutable = process.platform === "win32" && runtime === "native" ? `${packageManager}.cmd` : packageManager;
       if (nodeScripts.test) testCommands.push({ id: "project:node:test", stage: "targeted", command: `${packageManager} test`, executable: packageManagerExecutable, args: ["test"], reason: `package.json test script via ${packageManager}` });
       if (nodeScripts.build) testCommands.push({ id: "project:node:build", stage: "affected", command: `${packageManager} run build`, executable: packageManagerExecutable, args: ["run", "build"], reason: `package.json build script via ${packageManager}` });
@@ -475,8 +523,8 @@ export async function inspectProjectProfile(input: {
   }
   const pythonExecutable = pythonProject
     ? selectPythonExecutable({
-        pythonAvailable: await commandExists("python", runtime),
-        python3Available: await commandExists("python3", runtime),
+        pythonAvailable: await hasCommand("python", runtime),
+        python3Available: await hasCommand("python3", runtime),
       })
     : null;
   const pythonTestLayout = pythonProject
@@ -487,7 +535,7 @@ export async function inspectProjectProfile(input: {
       const requirements = extractPythonBuildRequirements(await fs.readFile(path.join(root, "pyproject.toml"), "utf8"));
       const missing: string[] = [];
       for (const requirement of requirements) {
-        if (!await pythonDistributionAvailable(pythonExecutable, requirement, runtime)) missing.push(requirement);
+        if (!await hasPythonDistribution(pythonExecutable, requirement, runtime)) missing.push(requirement);
       }
       if (missing.length > 0) blockers.push(`Python build requirements unavailable in ${runtime}: ${missing.join(", ")}`);
     } catch {
@@ -507,26 +555,33 @@ export async function inspectProjectProfile(input: {
     const missingBootstrapModules: string[] = [];
     if (pythonExecutable) {
       for (const moduleName of await findPythonTestBootstrapModules(root, pythonTestLayout.conftestFiles)) {
-        if (!await pythonModuleAvailable(pythonExecutable, moduleName, runtime, root)) missingBootstrapModules.push(moduleName);
+        if (!await hasPythonModule(pythonExecutable, moduleName, runtime, root)) missingBootstrapModules.push(moduleName);
       }
     }
     if (missingBootstrapModules.length > 0) {
       blockers.push(`Python test bootstrap modules unavailable in ${runtime}: ${missingBootstrapModules.join(", ")}`);
-    } else if (pythonExecutable && await pythonModuleAvailable(pythonExecutable, "pytest", runtime, root)) {
-      testCommands.push({ id: "project:python:pytest", stage: "targeted", command: `${pythonExecutable} -m pytest`, executable: pythonExecutable, args: ["-m", "pytest"], reason: "Python test configuration or discovered test layout" });
+    } else if (pythonExecutable && await hasPythonModule(pythonExecutable, "pytest", runtime, root)) {
+      testCommands.push({
+        id: "project:python:pytest",
+        stage: "targeted",
+        command: `${pythonExecutable} -m pytest`,
+        executable: pythonInvocation?.executable ?? pythonExecutable,
+        args: [...(pythonInvocation?.argsPrefix ?? []), "-m", "pytest"],
+        reason: "Python test configuration or discovered test layout",
+      });
     } else if (pythonExecutable) {
       blockers.push(`pytest module is unavailable in ${runtime}`);
     }
   }
   if (input.requestedRuntime === "wsl" && process.platform === "win32" && !hasWsl) blockers.push("WSL was requested but is unavailable");
-  if (ecosystems.includes("node") && !await commandExists("node", runtime)) blockers.push(`node executable is unavailable in ${runtime}`);
+  if (ecosystems.includes("node") && !await hasCommand("node", runtime)) blockers.push(`node executable is unavailable in ${runtime}`);
   if (ecosystems.includes("python") && !pythonExecutable) blockers.push(`Python executable is unavailable in ${runtime}`);
-  if (ecosystems.includes("rust") && !await commandExists("cargo", runtime)) blockers.push(`cargo executable is unavailable in ${runtime}`);
-  if (ecosystems.includes("go") && !await commandExists("go", runtime)) blockers.push(`go executable is unavailable in ${runtime}`);
+  if (ecosystems.includes("rust") && !await hasCommand("cargo", runtime)) blockers.push(`cargo executable is unavailable in ${runtime}`);
+  if (ecosystems.includes("go") && !await hasCommand("go", runtime)) blockers.push(`go executable is unavailable in ${runtime}`);
   if (ecosystems.includes("java")) {
     const gradle = manifests.some((name) => name.startsWith("build.gradle"));
     const localWrapper = await exists(root, process.platform === "win32" && runtime === "native" ? "gradlew.bat" : "gradlew");
-    if (!localWrapper && !await commandExists(gradle ? "gradle" : "mvn", runtime)) blockers.push(`${gradle ? "gradle" : "mvn"} executable is unavailable in ${runtime}`);
+    if (!localWrapper && !await hasCommand(gradle ? "gradle" : "mvn", runtime)) blockers.push(`${gradle ? "gradle" : "mvn"} executable is unavailable in ${runtime}`);
   }
   return {
     revision: identity.revision,

@@ -16,6 +16,7 @@ import {
   extractPythonBuildRequirements,
   extractPythonTestBootstrapModules,
 } from "../../dist/runtime/project-profile.js";
+import { hostIndependentPythonProbe } from "../helpers/python-probe.mjs";
 
 test("project preflight discovers ecosystems, lockfiles, and deterministic tests", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-project-profile-"));
@@ -102,7 +103,11 @@ test("project preflight extracts and reports missing Python build requirements",
       path.join(root, "pyproject.toml"),
       `[build-system]\nrequires = ["qling-definitely-missing-build-package"]\n[tool.pytest.ini_options]\n`,
     );
-    const profile = await inspectProjectProfile({ workspaceDir: root, requestedRuntime: "native" });
+    const profile = await inspectProjectProfile({
+      workspaceDir: root,
+      requestedRuntime: "native",
+      probe: hostIndependentPythonProbe({ allDistributionsUnavailable: true }),
+    });
     assert.equal(profile.environmentStatus, "degraded");
     assert.match(profile.blockers.join("\n"), /qling-definitely-missing-build-package/);
     assert.ok(profile.testCommands.some((item) => item.id === "project:python:pytest"));
@@ -120,7 +125,11 @@ test("project preflight refuses to advertise pytest when conftest bootstrap depe
   try {
     await fs.writeFile(path.join(root, "pyproject.toml"), "[tool.pytest.ini_options]\n");
     await fs.writeFile(path.join(root, "conftest.py"), "import qling_definitely_missing_pytest_bootstrap\n");
-    const profile = await inspectProjectProfile({ workspaceDir: root, requestedRuntime: "native" });
+    const profile = await inspectProjectProfile({
+      workspaceDir: root,
+      requestedRuntime: "native",
+      probe: hostIndependentPythonProbe(),
+    });
     assert.equal(profile.environmentStatus, "degraded");
     assert.match(profile.blockers.join("\n"), /qling_definitely_missing_pytest_bootstrap/);
     assert.equal(profile.testCommands.some((item) => item.id === "project:python:pytest"), false);
@@ -135,7 +144,11 @@ test("project preflight discovers pytest from a root test module without config 
   try {
     await fs.writeFile(path.join(root, "setup.py"), "from setuptools import setup\nsetup(name='fixture')\n");
     await fs.writeFile(path.join(root, "test_requests.py"), "def test_fixture(): pass\n");
-    const profile = await inspectProjectProfile({ workspaceDir: root, requestedRuntime: "native" });
+    const profile = await inspectProjectProfile({
+      workspaceDir: root,
+      requestedRuntime: "native",
+      probe: hostIndependentPythonProbe(),
+    });
     assert.ok(profile.testCommands.some((item) => item.id === "project:python:pytest"));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -162,7 +175,11 @@ test("project preflight maps a changed Python module to its nearest targeted tes
     await fs.writeFile(path.join(root, "pyproject.toml"), "[tool.pytest.ini_options]\n");
     await fs.writeFile(path.join(root, "astropy", "io", "ascii", "qdp.py"), "VALUE = 1\n");
     await fs.writeFile(path.join(root, "astropy", "io", "ascii", "tests", "test_qdp.py"), "def test_qdp(): pass\n");
-    const profile = await inspectProjectProfile({ workspaceDir: root, requestedRuntime: "native" });
+    const profile = await inspectProjectProfile({
+      workspaceDir: root,
+      requestedRuntime: "native",
+      probe: hostIndependentPythonProbe(),
+    });
     const plan = await resolveScopedVerificationCommand({
       profile,
       workspaceDir: root,

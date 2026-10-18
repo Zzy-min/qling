@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { inspectProjectProfile, resolveVerificationCommand } from "../../dist/runtime/project-profile.js";
 import { runVerify } from "../../dist/tools/verify.js";
+import { createPassingPytestProbe } from "../helpers/python-probe.mjs";
 
 test("project profile assigns stable command ids instead of requiring shell composition", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-verify-profile-"));
@@ -86,6 +87,7 @@ test("verify scope resolves a Python source file to its nearest test", async () 
     await fs.writeFile(path.join(root, "pyproject.toml"), "[tool.pytest.ini_options]\n");
     await fs.writeFile(path.join(root, "pkg", "module.py"), "VALUE = 1\n");
     await fs.writeFile(path.join(root, "pkg", "tests", "test_module.py"), "def test_value():\n    assert True\n");
+    const pytest = await createPassingPytestProbe();
     process.env.QLING_WORKSPACE_DIR = root;
     process.env.QLING_FILE_STATE_DIR = state;
     process.env.QLING_CODE_RUNTIME = "native";
@@ -94,9 +96,10 @@ test("verify scope resolves a Python source file to its nearest test", async () 
       commandId: "project:python:pytest",
       scope: ["pkg/module.py"],
       outputView: { mode: "tail", lines: 10 },
-    });
+    }, { probe: pytest.probe });
     assert.equal(result.is_error, false);
     assert.deepEqual(result.meta?.scope, ["pkg/tests/test_module.py"]);
+    await pytest.cleanup();
   } finally {
     if (previous.workspace === undefined) delete process.env.QLING_WORKSPACE_DIR; else process.env.QLING_WORKSPACE_DIR = previous.workspace;
     if (previous.state === undefined) delete process.env.QLING_FILE_STATE_DIR; else process.env.QLING_FILE_STATE_DIR = previous.state;

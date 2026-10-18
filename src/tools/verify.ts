@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ContentAddressedArtifactStore } from "../harness/artifact-store.js";
 import { getRuntimeRootsFromEnv } from "../runtime-paths.js";
-import { inspectProjectProfileCached, resolveProjectProfileIdentity, resolveScopedVerificationCommand } from "../runtime/project-profile.js";
+import { inspectProjectProfileCached, resolveProjectProfileIdentity, resolveScopedVerificationCommand, type ProjectEnvironmentProbe } from "../runtime/project-profile.js";
 import { buildSafeEnv } from "./bash.js";
 import { toolError } from "./error-utils.js";
 import { normalizeEvidenceOutput } from "../agent/run-efficiency.js";
@@ -46,10 +46,19 @@ function viewOutput(output: string, view: VerificationRequest["outputView"]): st
   return (view.mode === "head" ? lines.slice(0, count) : lines.slice(-count)).join("\n");
 }
 
-export async function runVerify(args: VerificationRequest): Promise<ToolResult> {
+export async function runVerify(
+  args: VerificationRequest,
+  options?: { probe?: ProjectEnvironmentProbe },
+): Promise<ToolResult> {
   const roots = getRuntimeRootsFromEnv();
   const workspaceDir = roots.workspaceDir ?? process.cwd();
-  const profile = await inspectProjectProfileCached({ workspaceDir, requestedRuntime: (process.env.QLING_CODE_RUNTIME as "auto" | "native" | "wsl" | undefined) ?? "auto" });
+  // `options` is not part of the model-facing tool schema. A probe supplied on
+  // the request object is ignored so tool arguments cannot fake the environment.
+  const profile = await inspectProjectProfileCached({
+    workspaceDir,
+    requestedRuntime: (process.env.QLING_CODE_RUNTIME as "auto" | "native" | "wsl" | undefined) ?? "auto",
+    probe: options?.probe,
+  });
   const registered = await resolveScopedVerificationCommand({
     profile,
     workspaceDir,

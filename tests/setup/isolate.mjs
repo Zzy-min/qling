@@ -6,6 +6,11 @@
  *   - delete *_API_KEY and QLING_* from the environment
  *   - on exit, fail if git status shows a new top-level path in the repo root
  *
+ * HOME and USERPROFILE are intentionally left alone. Node caches os.homedir()
+ * at startup, and several modules capture that path at import, so rewriting
+ * the variables would not isolate home-dir reads. Tests that load user rule
+ * files must pass an explicit homeDir/stateDir fixture instead.
+ *
  * Pre-existing porcelain entries do not count. The Node test runner does not
  * need any QLING_* or *_API_KEY variable, so the allow-list is empty.
  *
