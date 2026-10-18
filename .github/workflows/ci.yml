@@ -71,16 +71,51 @@ jobs:
 
       - name: Typecheck each commit
         run: |
+          set -euo pipefail
           git fetch origin "${{ github.base_ref }}"
           base="origin/${{ github.base_ref }}"
           git rev-parse --verify "$base"
-          commits=$(git rev-list --reverse "$base"..HEAD)
+          # Two-dot against the branch tip mis-counts once main has moved.
+          # merge-base is the PR branch point without hard-coded hashes.
+          mb="$(git merge-base "$base" HEAD)"
+          commits="$(git rev-list --reverse "$mb"..HEAD)"
           if [ -z "$commits" ]; then
-            npm run typecheck
-            exit 0
+            commits="$(git rev-parse HEAD)"
           fi
-          for sha in $commits; do
+          prev_lock=""
+          typecheck_one() {
+            local sha="$1"
             echo "typecheck $sha"
             git checkout --force "$sha"
-            npm run typecheck
+            local lock="none"
+            if [ -f package-lock.json ]; then
+              lock="$(git hash-object package-lock.json)"
+            fi
+            if [ "$lock" != "$prev_lock" ]; then
+              echo "dependencies changed; reinstalling"
+              if [ -f package-lock.json ]; then
+                npm ci
+              elif [ -f package.json ]; then
+                npm install
+              fi
+              prev_lock="$lock"
+            fi
+            if [ ! -f package.json ]; then
+              echo "skip $sha: no package.json"
+              return 0
+            fi
+            # Older commits compile with tsc but have no typecheck script.
+            # Fall back to tsc --noEmit when tsconfig exists so those commits
+            # are still checked. Skip only when there is nothing to typecheck.
+            if node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync("package.json","utf8")); process.exit(p.scripts && typeof p.scripts.typecheck === "string" && p.scripts.typecheck.length ? 0 : 1)'; then
+              npm run typecheck
+            elif [ -f tsconfig.json ]; then
+              echo "commit $sha has no typecheck script; falling back to tsc --noEmit"
+              npx tsc --noEmit
+            else
+              echo "skip $sha: no typecheck script and no tsconfig.json"
+            fi
+          }
+          for sha in $commits; do
+            typecheck_one "$sha"
           done
