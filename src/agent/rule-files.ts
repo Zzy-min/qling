@@ -47,11 +47,24 @@ export function ruleFileCandidates(options: {
   return list;
 }
 
-async function readIfExists(filePath: string): Promise<LoadedRuleFile | null> {
+/** Test seam. Production uses node:fs/promises. Not read from the environment. */
+export interface RuleFileReadOps {
+  stat(filePath: string): Promise<{ isFile(): boolean }>;
+  readFile(filePath: string, encoding: "utf8"): Promise<string>;
+  realpath(filePath: string): Promise<string>;
+}
+
+const defaultRuleFileOps: RuleFileReadOps = {
+  stat: (filePath) => fs.stat(filePath),
+  readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
+  realpath: (filePath) => fs.realpath(filePath),
+};
+
+async function readIfExists(filePath: string, ops: RuleFileReadOps): Promise<LoadedRuleFile | null> {
   try {
-    const st = await fs.stat(filePath);
+    const st = await ops.stat(filePath);
     if (!st.isFile()) return null;
-    let raw = await fs.readFile(filePath, "utf8");
+    let raw = await ops.readFile(filePath, "utf8");
     raw = raw.replace(/^\uFEFF/, "").trim();
     if (!raw) return null;
     if (raw.length > MAX_FILE_CHARS) {
@@ -63,23 +76,39 @@ async function readIfExists(filePath: string): Promise<LoadedRuleFile | null> {
   }
 }
 
+async function physicalRuleIdentity(filePath: string, ops: RuleFileReadOps): Promise<string> {
+  try {
+    return await ops.realpath(filePath);
+  } catch {
+    return filePath;
+  }
+}
+
 /**
- * 加载并去重（同内容只保留一份；路径不同保留首次）。
+ * 加载并去重。缺失的大小写变体不能占掉另一个真实文件。
+ * 同一物理文件（realpath，Windows/macOS 上 Agents.md 与 AGENTS.md 相同）只加载一次。
+ * 内容相同的不同路径也只保留先出现的一份。
  */
 export async function loadMandatoryRuleFiles(options: {
   workspaceDir?: string | null;
   stateDir?: string;
   homeDir?: string;
+  fileSystem?: RuleFileReadOps;
 }): Promise<LoadedRuleFile[]> {
-  const seen = new Set<string>();
+  const ops = options.fileSystem ?? defaultRuleFileOps;
+  const seenPhysical = new Set<string>();
+  const seenContent = new Set<string>();
   const out: LoadedRuleFile[] = [];
   let total = 0;
   for (const p of ruleFileCandidates(options)) {
     const normalized = path.resolve(p);
-    if (seen.has(normalized.toLowerCase())) continue;
-    seen.add(normalized.toLowerCase());
-    const file = await readIfExists(normalized);
+    const file = await readIfExists(normalized, ops);
     if (!file) continue;
+    const physical = await physicalRuleIdentity(normalized, ops);
+    if (seenPhysical.has(physical)) continue;
+    seenPhysical.add(physical);
+    if (seenContent.has(file.content)) continue;
+    seenContent.add(file.content);
     if (total + file.content.length > MAX_TOTAL_CHARS) {
       const room = MAX_TOTAL_CHARS - total;
       if (room < 200) break;
