@@ -347,12 +347,16 @@ test("SWE-bench source candidate preserves a production dependency shim", () => 
 
 test("explicit deliverables normalize aliases and absolute workspace paths", () => {
   const workspace = "C:\\work\\repo";
-  assert.deepEqual(resolveExplicitDeliverablePaths(workspace, [
+  const raw = [
     "./zz_api.py",
     "workspace_dir/zz_config.ts",
     "C:\\work\\repo\\zz_cli.py",
     "C:\\outside\\nope.py",
-  ].join(",")), ["zz_api.py", "zz_config.ts", "zz_cli.py"]);
+  ].join(",");
+  const expected = ["zz_api.py", "zz_config.ts", "zz_cli.py"];
+  assert.deepEqual(resolveExplicitDeliverablePaths(workspace, raw), expected);
+  // Drive-letter paths are absolute even when the process is POSIX.
+  assert.deepEqual(resolveExplicitDeliverablePaths(workspace, raw, "linux"), expected);
 });
 
 test("SWE-bench prediction requires a fresh deterministic verification pass", () => {
