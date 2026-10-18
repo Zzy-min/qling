@@ -72,3 +72,15 @@ CI run 39027038264 failed all 3 jobs. Local Windows `npm test` passed because th
 - Deliverable normalization rejects Windows paths outside the workspace on POSIX; it does not accept new escapes.
 - Rule-file dedupe no longer drops a differently cased file that exists. The same physical file and the same content are still loaded once. The test filesystem override is a function argument, not config or model input.
 - LSP script versions change when file bytes change, even if mtime and size do not. The service still only reads files it was already going to snapshot.
+
+## Commits
+
+On top of 390555e. Each was checked with `npx tsc --noEmit` (exit 0). On 3b33161: npm test 1487 tests, 1486 pass, 0 fail, 1 skip; eval:recovery ok; eval:tasks pass; lint:invariants strict ok. Linux (Node 22, no pytest): npm test 3 runs, 0 fail.
+
+- 9091594 ci: base per-commit typecheck on merge-base and fall back to tsc
+- c5c860b fix(deliverables): contain Windows drive paths when running on POSIX
+- ffb177 fix(rules): stop missing case variants from hiding existing rule files
+- e0c3144 fix(lsp): include content hash in script versions
+- 997880d test: inject a host-independent Python probe into project profile tests
+- 3b33161 docs(agent-study): add brief 14b and CI fixes RESULT
+- this commit: docs(agent-study): record brief 14b commit list
