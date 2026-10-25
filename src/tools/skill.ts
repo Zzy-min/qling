@@ -163,15 +163,15 @@ function resolveSkillPath(name: string): string | null {
 export const skillTool: ToolDefinition = {
   name: "skill",
   description:
-    "Load a skill knowledge file. Use for unfamiliar tools/APIs and ALWAYS before opencli/social platforms (Douyin, Xiaohongshu, Weibo, Bilibili, TikTok, Twitter). Actions: list | search query= | name=opencli.",
+    "Load a skill knowledge file for an unfamiliar tool or API. Do not load opencli for web search or browser control unless the user explicitly asked for opencli. Actions: list | search query= | name=<skill>.",
   longDescription: `动态加载技能/知识文件（SKILL.md），内容通过 tool_result 注入上下文。
 
 **核心原则**: "用到什么知识，临时加载什么知识，不塞 system prompt"
 
 **三种操作**:
 - skill list — 列出所有可用技能
-- skill search query="opencli" — 搜索技能
-- skill name="opencli" — 加载 opencli 调用手册（抖音/小红书等）
+- skill search query="docker" — 搜索技能
+- skill name="docker" — 加载指定技能全文
 
 **查找路径**:
 - 包内 skills/（npm 全局安装可用）
@@ -180,8 +180,8 @@ export const skillTool: ToolDefinition = {
 - @scope/name → scopes/{scope}/{name}.md
 
 **使用场景**:
-- 抖音/小红书/微博/B站/TikTok/推特 → skill(name="opencli") 再用 bash 跑 opencli
 - 调用 docker 但不熟悉命令 → skill(name="docker")
+- 用户明确说使用 opencli → 才 skill(name="opencli")
 - 不确定有哪些技能 → skill list
 
 **返回内容**:

@@ -417,11 +417,8 @@ async function main() {
 
   // v0.4 / Phase 1.4 Onboarding（仅交互模式；非 TTY 跳过）
   if (decision.mode === "chat" || decision.mode === "repl") {
-    const needSetup = !(
-      process.env.QLING_LLM_API_KEY?.trim() ||
-      process.env.DEEPSEEK_API_KEY?.trim() ||
-      process.env.OPENAI_API_KEY?.trim()
-    );
+    const { hasAnyConfiguredApiKey } = await import("./providers/resolve-llm.js");
+    const needSetup = !hasAnyConfiguredApiKey(process.env);
     await checkOnboarding({
       stateDir: decision.global.fileStateDir,
       needSetup,
@@ -807,7 +804,14 @@ async function main() {
   }
 
   if (decision.mode === "config") {
-    console.log(formatLocalConfigReport(buildLocalConfigReport(loaded.config)).join("\n"));
+    console.log(formatLocalConfigReport(buildLocalConfigReport(loaded.config), loaded.llmSources).join("\n"));
+    return;
+  }
+
+  if (decision.mode === "models") {
+    const { runModelsCli } = await import("./providers/remote-models.js");
+    const code = await runModelsCli(decision.subArgs, loaded.config, process.env);
+    if (code !== 0) process.exitCode = code;
     return;
   }
 
@@ -1083,14 +1087,18 @@ async function main() {
   for (const [name, cfg] of Object.entries(loaded.config.tools)) {
     staticEnabled[name] = cfg.enabled;
   }
-  const tools = buildToolRegistry({ staticEnabled });
+  const toolAllowlist = process.env.QLING_TOOL_ALLOWLIST
+    ?.split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const allowedNames = toolAllowlist?.length ? new Set(toolAllowlist) : undefined;
+  const tools = buildToolRegistry({ staticEnabled, allowedNames });
 
-  const agentConfig: Partial<AgentConfig> = {
-    apiKey:
-      loaded.config.llm.api_key ||
-      process.env.DEEPSEEK_API_KEY ||
-      process.env.OPENAI_API_KEY ||
-      "",
+  const agentConfig: Partial<AgentConfig> & {
+    llmSources?: import("./providers/resolve-llm.js").LlmFieldSources;
+  } = {
+    apiKey: loaded.config.llm.api_key || "",
+    llmSources: loaded.llmSources,
     provider: loaded.config.llm.provider,
     endpoint: loaded.config.llm.endpoint,
     model: loaded.config.llm.model,
@@ -1104,6 +1112,7 @@ async function main() {
       parseRetries: loaded.config.runtime.parse_retries,
       toolRepeatLimit: loaded.config.runtime.tool_repeat_limit,
       timeoutMs: loaded.config.runtime.timeout_ms,
+      toolAllowlist,
     },
     logging: {
       level: loaded.config.logging.level,
@@ -1127,7 +1136,7 @@ async function main() {
     await runAcpStdioServer((cwd) => new AgentLoop({
       ...agentConfig,
       experimental: { ...agentConfig.experimental, streaming: true },
-      tools: buildToolRegistry({ staticEnabled }),
+      tools: buildToolRegistry({ staticEnabled, allowedNames }),
       runtime: {
         ...agentConfig.runtime!,
         workspaceDir: cwd,

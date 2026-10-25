@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
@@ -26,6 +28,7 @@ function waitForExit(child, timeoutMs = 10_000) {
 }
 
 test("cli run smoke: one-shot mode exits cleanly after response", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-cli-run-"));
   let requestCount = 0;
   const server = createServer((req, res) => {
     if (req.method === "POST" && req.url === "/chat/completions") {
@@ -87,6 +90,8 @@ test("cli run smoke: one-shot mode exits cleanly after response", async () => {
         QLING_MEMORY_WAL_ENABLED: "true",
         QLING_MEMORY_PROJECTION_INTERVAL_MS: "30",
         QLING_METRICS_ENABLED: "false",
+        QLING_FILE_STATE_DIR: stateDir,
+        QLING_FILE_CACHE_DIR: join(stateDir, "cache"),
       },
       stdio: ["ignore", "pipe", "pipe"],
     }
@@ -109,10 +114,12 @@ test("cli run smoke: one-shot mode exits cleanly after response", async () => {
     assert.ok(requestCount >= 1, "expected at least one /chat/completions call");
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
+    await rm(stateDir, { recursive: true, force: true });
   }
 });
 
 test("cli run smoke: --json emits parseable evidence events and final result", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-cli-run-"));
   const server = createServer((req, res) => {
     if (req.method === "POST" && req.url === "/chat/completions") {
       req.resume();
@@ -168,6 +175,8 @@ test("cli run smoke: --json emits parseable evidence events and final result", a
         QLING_MEMORY_WAL_ENABLED: "true",
         QLING_MEMORY_PROJECTION_INTERVAL_MS: "30",
         QLING_METRICS_ENABLED: "false",
+        QLING_FILE_STATE_DIR: stateDir,
+        QLING_FILE_CACHE_DIR: join(stateDir, "cache"),
       },
       stdio: ["ignore", "pipe", "pipe"],
     }
@@ -195,10 +204,12 @@ test("cli run smoke: --json emits parseable evidence events and final result", a
     assert.equal(result.usage.source, "provider");
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
+    await rm(stateDir, { recursive: true, force: true });
   }
 });
 
 test("cli run smoke: --json auto-denies console approval without corrupting stdout", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qling-cli-run-"));
   let requestCount = 0;
   const server = createServer((req, res) => {
     if (req.method === "POST" && req.url === "/chat/completions") {
@@ -260,6 +271,8 @@ test("cli run smoke: --json auto-denies console approval without corrupting stdo
         QLING_FEATURES_DASHBOARD: "false",
         QLING_GUARD_PERMISSIONS_DEFAULT: "ask",
         QLING_PERMISSIONS_MODE: "ask",
+        QLING_FILE_STATE_DIR: stateDir,
+        QLING_FILE_CACHE_DIR: join(stateDir, "cache"),
       },
       stdio: ["ignore", "pipe", "pipe"],
     }
@@ -282,5 +295,6 @@ test("cli run smoke: --json auto-denies console approval without corrupting stdo
     assert.equal(events.at(-1).result, "approval-handled");
   } finally {
     await new Promise((resolve) => server.close(() => resolve(undefined)));
+    await rm(stateDir, { recursive: true, force: true });
   }
 });

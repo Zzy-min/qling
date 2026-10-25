@@ -4,6 +4,7 @@ import { appendGuardAudit, checkUrlFetchPolicy, redactText } from "../guard.js";
 import { guardConfigFromEnv } from "../config.js";
 
 const MAX_BODY_CHARS = 200_000;
+const MAX_BODY_BYTES = MAX_BODY_CHARS * 4;
 
 export const urlFetchTool: ToolDefinition = {
   name: "url_fetch",
@@ -119,7 +120,7 @@ export async function runUrlFetch(args: {
     return toolError("URL_FETCH_GUARD_BLOCKED", decision.reason ?? "guard denied url_fetch");
   }
 
-  const method = String(args.method ?? "GET").toUpperCase();
+  let method = String(args.method ?? "GET").trim().toUpperCase();
   const supportedMethods = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
   if (!supportedMethods.has(method)) {
     return toolError("URL_FETCH_UNSUPPORTED_METHOD", `unsupported method: ${method}`);
@@ -128,32 +129,37 @@ export async function runUrlFetch(args: {
   const timeoutSeconds = Math.max(1, Math.min(120, Number(args.timeout_seconds ?? 30)));
   // guard 开启跟随时：默认跟随。仅当调用方显式 false 且未触发自动重试时才 manual。
   const guardAllowsFollow = Boolean(guard.network.url_fetch.follow_redirects);
-  let followRedirects =
+  const followRedirects =
     args.follow_redirects === undefined
       ? guardAllowsFollow
       : Boolean(args.follow_redirects) && guardAllowsFollow;
-  // 模型常误传 follow_redirects=false；GET 无 body 时若 guard 允许则强制跟随（金融站点 302 常见）
-  if (
-    !followRedirects &&
-    guardAllowsFollow &&
-    method === "GET" &&
-    args.body === undefined
-  ) {
-    followRedirects = true;
-  }
 
   const headers = sanitizeHeaders(args.headers ?? {});
-  const body = args.body !== undefined ? String(args.body) : undefined;
+  let body = args.body !== undefined ? String(args.body) : undefined;
 
   let response: Response;
   try {
-    response = await fetch(target.toString(), {
-      method,
-      headers,
-      body: body ?? undefined,
-      redirect: followRedirects ? "follow" : "manual",
-      signal: AbortSignal.timeout(timeoutSeconds * 1000),
-    });
+    const signal = AbortSignal.timeout(timeoutSeconds * 1000);
+    let current = target;
+    for (let hop = 0; ; hop++) {
+      response = await fetch(current.toString(), { method, headers, body, redirect: "manual", signal });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get("location");
+      await response.body?.cancel();
+      if (!followRedirects || !location || hop >= 5) {
+        return toolError("URL_FETCH_REDIRECT_BLOCKED", "redirect disabled, missing Location, or redirect limit exceeded");
+      }
+      const next = new URL(location, current);
+      const nextDecision = await checkUrlFetchPolicy(next, guard);
+      if (!nextDecision.allowed) return toolError("URL_FETCH_REDIRECT_BLOCKED", nextDecision.reason ?? "redirect target denied");
+      if (response.status === 303 || ([301, 302].includes(response.status) && method === "POST")) {
+        method = "GET"; body = undefined;
+      }
+      if (method !== "GET" && next.origin !== current.origin) {
+        return toolError("URL_FETCH_REDIRECT_BLOCKED", "cross-origin write redirect requires a new explicit request");
+      }
+      current = next;
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await appendGuardAudit(guard, {
@@ -166,72 +172,29 @@ export async function runUrlFetch(args: {
     return toolError("URL_FETCH_REQUEST_FAILED", message);
   }
 
-  // 仍 manual 且遇到 302：若 guard 允许，自动再跟一次（带 Location 策略校验）
-  if (!followRedirects && isRedirect(response.status)) {
-    const location = response.headers.get("location") ?? "";
-    if (guardAllowsFollow && location) {
-      try {
-        const next = new URL(location, target);
-        const nextDecision = await checkUrlFetchPolicy(next, guard);
-        if (nextDecision.allowed) {
-          response = await fetch(next.toString(), {
-            method,
-            headers,
-            redirect: "follow",
-            signal: AbortSignal.timeout(timeoutSeconds * 1000),
-          });
-          await appendGuardAudit(guard, {
-            tool: "url_fetch",
-            action: "allow",
-            category: "network",
-            target: target.toString(),
-            status: response.status,
-            reason: `auto-followed redirect → ${next.toString()}`,
-          });
-        } else {
-          await appendGuardAudit(guard, {
-            tool: "url_fetch",
-            action: "deny",
-            category: "network",
-            target: target.toString(),
-            status: response.status,
-            reason: `redirect blocked: ${nextDecision.reason}`,
-          });
-          return toolError(
-            "URL_FETCH_REDIRECT_BLOCKED",
-            `redirect blocked by policy (status=${response.status}, location=${location}, reason=${nextDecision.reason})`
-          );
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return toolError("URL_FETCH_REDIRECT_FOLLOW_FAILED", message);
-      }
-    } else {
-      await appendGuardAudit(guard, {
-        tool: "url_fetch",
-        action: "deny",
-        category: "network",
-        target: target.toString(),
-        status: response.status,
-        reason: "redirect blocked by policy",
-      });
-      return toolError(
-        "URL_FETCH_REDIRECT_BLOCKED",
-        `redirect blocked by policy (status=${response.status}, location=${location}). ` +
-          `Tip: use follow_redirects=true, or fetch the final Location URL directly`
-      );
-    }
-  }
-
   const contentType = response.headers.get("content-type") ?? "";
   let text = "";
   try {
-    if (/^text\/|json|xml|javascript|yaml|html/i.test(contentType)) {
-      text = await response.text();
-    } else {
-      const ab = await response.arrayBuffer();
-      text = `[binary response omitted] bytes=${ab.byteLength} content-type=${contentType}`;
+    const textual = /^text\/|json|xml|javascript|yaml|html/i.test(contentType);
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    if (reader) {
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          bytes += chunk.value.byteLength;
+          if (bytes > MAX_BODY_BYTES) {
+            await reader.cancel();
+            return toolError("URL_FETCH_BODY_TOO_LARGE", `response exceeds ${MAX_BODY_BYTES} bytes`);
+          }
+          if (textual) text += decoder.decode(chunk.value, { stream: true });
+        }
+      } finally { reader.releaseLock(); }
     }
+    if (textual) text += decoder.decode();
+    else text = `[binary response omitted] bytes=${bytes} content-type=${contentType}`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return toolError("URL_FETCH_READ_FAILED", message);
@@ -286,8 +249,4 @@ function sanitizeHeaders(input: Record<string, string>): Record<string, string> 
     out[key] = String(v);
   }
   return out;
-}
-
-function isRedirect(status: number): boolean {
-  return status >= 300 && status < 400;
 }

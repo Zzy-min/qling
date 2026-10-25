@@ -84,7 +84,7 @@ GitHub Releases, WinGet, and npm may publish on different schedules. Check the [
 
 ### Source
 
-Requires Node.js 18+ and npm 9+:
+Requires Node.js 22+ and npm 9+:
 
 ```bash
 git clone https://github.com/Zzy-min/qling.git

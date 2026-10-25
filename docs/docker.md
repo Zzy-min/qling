@@ -24,7 +24,7 @@ docker run --rm -it \
   -e QLING_LLM_API_KEY \
   -e QLING_LLM_PROVIDER=deepseek \
   -e QLING_LLM_ENDPOINT=https://api.deepseek.com \
-  -e QLING_LLM_MODEL=deepseek-chat \
+  -e QLING_LLM_MODEL=deepseek-flash \
   -e QLING_WORKSPACE_DIR=/workspace \
   -e QLING_WRITE_SANDBOX=workspace \
   -e QLING_GUARD_NETWORK_MODE=strict \

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Web
+
+- 接入 DeepSeek Search / Fetch：`deepseek_search`、`deepseek_fetch`。网页搜索默认走这两条接口，不再把 opencli 当作默认浏览器通道。
+
 ### Docs / distribution
 
 - Document **WinGet official listing** after [microsoft/winget-pkgs#402294](https://github.com/microsoft/winget-pkgs/pull/402294) merge (`Zzy-min.qling` `1.3.1`).

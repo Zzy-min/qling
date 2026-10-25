@@ -5,6 +5,11 @@ import { getLocalizedText } from "./i18n/index.js";
 
 export interface StatusLineSnapshot {
   model: string;
+  provider?: string | null;
+  /** Transient retry / stream-fallback marker. Never includes secrets. */
+  modelNotice?: string | null;
+  /** When set and below 72, the model field omits the provider prefix. */
+  columns?: number;
   sessionId: string;
   branch: string | null;
   permissionMode: string | null;
@@ -148,6 +153,16 @@ function formatSessionMode(
   return "normal";
 }
 
+function formatStatusModel(snapshot: StatusLineSnapshot): string {
+  const model = snapshot.model || "未知";
+  const provider = String(snapshot.provider ?? "").trim();
+  const columns = Number(snapshot.columns ?? 120);
+  const narrow = Number.isFinite(columns) && columns > 0 && columns < 72;
+  const base = provider && !narrow ? `${provider}·${model}` : model;
+  const notice = String(snapshot.modelNotice ?? "").trim();
+  return notice ? `${base} ${notice}` : base;
+}
+
 export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   const t = getLocalizedText();
   const goal = snapshot.goalStatus || "无";
@@ -157,7 +172,7 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   const prompt = Math.max(0, Math.floor(Number(snapshot.promptTokens ?? 0)));
   const completion = Math.max(0, Math.floor(Number(snapshot.completionTokens ?? 0)));
   const parts = [
-    `模型=${snapshot.model || "未知"}`,
+    `模型=${formatStatusModel(snapshot)}`,
     `模式=${sessionMode}`,
     `会话=${resolveShortSessionId(snapshot.sessionId)}`,
     `分支=${branch}`,
@@ -231,6 +246,9 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
 
   return {
     model: typeof agentLoop.getModel === "function" ? agentLoop.getModel() : "unknown",
+    provider: typeof agentLoop.getProvider === "function" ? agentLoop.getProvider() : undefined,
+    modelNotice: typeof agentLoop.getLlmActivityNotice === "function" ? agentLoop.getLlmActivityNotice() : undefined,
+    columns: typeof process.stdout?.columns === "number" ? process.stdout.columns : undefined,
     sessionId: stats.sessionId ?? "",
     branch: resolveGitBranch(context.workspaceDir),
     permissionMode,

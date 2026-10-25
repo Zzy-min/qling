@@ -6,6 +6,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createFakeLLM } from "../helpers/fake-llm-server.mjs";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
@@ -23,6 +25,7 @@ function waitForExit(child, timeoutMs = 15_000) {
 }
 
 test("e2e: tool call chain with fake LLM server", async () => {
+  const home = await mkdtemp(join(tmpdir(), "qling-tool-chain-home-"));
   // Respond from request semantics instead of a brittle verifier request index.
   const FILLER = { content: "PASS ok", tool_calls: [] };
   const fake = createFakeLLM((request, index) => {
@@ -61,6 +64,12 @@ test("e2e: tool call chain with fake LLM server", async () => {
     {
       env: {
         ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        QLING_FILE_STATE_DIR: join(home, ".qling"),
+        QLING_FILE_CACHE_DIR: join(home, ".qling", "cache"),
+        QLING_FEATURES_DYNAMIC_DISCOVERY: "false",
+        QLING_FEATURES_SEMANTIC_MEMORY: "false",
         QLING_MEMORY_WAL_ENABLED: "false",
         QLING_METRICS_ENABLED: "false",
         QLING_FEATURES_DASHBOARD: "false",
@@ -91,5 +100,6 @@ test("e2e: tool call chain with fake LLM server", async () => {
     assert.match(stderr, /✅.*read/, "should show successful read tool");
   } finally {
     await fake.close();
+    await rm(home, { recursive: true, force: true });
   }
 });

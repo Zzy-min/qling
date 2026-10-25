@@ -16,7 +16,7 @@ services:
       QLING_LLM_API_KEY: ${QLING_LLM_API_KEY:-}
       QLING_LLM_PROVIDER: ${QLING_LLM_PROVIDER:-deepseek}
       QLING_LLM_ENDPOINT: ${QLING_LLM_ENDPOINT:-https://api.deepseek.com}
-      QLING_LLM_MODEL: ${QLING_LLM_MODEL:-deepseek-chat}
+      QLING_LLM_MODEL: ${QLING_LLM_MODEL:-deepseek-flash}
       QLING_WORKSPACE_DIR: /workspace
       QLING_WRITE_SANDBOX: workspace
       QLING_GUARD_NETWORK_MODE: ${QLING_GUARD_NETWORK_MODE:-strict}

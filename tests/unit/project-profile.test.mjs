@@ -17,6 +17,19 @@ import {
   extractPythonTestBootstrapModules,
 } from "../../dist/runtime/project-profile.js";
 
+test("non-Git workspace identity ignores Qling's own changing session state", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-identity-state-"));
+  try {
+    await fs.mkdir(path.join(root, ".qling", "sessions"), { recursive: true });
+    await fs.writeFile(path.join(root, "task.py"), "print('ok')");
+    const before = await resolveProjectProfileIdentity(root);
+    await fs.writeFile(path.join(root, ".qling", "sessions", "active.json"), "checkpoint");
+    assert.deepEqual(await resolveProjectProfileIdentity(root), before);
+    await fs.writeFile(path.join(root, "task.py"), "print('changed')");
+    assert.notEqual((await resolveProjectProfileIdentity(root)).dirtyFingerprint, before.dirtyFingerprint);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test("project preflight discovers ecosystems, lockfiles, and deterministic tests", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-project-profile-"));
   await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "tsc" } }));
@@ -274,6 +287,34 @@ test("scoped verification preserves Windows metacharacters as an argv element", 
     const plan = await resolveScopedVerificationCommand({ profile, workspaceDir: root, commandId: "project:python:pytest", changedPaths: ["pkg/%QLING_SCOPE_ESCAPE%.py"], requireNarrowScope: true });
     assert.deepEqual(plan?.args, ["-m", "pytest", "pkg/tests/test_%QLING_SCOPE_ESCAPE%.py"]);
     assert.equal(plan?.executable, "python");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("git and non-git workspace identity ignores transient verifier caches and host agent dirs", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-profile-transient-"));
+  try {
+    await fs.writeFile(path.join(root, "app.py"), "x = 1\n");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "eval@example.invalid"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Qling Eval"], { cwd: root });
+    execFileSync("git", ["add", "app.py"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: root });
+
+    const before = await resolveProjectProfileIdentity(root);
+    await fs.mkdir(path.join(root, ".pytest_cache", "v"), { recursive: true });
+    await fs.writeFile(path.join(root, ".pytest_cache", "v", "cache"), "1");
+    await fs.mkdir(path.join(root, "__pycache__"), { recursive: true });
+    await fs.writeFile(path.join(root, "__pycache__", "app.cpython-312.pyc"), "bytecode");
+    await fs.writeFile(path.join(root, "tsconfig.tsbuildinfo"), "{}");
+    await fs.mkdir(path.join(root, ".gemini"), { recursive: true });
+    await fs.writeFile(path.join(root, ".gemini", "state.json"), "{}");
+    await fs.mkdir(path.join(root, ".codex"), { recursive: true });
+    await fs.writeFile(path.join(root, ".codex", "log.txt"), "log");
+
+    const afterTransient = await resolveProjectProfileIdentity(root);
+    assert.deepEqual(afterTransient, before);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -122,6 +122,14 @@ export function App() {
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState("");
   const etag = useRef("");
+  const detailRequest = useRef(0);
+  const detailAbort = useRef<AbortController | null>(null);
+
+  const closeDetail = useCallback(() => {
+    detailRequest.current++;
+    detailAbort.current?.abort();
+    setSelected(null); setDetail(null); setDetailLoading(false);
+  }, []);
 
   const refresh = useCallback(async (force = false) => {
     const headers: HeadersInit = {};
@@ -135,21 +143,23 @@ export function App() {
 
   useEffect(() => {
     let timer = 0;
+    let disposed = false;
+    const safelyRefresh = () => refresh(true).catch((error) => { if (!disposed) setNotice(error instanceof Error ? error.message : String(error)); });
     const poll = async () => {
       if (!document.hidden) await refresh().catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
-      timer = window.setTimeout(poll, 3000);
+      if (!disposed) timer = window.setTimeout(poll, 3000);
     };
     void poll();
-    const onVisibility = () => { if (!document.hidden) void refresh(true); };
+    const onVisibility = () => { if (!document.hidden) void safelyRefresh(); };
     document.addEventListener("visibilitychange", onVisibility);
-    return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", onVisibility); };
+    return () => { disposed = true; window.clearTimeout(timer); document.removeEventListener("visibilitychange", onVisibility); detailRequest.current++; detailAbort.current?.abort(); };
   }, [refresh]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setSelected(null); setDetail(null); } };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeDetail(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [closeDetail]);
 
   const tasks = useMemo(() => (snapshot?.tasks ?? []).filter((task) => {
     if (kind !== "all" && task.kind !== kind) return false;
@@ -160,28 +170,34 @@ export function App() {
   }), [snapshot, kind, status, search]);
 
   const selectTask = async (task: DashboardTask) => {
+    const requestId = ++detailRequest.current;
+    detailAbort.current?.abort();
+    const controller = new AbortController();
+    detailAbort.current = controller;
     setSelected({ id: task.id, kind: task.kind });
     setDetailLoading(true);
     setDetail(null);
     try {
-      const response = await fetch(`/api/tasks/${encodeURIComponent(task.kind)}/${encodeURIComponent(task.id)}`);
+      const response = await fetch(`/api/tasks/${encodeURIComponent(task.kind)}/${encodeURIComponent(task.id)}`, { signal: controller.signal });
       if (!response.ok) throw new Error(`详情请求失败 (${response.status})`);
-      setDetail(await response.json() as DashboardTaskDetail);
+      const body = await response.json() as DashboardTaskDetail;
+      if (requestId === detailRequest.current) setDetail(body);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      if (requestId === detailRequest.current && !controller.signal.aborted) setNotice(error instanceof Error ? error.message : String(error));
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequest.current) setDetailLoading(false);
     }
   };
 
   const runAction = async (task: DashboardTask, action: DashboardTaskAction) => {
+    const selectionVersion = detailRequest.current;
     try {
       const response = await fetch(`/api/tasks/${encodeURIComponent(task.kind)}/${encodeURIComponent(task.id)}/${action}`, { method: "POST" });
       const body = await response.json() as { message?: string };
       if (!response.ok) throw new Error(body.message ?? `操作失败 (${response.status})`);
       setNotice(body.message ?? "操作已完成");
       await refresh(true);
-      await selectTask(task);
+      if (selectionVersion === detailRequest.current) await selectTask(task);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     }
@@ -199,7 +215,7 @@ export function App() {
             <span>{snapshot?.runtime.ready ? "运行时就绪" : "连接本地运行时"}</span>
             <span className="runtime-meta">{snapshot?.runtime.daemonHealthy ? "DAEMON" : "LOCAL"}</span>
             <span className="runtime-meta">权限 {snapshot?.runtime.permissionMode ?? "—"}</span>
-            <button className="button button-ghost" type="button" onClick={() => void refresh(true)}>刷新</button>
+            <button className="button button-ghost" type="button" onClick={() => void refresh(true).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))}>刷新</button>
           </div>
         </header>
 
@@ -242,7 +258,7 @@ export function App() {
                 <AnimatePresence initial={false}>{tasks.map((task) => <TaskRow key={`${task.kind}:${task.id}`} task={task} selected={selected?.id === task.id && selected.kind === task.kind} onSelect={() => void selectTask(task)} />)}</AnimatePresence>}
             </div>
           </section>
-          <DetailPane detail={detail} loading={detailLoading} onClose={() => { setSelected(null); setDetail(null); }} onAction={runAction} />
+          <DetailPane detail={detail} loading={detailLoading} onClose={closeDetail} onAction={runAction} />
         </div>
 
         <section className="activity-panel">

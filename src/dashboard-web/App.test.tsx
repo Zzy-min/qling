@@ -1,8 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import type { DashboardSnapshot } from "../dashboard/types";
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const snapshot: DashboardSnapshot = {
   generatedAt: Date.now(),
@@ -34,4 +36,23 @@ test("filters failed tasks and opens accessible detail", async () => {
   await waitFor(() => expect(screen.getByRole("complementary", { name: "任务详情" })).toHaveClass("open"));
   expect(await screen.findByText(/缺少 README/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
+});
+
+test("a slow previous task response cannot replace the selected task detail", async () => {
+  let finishFirst!: (value: Response) => void;
+  const first = new Promise<Response>(resolve => { finishFirst = resolve; });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/one")) return first;
+    if (String(input).endsWith("/two")) return new Response(JSON.stringify({ task: snapshot.tasks[1], detail: {}, events: [] }));
+    return new Response(JSON.stringify(snapshot));
+  }));
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByText("扫描依赖边界"));
+  await user.click(screen.getByText("验证发布包"));
+  const pane = screen.getByRole("complementary", { name: "任务详情" });
+  await within(pane).findByText("验证发布包");
+  await act(async () => { finishFirst(new Response(JSON.stringify({ task: snapshot.tasks[0], detail: {}, events: [] }))); await first; });
+  expect(within(pane).getByText("验证发布包")).toBeInTheDocument();
+  expect(within(pane).queryByText("扫描依赖边界")).not.toBeInTheDocument();
 });

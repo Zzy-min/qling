@@ -103,6 +103,18 @@ interface PatchChunk {
   replace: string;
 }
 
+function detectConsistentLineEnding(content: string): "\r\n" | "\n" | null {
+  const withoutCrLf = content.replace(/\r\n/g, "");
+  if (withoutCrLf.includes("\r")) return null;
+  if (content.includes("\r\n") && !withoutCrLf.includes("\n")) return "\r\n";
+  if (!content.includes("\r\n") && content.includes("\n")) return "\n";
+  return null;
+}
+
+function normalizeLineEndings(content: string): string {
+  return content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 export interface PatchLineStats {
   added: number;
   removed: number;
@@ -201,17 +213,24 @@ export async function runPatch(args: {
     );
   }
 
-  // Work with a copy/simulation to check all matches before writing
-  let currentContent = originalContent;
+  // Treat LF/CRLF as the same logical text while preserving a consistently
+  // styled target file. Tool reads and JSON arguments commonly normalize line
+  // endings, so byte-exact EOL matching makes otherwise exact edits fail on
+  // Windows checkouts.
+  const lineEnding = detectConsistentLineEnding(originalContent);
+  const logicalOriginal = lineEnding ? normalizeLineEndings(originalContent) : originalContent;
+  let currentContent = logicalOriginal;
 
   for (let idx = 0; idx < chunks.length; idx++) {
     const chunk = chunks[idx];
-    const searchStr = chunk.search;
-    const replaceStr = chunk.replace;
+    const rawSearch = chunk?.search;
+    const rawReplace = chunk?.replace;
 
-    if (searchStr === undefined || replaceStr === undefined) {
+    if (rawSearch === undefined || rawReplace === undefined) {
       return toolError("PATCH_INVALID_CHUNK", `chunk at index ${idx} is missing search or replace field`);
     }
+    const searchStr = lineEnding ? normalizeLineEndings(rawSearch) : rawSearch;
+    const replaceStr = lineEnding ? normalizeLineEndings(rawReplace) : rawReplace;
     if (searchStr === "") {
       return toolError(
         "PATCH_EMPTY_SEARCH",
@@ -252,7 +271,7 @@ export async function runPatch(args: {
     currentContent = currentContent.replace(searchStr, replaceStr);
   }
 
-  if (currentContent === originalContent) {
+  if (currentContent === logicalOriginal) {
     return toolError(
       "PATCH_NOOP",
       "all chunks applied but file content is unchanged (no-op). Refine search/replace or skip this patch."
@@ -261,8 +280,9 @@ export async function runPatch(args: {
 
   const workspaceDir = roots.workspaceDir ?? process.cwd();
   const relFile = relative(workspaceDir, resolvedPath).replace(/\\/g, "/");
-  const stats = computeLineStats(originalContent, currentContent);
-  const diffText = generateUnifiedDiff(relFile, originalContent, currentContent);
+  const finalContent = lineEnding === "\r\n" ? currentContent.replace(/\n/g, "\r\n") : currentContent;
+  const stats = computeLineStats(originalContent, finalContent);
+  const diffText = generateUnifiedDiff(relFile, originalContent, finalContent);
   const summary =
     `summary: chunks=${chunks.length} +${stats.added}/-${stats.removed} lines ` +
     `(unchanged≈${stats.unchanged}) path=${relFile}`;
@@ -276,7 +296,7 @@ export async function runPatch(args: {
 
   // Atomic write after all validations pass (temp + rename; Windows-safe fallback)
   try {
-    await writeFileAtomic(resolvedPath, currentContent);
+    await writeFileAtomic(resolvedPath, finalContent);
     return toolSuccess(
       `✅ Successfully applied ${chunks.length} patch chunk(s) to ${resolvedPath}\n` +
         `${summary}\n\n${diffText}`

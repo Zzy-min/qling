@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
@@ -130,10 +131,48 @@ const PROFILE_FILES = [
   "go.sum", "pom.xml", "build.gradle", "build.gradle.kts", "gradlew", "gradlew.bat", "Makefile",
 ] as const;
 
-const FALLBACK_IGNORED_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", ".venv", "venv", "target", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"]);
+const FALLBACK_IGNORED_DIRS = new Set([
+  ".qling", ".git", "node_modules", "dist", "build", ".next", ".nuxt", "out",
+  ".venv", "venv", "target", "__pycache__", ".pytest_cache", ".mypy_cache",
+  ".ruff_cache", ".hypothesis", ".tox", ".nox", "coverage", "htmlcov",
+  ".nyc_output", ".turbo", ".vite", ".parcel-cache", ".cache", ".gradle",
+  ".gemini", ".codex", ".claude", ".agents", ".dsh", ".pi", ".opencli",
+  ".cc-switch", ".antigravity", ".antigravity-ide", ".vscode", ".idea",
+  ".cursor", ".bun", ".npm", ".cargo", ".rustup", ".m2", ".puro",
+  "AppData", "Application Data", "Local Settings", "OneDrive", "Cookies",
+  "Recent", "Searches", "Links", "Favorites", "Contacts", "Saved Games",
+]);
+
+const IGNORED_IDENTITY_BASENAMES = new Set([
+  ".qling-verify.json",
+  ".coverage",
+  "tsconfig.tsbuildinfo",
+]);
+
+export function shouldIgnoreIdentityPath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+  if (!normalized) return true;
+  const parts = normalized.split("/").filter(Boolean);
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (FALLBACK_IGNORED_DIRS.has(parts[i])) return true;
+  }
+  const base = parts[parts.length - 1] ?? "";
+  if (FALLBACK_IGNORED_DIRS.has(base) || IGNORED_IDENTITY_BASENAMES.has(base)) return true;
+  const lower = base.toLowerCase();
+  if (
+    lower.endsWith(".pyc")
+    || lower.endsWith(".pyo")
+    || lower.endsWith(".tsbuildinfo")
+    || lower.startsWith(".coverage.")
+  ) {
+    return true;
+  }
+  return false;
+}
 
 async function listFallbackWorkspaceFiles(root: string, limit = 10_000): Promise<string[]> {
   const files: string[] = [];
+  const isHomeRoot = path.resolve(root).toLowerCase() === path.resolve(os.homedir()).toLowerCase();
   const queue = [root];
   while (queue.length > 0 && files.length < limit) {
     const current = queue.shift()!;
@@ -143,10 +182,14 @@ async function listFallbackWorkspaceFiles(root: string, limit = 10_000): Promise
       if (entry.isSymbolicLink()) continue;
       const absolute = path.join(current, entry.name);
       if (entry.isDirectory()) {
+        if (isHomeRoot && current === root) continue;
         if (!FALLBACK_IGNORED_DIRS.has(entry.name)) queue.push(absolute);
       } else if (entry.isFile()) {
-        files.push(path.relative(root, absolute).replace(/\\/g, "/"));
-        if (files.length >= limit) break;
+        const rel = path.relative(root, absolute).replace(/\\/g, "/");
+        if (!shouldIgnoreIdentityPath(rel)) {
+          files.push(rel);
+          if (files.length >= limit) break;
+        }
       }
     }
   }
@@ -199,8 +242,9 @@ export async function resolveProjectProfileIdentity(workspaceDir: string): Promi
   const hash = createHash("sha256");
   hash.update(PROJECT_PROFILE_PARSER_VERSION);
   for (const entry of dirtyEntries.sort()) {
-    hash.update(entry);
     const candidate = /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3) : entry;
+    if (shouldIgnoreIdentityPath(candidate)) continue;
+    hash.update(entry);
     await hashFileState(root, candidate, hash);
   }
   return { revision, dirtyFingerprint: hash.digest("hex") };

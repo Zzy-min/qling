@@ -22,7 +22,36 @@ test("agent eval output parser extracts result, usage, and tool failures", () =>
     toolCalls: 2,
     toolFailures: 1,
     tools: ["bash", "read"],
+    toolAccesses: [],
   });
+});
+
+test("agent eval output parser preserves sanitized file-tool targets", () => {
+  const output = [
+    JSON.stringify({ type: "tool_started", tool: "read", toolTarget: "secret.txt" }),
+    JSON.stringify({ type: "tool_completed", tool: "read", status: "succeeded" }),
+    JSON.stringify({ type: "result", ok: true, result: "{}", usage: {} }),
+  ].join("\n");
+  assert.deepEqual(parseAgentEvalOutput(output).toolAccesses, [
+    { tool: "read", target: "secret.txt" },
+  ]);
+});
+
+test("agent eval output parser does not count policy redirects as execution failures", () => {
+  const output = [
+    JSON.stringify({
+      type: "tool_completed",
+      tool: "bash",
+      status: "failed",
+      policyRedirect: true,
+    }),
+    JSON.stringify({ type: "tool_completed", tool: "bash", status: "failed" }),
+    JSON.stringify({ type: "result", ok: true, result: "{}", usage: {} }),
+  ].join("\n");
+
+  const parsed = parseAgentEvalOutput(output);
+  assert.equal(parsed.toolCalls, 2);
+  assert.equal(parsed.toolFailures, 1);
 });
 
 test("agent eval output parser rejects a missing terminal result", () => {
@@ -50,7 +79,32 @@ test("agent eval output parser preserves failed terminal results with non-JSON t
     usage: { totalTokens: 99 },
   }));
   assert.equal(parsed.ok, false);
+  assert.equal(parsed.resultText, "maximum iterations reached");
   assert.deepEqual(parsed.answer, {});
   assert.match(parsed.answerParseError, /Unexpected token|JSON/);
   assert.equal(parsed.usage.totalTokens, 99);
+});
+
+test("agent eval output parser preserves a paused verification-environment outcome", () => {
+  const parsed = parseAgentEvalOutput(JSON.stringify({
+    type: "result",
+    ok: false,
+    outcome: "paused",
+    result: "验证环境未就绪；修改已保留为可恢复状态。",
+    usage: {},
+  }));
+  assert.equal(parsed.outcome, "paused");
+  assert.match(parsed.resultText ?? "", /^验证环境未就绪/);
+});
+
+test("agent eval output parser preserves structured efficiency redirects", () => {
+  const output = [
+    JSON.stringify({ type: "efficiency_guard", recoveryAction: "replan_repository", fingerprint: "np-4" }),
+    JSON.stringify({ type: "efficiency_guard", recoveryAction: "narrow_recovery", fingerprint: "np-8" }),
+    JSON.stringify({ type: "result", ok: false, result: "maximum iterations reached", usage: {} }),
+  ].join("\n");
+  assert.deepEqual(parseAgentEvalOutput(output).efficiencySignals, [
+    { action: "replan_repository", fingerprint: "np-4" },
+    { action: "narrow_recovery", fingerprint: "np-8" },
+  ]);
 });

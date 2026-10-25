@@ -28,15 +28,40 @@ function portableBasename(value: string): string {
   return value.includes("\\") ? path.win32.basename(value) : path.posix.basename(value);
 }
 
+function providerCode(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return "";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : "";
+}
+
+function providerRetriable(error: unknown): boolean | undefined {
+  if (typeof error !== "object" || error === null || !("retriable" in error)) return undefined;
+  const value = (error as { retriable?: unknown }).retriable;
+  return typeof value === "boolean" ? value : undefined;
+}
+
 export function classifyFailure(error: unknown, context: FailureContext = {}): FailureClassification {
   const message = errorMessage(error);
   const lower = message.toLowerCase();
+  const code = providerCode(error);
+  const retriable = providerRetriable(error);
   const status = typeof error === "object" && error !== null && "status" in error
     ? Number((error as { status?: unknown }).status)
     : undefined;
   let category: FailureCategory = context.provider ? "provider_terminal" : "tool_execution";
+  const contextLength = /context_length_exceeded|context_length|maximum context|too many tokens|context length/.test(
+    `${lower}\n${code.toLowerCase()}`,
+  );
 
-  if (status === 429 || (status !== undefined && status >= 500) || /rate limit|econnreset|etimedout|temporar/.test(lower)) {
+  if (contextLength) {
+    category = "context_exhausted";
+  } else if (code === "stream_interrupted" || code === "upstream_stream_error") {
+    category = "provider_transient";
+  } else if (context.provider && retriable === true) {
+    category = "provider_transient";
+  } else if (context.provider && retriable === false) {
+    category = "provider_terminal";
+  } else if (status === 429 || (status !== undefined && status >= 500) || /rate limit|econnreset|etimedout|temporar/.test(lower)) {
     category = "provider_transient";
   } else if (/approval[_ ]required|requires approval/.test(lower)) {
     category = "permission_required";

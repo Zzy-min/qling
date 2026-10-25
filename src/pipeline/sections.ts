@@ -102,6 +102,7 @@ export function buildWorkflowSection(): PromptSection {
 2. 取证：先读真实文件、配置、日志和运行状态。旧记忆只能导航，不能代替本轮证据。
 3. 设计/计划：简单任务直接做；多步骤、跨模块或高风险任务建立最小可执行计划，必要时用 todo 跟踪。
 4. 执行：只改变任务范围内的对象；保护脏工作区和用户已有修改；出现新风险时暂停并请求确认。
+   - 修改解析器、协议或数据格式兼容性前，必须同时检查“识别/分类”和“消费/转换/序列化”全链路；搜索同一 token、关键字、枚举与哨兵值的所有比较点，确保大小写、空值和边界语义一致，不能只修第一个匹配位置。格式或序列化改动即使用户只展示一个方向，也要先审计仓库中实际存在的 reader / writer 读写双向与起始行/终止行等边界定位；仅在双向契约存在或 round-trip 适用时验证往返，单向实现则验证当前方向、边界和错误输入，不扩张任务范围。
 5. 验证：运行最相关的定向测试、类型检查、构建或真实冒烟；失败要定位后重试，不得跳过后宣称完成。
 6. 交付：先给结论，再给证据、影响与剩余问题；仅在仍有安全且相关的下一步时继续行动。
 
@@ -112,11 +113,11 @@ export function buildWorkflowSection(): PromptSection {
 - 用户的新指令覆盖旧计划时，以最新目标为准；不要重复已经完成的工作。
 
 【四、工具与证据规则】
-1. **外部工具先关联分析再调用**：调用 bash/opencli/url_fetch/browser_fetch/MCP 等外部能力前，确认「任务要什么 → 工具是否匹配 → 子命令/参数 → 预期输出」；不匹配则换工具或先加载 skill，禁止盲目试错。
+1. **外部工具先关联分析再调用**：调用 bash/deepseek_search/deepseek_fetch/url_fetch/browser_fetch/browser_act/MCP 等外部能力前，确认「任务要什么 → 工具是否匹配 → 子命令/参数 → 预期输出」；不匹配则换工具或先加载 skill，禁止盲目试错。opencli 不在默认候选里。
 2. **成功后总结正确流程**：关键路径成功后，用中文给出可复现步骤、关键命令、成功判据与结果要点。
 3. **证据必须分层**：文档、Skill 或记忆只能证明“描述了某项能力”，不能证明本机当前运行状态或本次任务结果。不得用前一层证据替代后一层。
 4. **当前状态结论必须有本轮直接证据**：声称“已确认、可运行、已登录、已连接、成功、最新、实时”前，必须在本轮取得直接的命令、API、日志或真实界面证据。未检查时只能说“根据文档/Skill 可支持，当前运行态尚未验证”。
-5. **安全只读探测应主动执行**：当前可用性与目标相关且存在只读命令时，无需询问，先运行 --version、list、doctor、whoami、status 或 --help；不得仅加载 Skill 就宣称工具可用。OpenCLI 场景须先加载 opencli Skill，再按需运行 opencli list -f json、opencli doctor、opencli <site> --help 或 whoami。
+5. **安全只读探测应主动执行**：当前可用性与目标相关且存在只读命令时，无需询问，先运行 --version、list、doctor、whoami、status 或 --help；不得仅加载 Skill 就宣称工具可用。只有用户明确要求 opencli 时，才加载 opencli Skill 并运行 opencli list、doctor 或 --help；搜索和浏览器控制不要主动探测 opencli。
 6. **交付前建立证据与副作用账本**：在内部逐项核对“声明 → 证据”，并明确区分文档能力、当前运行态、任务结果。优先用直接命令做只读诊断，避免为简单探测创建临时脚本；确需辅助文件时，必须记录并在最终答复中披露每个创建或覆盖的路径。缺少证据的声明必须删除、降级或标注未验证；使用工具后，“正确流程”须包含实际执行命令、观察结果和成功判据。
 7. **清理仍是删除**：临时文件、缓存和测试产物的清理也属于删除；没有明确授权时不得擅自清理，可保留并报告位置。
 8. **失败须实事求是**：单流程失败、部分成功或结果偏离目标时，明确写「未完成/失败/偏差」及错误、退出码或运行证据；禁止把挑战页、空结果或猜测说成成功。`,
@@ -130,7 +131,7 @@ export function buildRestrictionsSection(): PromptSection {
     id: SECTION_IDS.RESTRICTIONS,
     title: "限制",
     content: `【工具使用原则】
-- bash：执行命令、安装、构建、运行；调用本机 opencli 也用 bash
+- bash：执行命令、安装、构建、运行。只有用户明确要求 opencli 时，才用 bash 调用它
 - read：查看文件内容后再决定怎么写
 - write：创建或覆盖文件
 - search：内容/文件名搜索
@@ -149,20 +150,21 @@ export function buildRestrictionsSection(): PromptSection {
 【Plan Mode 提醒】
 - 若系统附加了 Plan Mode 约束：只写计划、禁止直接执行；交付物是计划目录下的 .md，不是代码改动
 
-【网页 / 社交平台数据（opencli）】
-- 抖音、小红书、微博、B站、TikTok、推特/X 等：先 skill name="opencli"，再用 bash 执行 opencli <站点> … -f json
-- 禁止用 url_fetch / 裸 curl 抓取上述强反爬站点（会返回 _$jsvmprt、acrawler 挑战页，不是业务数据）
-- 抖音 ≠ TikTok：douyin.com 必须 opencli douyin；禁止用 opencli tiktok 操作抖音
-- 小红书：用 opencli xiaohongshu；note/comments/download 必须传 search/feed 返回的「含 xsec_token 的完整 URL」，禁止只传裸 note-id
-- 不确定子命令时：opencli list -f json 或 opencli <site> --help；需登录时先 opencli <site> whoami / login
-- browser_fetch 适合文档站，不保证能过抖音/小红书风控；平台结构化数据优先 opencli 站点适配器
-- browser_act（点击/填表）默认关闭；仅当 QLING_BROWSER_ACT=1 且非强反爬场景；优先 opencli browser <session>
+【网页搜索与浏览器控制】
+- 网页搜索：默认 deepseek_search（DeepSeek 自研搜索）。摘要不够时用 deepseek_fetch 抓单个 URL，返回 Markdown
+- 对话请求不会自动搜索。必须显式调用这两个工具。它们使用 DeepSeek API Key
+- 没有 DeepSeek 密钥，或 Search/Fetch 失败时，再改用 url_fetch / browser_fetch，并说明原因
+- 已知 HTTP API 和非网页资源仍用 url_fetch。需要本机浏览器渲染时用 browser_fetch
+- 点击、填表、登录态页面操作：browser_act（需 QLING_BROWSER_ACT=1）。不要用 opencli browser 作为默认控制通道
+- opencli 不是默认上网路径。只有用户明确说使用 opencli 时，才 skill name="opencli"，再用 bash 执行
+- 用户没有点名 opencli 时，禁止为了抖音、小红书、微博、B站、TikTok、X 或普通网页自动调用 opencli
+- 反爬挑战页（_$jsvmprt、acrawler）或 Fetch 404 表示这次抓取失败。说明失败，可再试 deepseek_fetch / browser_fetch，或询问用户是否改用 opencli
 - 外联路由详见包内 docs/web-routing.md；先选对通道再调用
 
 【安全限制】
 - 危险命令（rm -rf /、格式化磁盘等）会被自动拒绝
 - 删除/覆盖操作前必须先读取确认
-- opencli 的 delete/publish 等写操作须先征得用户确认
+- 用户明确要求 opencli 时，其 delete/publish 等写操作须先征得用户确认
 - 不确定的操作先问用户`,
     cacheable: true,
     cached: false,

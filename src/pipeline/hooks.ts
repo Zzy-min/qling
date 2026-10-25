@@ -387,6 +387,10 @@ export class HookManager {
   }
 
   async runPreHook(ctx: ToolHookContext, sessionId?: string): Promise<HookResult> {
+    const httpWrite = ctx.toolName === "url_fetch" && !["GET", "HEAD"].includes(String(ctx.arguments.method ?? "GET").trim().toUpperCase());
+    if (this.planMode && httpWrite) {
+      return { decision: "deny", blockingError: "Plan Mode: url_fetch 仅允许 GET/HEAD 只读请求。", preventContinuation: true };
+    }
     // 0. Plan Mode：硬拒绝执行类工具；write/patch 仅允许计划目录
     if (this.planMode) {
       // 未声明 readOnlyHint 的 MCP 工具（ctx.isReadOnly=false）在 Plan Mode 下一律拒绝。
@@ -506,7 +510,9 @@ export class HookManager {
       name: ctx.toolName,
       arguments: ctx.arguments as Record<string, unknown>,
     };
-    const classification = this.classifier.classify(fakeCall);
+    const classification = httpWrite
+      ? { label: "ask" as const, reason: "HTTP 写请求需要确认" }
+      : this.classifier.classify(fakeCall);
 
     if (classification.label === "dangerous") {
       return {

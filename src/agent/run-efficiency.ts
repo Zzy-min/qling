@@ -717,6 +717,19 @@ export class RunEfficiencyGuard {
     return this.progressState.recoveryEpisode;
   }
 
+  /** 交付物是文档时，不要求家目录里的项目测试通过。 */
+  acceptDocumentDeliverable(): void {
+    if (!this.activeMutationId) return;
+    this.phase = "finalize";
+    this.recoveryAllowedTools = new Set(["read", "bash"]);
+    this.progressState = reduceProgressState(this.progressState, {
+      type: "verification_finished",
+      verifierId: "runtime:document",
+      verdict: "pass",
+      fingerprint: `document:${this.activeMutationId}`,
+    });
+  }
+
   getProgressState(): Readonly<ProgressState> {
     return {
       ...this.progressState,

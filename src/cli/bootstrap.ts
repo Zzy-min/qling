@@ -5,6 +5,7 @@ import * as path from "path";
 import * as readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
 import { scanRuntimeDotEnvSecrets } from "../config.js";
+import { hasAnyConfiguredApiKey } from "../providers/resolve-llm.js";
 import { getLocalizedText } from "../i18n/index.js";
 
 export type BootstrapBrowserMode = "auto" | "with" | "none";
@@ -64,11 +65,7 @@ export function parseBootstrapArgs(args: string[]): BootstrapArgs {
 }
 
 function hasApiKey(env: Record<string, string | undefined>): boolean {
-  return Boolean(
-    env.QLING_LLM_API_KEY?.trim() ||
-    env.DEEPSEEK_API_KEY?.trim() ||
-    env.OPENAI_API_KEY?.trim()
-  );
+  return hasAnyConfiguredApiKey(env);
 }
 
 export function buildBootstrapReport(input: BootstrapReportInput): BootstrapReport {

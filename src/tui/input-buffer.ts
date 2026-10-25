@@ -1,3 +1,66 @@
+const graphemeSegmenter =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
+/**
+ * 對標 grok-build `xai-ratatui-textarea/src/textarea.rs`:
+ * 排除 DEL (\x7f)、BS (\x08) 以及除 \n / \t 之外的 C0/C1 控制字符，避免作為不可見垃圾插入輸入緩衝區。
+ */
+export function isInsertableInputChar(ch: string): boolean {
+  if (!ch) return false;
+  if (ch === "\n" || ch === "\t") return true;
+  const code = ch.codePointAt(0);
+  if (code === undefined) return false;
+  if (code < 0x20 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 對標 grok-build `prev_atomic_boundary`: 按完整字素簇 / Code Point 向左退回一個原子字符邊界。
+ */
+export function prevAtomicBoundary(value: string, index: number): number {
+  const clamped = Math.max(0, Math.min(index, value.length));
+  if (clamped <= 0) return 0;
+  if (graphemeSegmenter) {
+    let prev = 0;
+    for (const seg of graphemeSegmenter.segment(value)) {
+      if (seg.index >= clamped) break;
+      prev = seg.index;
+    }
+    return prev;
+  }
+  const low = value.charCodeAt(clamped - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && clamped >= 2) {
+    const high = value.charCodeAt(clamped - 2);
+    if (high >= 0xd800 && high <= 0xdbff) {
+      return clamped - 2;
+    }
+  }
+  return clamped - 1;
+}
+
+/**
+ * 對標 grok-build `next_atomic_boundary`: 按完整字素簇 / Code Point 向右前進一個原子字符邊界。
+ */
+export function nextAtomicBoundary(value: string, index: number): number {
+  const clamped = Math.max(0, Math.min(index, value.length));
+  if (clamped >= value.length) return value.length;
+  if (graphemeSegmenter) {
+    for (const seg of graphemeSegmenter.segment(value)) {
+      const segEnd = seg.index + seg.segment.length;
+      if (segEnd > clamped) {
+        return segEnd;
+      }
+    }
+    return value.length;
+  }
+  const code = value.codePointAt(clamped);
+  return Math.min(value.length, clamped + (code !== undefined && code > 0xffff ? 2 : 1));
+}
+
 export class InputBuffer {
   value = "";
   cursorPos = 0;
@@ -21,11 +84,13 @@ export class InputBuffer {
   }
 
   insertChar(ch: string): void {
+    const filtered = Array.from(ch).filter(isInsertableInputChar).join("");
+    if (!filtered) return;
     // 钳制：防止异常 cursorPos 导致插入到「字中间」且显示偏移
     if (this.cursorPos < 0) this.cursorPos = 0;
     if (this.cursorPos > this.value.length) this.cursorPos = this.value.length;
-    this.value = this.value.slice(0, this.cursorPos) + ch + this.value.slice(this.cursorPos);
-    this.cursorPos += ch.length;
+    this.value = this.value.slice(0, this.cursorPos) + filtered + this.value.slice(this.cursorPos);
+    this.cursorPos += filtered.length;
     if (this.cursorPos > this.value.length) this.cursorPos = this.value.length;
   }
 
@@ -35,19 +100,20 @@ export class InputBuffer {
 
   backspace(): void {
     if (this.cursorPos <= 0) return;
-    this.value = this.value.slice(0, this.cursorPos - 1) + this.value.slice(this.cursorPos);
-    this.cursorPos--;
+    const target = prevAtomicBoundary(this.value, this.cursorPos);
+    this.value = this.value.slice(0, target) + this.value.slice(this.cursorPos);
+    this.cursorPos = target;
   }
 
   moveLeft(): void {
     if (this.cursorPos > 0) {
-      this.cursorPos--;
+      this.cursorPos = prevAtomicBoundary(this.value, this.cursorPos);
     }
   }
 
   moveRight(): void {
     if (this.cursorPos < this.value.length) {
-      this.cursorPos++;
+      this.cursorPos = nextAtomicBoundary(this.value, this.cursorPos);
     }
   }
 
@@ -118,7 +184,8 @@ export class InputBuffer {
 
   deleteAfterCursorChar(): void {
     if (this.cursorPos >= this.value.length) return;
-    this.value = this.value.slice(0, this.cursorPos) + this.value.slice(this.cursorPos + 1);
+    const target = nextAtomicBoundary(this.value, this.cursorPos);
+    this.value = this.value.slice(0, this.cursorPos) + this.value.slice(target);
   }
 
   deleteWordBeforeCursor(): void {

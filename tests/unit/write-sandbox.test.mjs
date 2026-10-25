@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 // 跨平台路径：禁止硬编码 C:\\... Windows 路径
 
 import {
@@ -11,7 +12,7 @@ import {
   resolveWriteSandboxMode,
   getRuntimeRootsFromEnv,
 } from "../../dist/runtime-paths.js";
-import { runWrite } from "../../dist/tools/write.js";
+import { isRootDiagnosticArtifact, runWrite } from "../../dist/tools/write.js";
 import { runPatch } from "../../dist/tools/patch.js";
 import {
   resolveNetworkGuardMode,
@@ -102,6 +103,59 @@ test("write: allows normal file in workspace", async () => {
     assert.equal(result.is_error, undefined);
     const text = await readFile(join(dir, "ok.txt"), "utf8");
     assert.equal(text, "hello\n");
+  });
+});
+
+test("write: isolates root diagnostic scripts outside the deliverable workspace", async () => {
+  assert.equal(isRootDiagnosticArtifact("_tmp_regex_check.py", "import re\nprint(re.compile('x'))\n"), true);
+  assert.equal(isRootDiagnosticArtifact("env_check.py", "import sys\nprint(sys.version)\n"), true);
+  assert.equal(isRootDiagnosticArtifact("versions.py", "import sys\nprint(sys.version)\n"), true);
+  assert.equal(isRootDiagnosticArtifact("check_env.py", "VALUE = 1\n"), false);
+  await withTempWorkspace(async (root) => {
+    assert.equal(isRootDiagnosticArtifact("././_tmp_regex_check.py", "", root), true);
+    assert.equal(isRootDiagnosticArtifact(join(root, "_tmp_regex_check.py"), "", root), true);
+    assert.equal(isRootDiagnosticArtifact("sub/../_tmp_regex_check.py", "", root), true);
+    const result = await runWrite({ path: "workspace_dir/_tmp_regex_check.py", content: "print('probe')\n" });
+    assert.equal(result.is_error, undefined);
+    assert.match(result.output, /Qling state/);
+    await assert.rejects(readFile(join(root, "_tmp_regex_check.py")), /ENOENT/);
+    assert.equal(await readFile(join(root, ".state", "diagnostics", "_tmp_regex_check.py"), "utf8"), "print('probe')\n");
+    const envResult = await runWrite({ path: "env_check.py", content: "import sys\nprint(sys.version)\n" });
+    assert.equal(envResult.is_error, undefined);
+    await assert.rejects(readFile(join(root, "env_check.py")), /ENOENT/);
+    assert.equal(await readFile(join(root, ".state", "diagnostics", "env_check.py"), "utf8"), "import sys\nprint(sys.version)\n");
+    const arbitraryResult = await runWrite({ path: "versions.py", content: "import sys\nprint(sys.version)\n" });
+    assert.equal(arbitraryResult.is_error, undefined);
+    await assert.rejects(readFile(join(root, "versions.py")), /ENOENT/);
+    assert.equal(await readFile(join(root, ".state", "diagnostics", "versions.py"), "utf8"), "import sys\nprint(sys.version)\n");
+  });
+});
+
+test("write: preserves a tracked root file whose name resembles a diagnostic", async () => {
+  await withTempWorkspace(async (root) => {
+    await writeFile(join(root, "check_env.py"), "VALUE = 1\n");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "eval@example.invalid"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Qling Eval"], { cwd: root });
+    execFileSync("git", ["add", "check_env.py"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+    const result = await runWrite({ path: "check_env.py", content: "VALUE = 2\n" });
+    assert.equal(result.is_error, undefined);
+    assert.equal(result.meta?.diagnosticArtifact, undefined);
+    assert.equal(await readFile(join(root, "check_env.py"), "utf8"), "VALUE = 2\n");
+  });
+});
+
+test("write: isolates a root fix executor by content but keeps a normal fix module", async () => {
+  assert.equal(isRootDiagnosticArtifact("fix_qdp_case.py", "open('astropy/io/ascii/qdp.py', 'w').write(s.replace(old, new))"), true);
+  assert.equal(isRootDiagnosticArtifact("fix_parser.py", "def fix_parser(value):\n    return value.strip()\n"), false);
+  await withTempWorkspace(async (root) => {
+    const result = await runWrite({
+      path: "fix_qdp_case.py",
+      content: "open('astropy/io/ascii/qdp.py', 'w').write(s.replace(old, new))\n",
+    });
+    assert.equal(result.meta?.diagnosticArtifact, true);
+    await assert.rejects(readFile(join(root, "fix_qdp_case.py")), /ENOENT/);
   });
 });
 

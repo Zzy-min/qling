@@ -159,3 +159,50 @@ test("markdown table rendering strips inline markers and draws row grid separato
   assert.ok(plain.filter((line) => line.startsWith("├")).length >= 3);
   assert.equal(new Set(widths).size, 1, `table widths drifted: ${widths.join(", ")}`);
 });
+
+test("markdown codeblock borders never overflow width or leave trailing truncated brackets", () => {
+  for (const width of [40, 80, 114]) {
+    const rendered = formatMarkdownForTerminal(
+      [
+        "```",
+        "build.py             构建（预处理 + 渲染）",
+        "verify.py            结构核验",
+        "```",
+        "",
+        "```typescript",
+        "const ok = true;",
+        "```",
+      ].join("\n"),
+      { width }
+    );
+    const plainLines = rendered.map(stripAnsi).filter(Boolean);
+    const borderLines = plainLines.filter((line) => line.startsWith("  ┌") || line.startsWith("  └"));
+    assert.equal(borderLines.length, 4);
+    for (const line of plainLines) {
+      assert.ok(
+        stringWidth(line) <= width,
+        `line width ${stringWidth(line)} exceeded ${width}: ${line}`
+      );
+      assert.doesNotMatch(line, /\[\.\.\.|\[…/);
+    }
+    // Top and bottom borders of each codeblock have identical visual width (width - 1)
+    for (const border of borderLines) {
+      assert.equal(stringWidth(border), width - 1);
+    }
+    assert.match(borderLines[2], /^  ┌─ typescript ─+$/);
+  }
+});
+
+test("markdown inline bold and code spans across soft line wraps never leak raw asterisks or backticks", () => {
+  const input =
+    "本周 A 股是“周线收阴、周五反包”的分化周：上证全周 -0.69%，但周五单日 +0.89% 收复大半失地，成交额放大到 1.96 万亿；**大盘权重和成长龙头表现偏弱，中小盘指数反而收红**（中证1000 +0.79%、中证500 +0.62%，而沪深300 -1.57%、创业板指 -3.18%）。";
+  const rendered = formatMarkdownForTerminal(input, { width: 116 });
+  const plainLines = rendered.map(stripAnsi);
+  assert.ok(plainLines.length >= 2);
+  for (const line of plainLines) {
+    assert.ok(stringWidth(line) <= 116, `line exceeded width 116: ${line}`);
+    assert.doesNotMatch(line, /\*\*/);
+  }
+  assert.match(rendered[0], /\x1b\[1m大\x1b\[0m$/);
+  assert.match(rendered[1], /^\x1b\[1m盘权重和成长龙头表现偏弱，中小盘指数反而收红\x1b\[0m/);
+});

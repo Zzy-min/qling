@@ -1,6 +1,7 @@
 import * as os from "os";
 import * as path from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { lstatSync, realpathSync } from "node:fs";
 
 export interface RuntimeRoots {
   workspaceDir: string | null;
@@ -151,7 +152,8 @@ export function checkSensitiveWriteTarget(
       reason: "refusing to write git credentials store.",
     };
   }
-  return null;
+  const physical = resolvePhysicalPath(absPath);
+  return physical && physical !== path.resolve(absPath) ? checkSensitiveWriteTarget(physical, env) : null;
 }
 
 export function resolveToolPath(
@@ -200,5 +202,30 @@ function pickDefaultRoot(kind: DefaultRootKind, roots: RuntimeRoots): string {
 
 function isSubPath(target: string, base: string): boolean {
   const rel = path.relative(base, target);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  if (rel !== "" && (rel.startsWith("..") || path.isAbsolute(rel))) return false;
+  const physicalTarget = resolvePhysicalPath(target);
+  const physicalBase = resolvePhysicalPath(base);
+  if (!physicalTarget || !physicalBase) return false;
+  const physicalRelative = path.relative(physicalBase, physicalTarget);
+  return physicalRelative === "" || (!physicalRelative.startsWith("..") && !path.isAbsolute(physicalRelative));
+}
+
+/** Resolve the nearest existing ancestor too, so a new file cannot escape via a junction. */
+function resolvePhysicalPath(input: string): string | null {
+  let current = path.resolve(input);
+  const tail: string[] = [];
+  while (true) {
+    try {
+      lstatSync(current); // A dangling link must fail closed rather than be treated as a new directory.
+      return path.resolve(realpathSync(current), ...tail.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") return null;
+      try { if (lstatSync(current).isSymbolicLink()) return null; } catch { /* missing ancestor */ }
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      tail.push(path.basename(current));
+      current = parent;
+    }
+  }
 }

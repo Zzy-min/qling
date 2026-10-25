@@ -1,6 +1,7 @@
 import { writeFile, mkdir } from "fs/promises";
-import { dirname, resolve } from "path";
+import { basename, dirname, resolve } from "path";
 import { ToolDefinition, ToolResult } from "../types.js";
+import { isRootDiagnosticArtifact, isUntrackedRootDiagnosticArtifact } from "../diagnostic-artifact.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import {
   checkSensitiveWriteTarget,
@@ -14,6 +15,8 @@ import {
 } from "../runtime/sandbox-profile.js";
 
 const MAX_WRITE_BYTES = 256 * 1024; // 256KB
+
+export { isRootDiagnosticArtifact } from "../diagnostic-artifact.js";
 
 export const writeTool: ToolDefinition = {
   name: "write",
@@ -127,7 +130,11 @@ export async function runWrite(args: {
 
   const roots = getRuntimeRootsFromEnv();
   if (args.__qling_workspace_dir) roots.workspaceDir = resolve(args.__qling_workspace_dir);
-  const resolvedPath = resolveToolPath(inputPath, roots, "workspace");
+  const workspaceResolvedPath = resolveToolPath(inputPath, roots, "workspace");
+  const diagnosticArtifact = await isUntrackedRootDiagnosticArtifact(workspaceResolvedPath, content, roots.workspaceDir ?? process.cwd());
+  const resolvedPath = diagnosticArtifact
+    ? resolve(roots.fileStateDir, "diagnostics", basename(workspaceResolvedPath).replace(/[^A-Za-z0-9._-]/g, "_"))
+    : workspaceResolvedPath;
   const profile = resolveSandboxProfile();
   if (isWriteBlockedByProfile(profile)) {
     return toolError(
@@ -136,7 +143,7 @@ export async function runWrite(args: {
       { category: "permission" }
     );
   }
-  if (!isPathAllowedUnderProfile(resolvedPath, profile, roots)) {
+  if (!diagnosticArtifact && !isPathAllowedUnderProfile(resolvedPath, profile, roots)) {
     return toolError(
       "WRITE_OUTSIDE_ALLOWED_ROOT",
       `${resolvedPath} is outside sandbox profile "${profile}" (use /sandbox roots|off to relax)`
@@ -156,7 +163,12 @@ export async function runWrite(args: {
   try {
     await mkdir(dirname(resolvedPath), { recursive: true });
     await writeFile(resolvedPath, content, "utf-8");
-    return toolSuccess(`✅ 文件已写入: ${resolvedPath}`);
+    const success = toolSuccess(diagnosticArtifact
+      ? `✅ 诊断文件已隔离写入 Qling state: ${resolvedPath}\n该文件不属于工作区交付成果；请用绝对路径运行并在正式验证后结束。`
+      : `✅ 文件已写入: ${resolvedPath}`);
+    return diagnosticArtifact
+      ? { ...success, meta: { diagnosticArtifact: true, diagnosticPath: resolvedPath } }
+      : success;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === "EACCES" || code === "EPERM") {

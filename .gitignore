@@ -12,6 +12,9 @@ dist/
 /runs/
 /run-checkpoints/
 /artifacts/
+/logs/
+*grader*.json
+*trajectory*.jsonl
 
 # Temp / debug files
 *.ps1

@@ -23,7 +23,7 @@ GitHub Release、WinGet、npm 与 Scoop 是独立发布面，不应假定它们�
 
 | 依赖 | 版本 |
 |---|---|
-| Node.js | ≥ 18（推荐 20/22 LTS） |
+| Node.js | ≥ 22（与 CI 和当前原生依赖一致） |
 | npm | ≥ 9 |
 | Git | 源码安装、diff/commit 与隔离工作流需要 |
 | Playwright Chromium | 可选，仅浏览器工具需要 |
@@ -190,6 +190,8 @@ qling setup
 ```powershell
 [Environment]::SetEnvironmentVariable('QLING_LLM_API_KEY', '<your-key>', 'User')
 ```
+
+优先级是默认 < 配置文件 < `QLING_LLM_*` < CLI 参数 < 当前进程的 `/model` 切换。`QLING_LLM_API_KEY` 只绑定启动 provider。切换到其他供应商时使用对应变量（`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`ZHIPU_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`SILICONFLOW_API_KEY`、`DEEPSEEK_API_KEY`），不会把上一把 key 发给新主机。
 
 新开终端后验证：
 

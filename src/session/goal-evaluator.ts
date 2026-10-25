@@ -1,3 +1,6 @@
+import { getProviderPreset } from "../providers/presets.js";
+import { resolveActiveLlm, resolveProviderApiKey } from "../providers/resolve-llm.js";
+
 type GoalFetch = typeof fetch;
 
 export type GoalEvaluatorError = "network" | "timeout" | "no_key" | "unparseable";
@@ -50,15 +53,26 @@ export class GoalEvaluator {
   private readonly fetchImpl: GoalFetch;
 
   constructor(options: GoalEvaluatorOptions = {}) {
-    this.provider = options.provider ?? process.env.QLING_GOAL_EVALUATOR_PROVIDER ?? process.env.QLING_LLM_PROVIDER ?? "deepseek";
+    const active = resolveActiveLlm(process.env);
+    this.provider = options.provider ?? process.env.QLING_GOAL_EVALUATOR_PROVIDER ?? active.provider;
+    const sameProvider = this.provider === active.provider;
     const endpoint =
       options.endpoint ??
       process.env.QLING_GOAL_EVALUATOR_ENDPOINT ??
-      process.env.QLING_LLM_ENDPOINT ??
-      (this.provider === "openai" ? "https://api.openai.com/v1" : "https://api.deepseek.com");
+      (sameProvider ? active.endpoint : getProviderPreset(this.provider)?.endpoint || active.endpoint);
     this.endpoint = resolveChatEndpoint(endpoint);
-    this.apiKey = options.apiKey ?? process.env.QLING_GOAL_EVALUATOR_API_KEY ?? process.env.QLING_LLM_API_KEY ?? "";
-    this.model = options.model ?? process.env.QLING_GOAL_EVALUATOR_MODEL ?? process.env.QLING_LLM_MODEL ?? "deepseek-chat";
+    this.apiKey =
+      options.apiKey ??
+      process.env.QLING_GOAL_EVALUATOR_API_KEY ??
+      (sameProvider
+        ? active.apiKey
+        : resolveProviderApiKey(this.provider, process.env, {
+            startupProvider: process.env.QLING_LLM_STARTUP_PROVIDER || active.provider,
+          }).apiKey);
+    this.model =
+      options.model ??
+      process.env.QLING_GOAL_EVALUATOR_MODEL ??
+      (sameProvider ? active.model : getProviderPreset(this.provider)?.model || active.model);
     this.timeoutMs = options.timeoutMs ?? Number(process.env.QLING_GOAL_EVALUATOR_TIMEOUT_MS ?? "30000");
     this.fetchImpl = options.fetchImpl ?? fetch;
   }

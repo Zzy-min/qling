@@ -87,6 +87,25 @@ test("config supports ${ENV_VAR} template expansion with warnings", async () => 
   });
 });
 
+const LLM_ENV_KEYS = [
+  "QLING_LLM_PROVIDER",
+  "QLING_LLM_ENDPOINT",
+  "QLING_LLM_MODEL",
+  "QLING_LLM_API_KEY",
+  "QLING_LLM_STARTUP_PROVIDER",
+  "DEEPSEEK_API_KEY",
+  "OPENAI_API_KEY",
+  "MOONSHOT_API_KEY",
+  "OPENAI_BASE_URL",
+  "DEEPSEEK_BASE_URL",
+];
+
+function clearedLlmEnv(extra = {}) {
+  const patch = {};
+  for (const key of LLM_ENV_KEYS) patch[key] = undefined;
+  return { ...patch, ...extra };
+}
+
 test("config cli noWorkspace overrides workspace root", async () => {
   const loaded = await loadQlingConfig({ noWorkspace: true });
   assert.equal(loaded.config.runtime.workspace_dir, null);
@@ -243,4 +262,70 @@ test("config loads optional OTEL settings from QLING environment", async () => {
     timeout_ms: 4500,
     batch_delay_ms: 400,
   });
+});
+
+test("provider-only CLI fills preset endpoint and model", async () => {
+  await withEnv(clearedLlmEnv(), async () => {
+    const loaded = await loadQlingConfig({ provider: "openai" });
+    assert.equal(loaded.config.llm.provider, "openai");
+    assert.equal(loaded.config.llm.endpoint, "https://api.openai.com/v1");
+    assert.equal(loaded.config.llm.model, "gpt-6-astra");
+    assert.equal(loaded.llmSources.provider, "cli");
+    assert.equal(loaded.llmSources.endpoint, "preset");
+    assert.equal(loaded.llmSources.model, "preset");
+  });
+});
+
+test("explicit provider/endpoint host conflict warns and keeps the endpoint", async () => {
+  await withEnv(clearedLlmEnv(), async () => {
+    const loaded = await loadQlingConfig({
+      provider: "openai",
+      endpoint: "https://api.deepseek.com",
+    });
+    assert.equal(loaded.config.llm.endpoint, "https://api.deepseek.com");
+    assert.match(loaded.warnings.join("\n"), /不一致/);
+    assert.equal(loaded.llmSources.provider, "cli");
+    assert.equal(loaded.llmSources.endpoint, "cli");
+  });
+});
+
+test("llm field sources record default file env and cli independently", async () => {
+  await withTempDir(async (dir) => {
+    const configPath = join(dir, "qling.config.json");
+    await writeFile(configPath, JSON.stringify({ llm: { model: "from-file" } }), "utf8");
+    await withEnv(clearedLlmEnv({ QLING_LLM_ENDPOINT: "https://example.test/v1" }), async () => {
+      const loaded = await loadQlingConfig({ configPath, provider: "openai" });
+      assert.equal(loaded.llmSources.provider, "cli");
+      assert.equal(loaded.llmSources.model, "file");
+      assert.equal(loaded.llmSources.endpoint, "env");
+      assert.equal(loaded.config.llm.model, "from-file");
+      assert.equal(loaded.config.llm.endpoint, "https://example.test/v1");
+    });
+  });
+});
+
+test("api keys are not borrowed across providers", async () => {
+  await withEnv(clearedLlmEnv({ OPENAI_API_KEY: "sk-openai-only" }), async () => {
+    const loaded = await loadQlingConfig({});
+    assert.equal(loaded.config.llm.provider, "deepseek");
+    assert.equal(loaded.config.llm.api_key, "");
+    assert.equal(loaded.llmSources.apiKey, "default");
+  });
+  await withEnv(clearedLlmEnv({ DEEPSEEK_API_KEY: "sk-deepseek-only" }), async () => {
+    const loaded = await loadQlingConfig({});
+    assert.equal(loaded.config.llm.api_key, "sk-deepseek-only");
+    assert.equal(loaded.llmSources.apiKey, "env");
+  });
+  await withEnv(
+    clearedLlmEnv({
+      OPENAI_API_KEY: "sk-openai-only",
+      MOONSHOT_API_KEY: "sk-moon-only",
+    }),
+    async () => {
+      const loaded = await loadQlingConfig({ provider: "moonshot" });
+      assert.equal(loaded.config.llm.api_key, "sk-moon-only");
+      assert.equal(loaded.config.llm.model, "kimi-k3");
+      assert.notEqual(loaded.config.llm.api_key, "sk-openai-only");
+    }
+  );
 });

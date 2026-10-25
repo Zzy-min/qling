@@ -177,7 +177,7 @@ export class ContextCompactor {
 
   constructor(
     maxTokens = 6000,
-    model = "deepseek-chat",
+    model = "deepseek-flash",
     options: {
       summarizer?: ContextSummaryCallback;
       minSummaryChars?: number;

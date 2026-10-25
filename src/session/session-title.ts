@@ -25,6 +25,64 @@ export function isToolOnlyAssistantText(text: string): boolean {
   return /^(\[tool\]\s*[\w.-]+\s*,?\s*)+$/i.test(t);
 }
 
+/** 运行时注入块。即使旧会话丢掉了 synthetic_reason，也不当作用户原话回放。 */
+const INTERNAL_CONTEXT_BLOCK =
+  /^<(?:user_info|dynamic_context|project_preflight|mandatory_rules_ref|efficiency_recovery|run_side_effects|verification_audit|state_snapshot)\b/;
+
+export type ReplayTranscriptItem =
+  | { role: "user"; text: string }
+  | { role: "thinking"; text: string }
+  | { role: "result"; text: string };
+
+export function replayMessageText(message: {
+  content?: unknown;
+  tool_calls?: Array<{ function?: { name?: string } }>;
+}): string {
+  if (typeof message.content === "string" && message.content.trim()) {
+    return message.content;
+  }
+  if (message.content != null && typeof message.content !== "string") {
+    try {
+      return JSON.stringify(message.content);
+    } catch {
+      return String(message.content);
+    }
+  }
+  const tools = message.tool_calls;
+  if (Array.isArray(tools) && tools.length > 0) {
+    return tools
+      .map((tc) => `[tool] ${tc?.function?.name || "call"}`)
+      .join(", ");
+  }
+  return "";
+}
+
+/**
+ * /resume 可见回放：只要真实用户话、折叠后的工具前思考、以及无工具调用的最终回答。
+ * 工作环境、动态上下文、reasoning_content 和工具结果都不进入画面。
+ */
+export function classifyReplayMessage(message: {
+  role?: string;
+  content?: unknown;
+  tool_calls?: Array<{ function?: { name?: string } }>;
+  synthetic_reason?: string;
+} | null | undefined): ReplayTranscriptItem | null {
+  if (!message || message.synthetic_reason) return null;
+  const role = String(message.role || "");
+  if (role !== "user" && role !== "assistant") return null;
+  const text = replayMessageText(message);
+  if (!text.trim()) return null;
+  if (role === "user") {
+    if (isInternalUserNoise(text) || INTERNAL_CONTEXT_BLOCK.test(text.trim())) return null;
+    return { role: "user", text };
+  }
+  if (isToolOnlyAssistantText(text)) return null;
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    return { role: "thinking", text };
+  }
+  return { role: "result", text };
+}
+
 /**
  * 从消息列表推导会话展示名：第一条非噪声 user 文本。
  * 找不到则返回空串（调用方回退到 sessionId/name）。

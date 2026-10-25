@@ -4,6 +4,35 @@ import http from "node:http";
 
 import { LlmHttpClient, ProviderHttpError } from "../../dist/providers/llm-client.js";
 
+for (const stream of [false, true]) {
+  test(`DeepSeek reasoning survives a tool round trip (stream=${stream})`, async () => {
+    const requests = [];
+    const fake = await startFakeServer((req, res) => {
+      let body = "";
+      req.on("data", c => body += c);
+      req.on("end", () => {
+        requests.push(JSON.parse(body));
+        const message = { content: "", reasoning_content: "inspect then read", tool_calls: [{ id: "r1", type: "function", function: { name: "read", arguments: "{}" } }] };
+        if (stream) {
+          res.writeHead(200, { "Content-Type": "text/event-stream" });
+          res.end(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "inspect " } }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: { ...message, reasoning_content: "then read", tool_calls: message.tool_calls.map(c => ({ ...c, index: 0 })) }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`);
+        } else {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ choices: [{ message }] }));
+        }
+      });
+    });
+    try {
+      const client = new LlmHttpClient({ endpoint: fake.base, apiKey: "test", timeoutMs: 5000, provider: "deepseek" });
+      const input = { model: "deepseek-flash", systemPrompt: "sys", messages: [{ role: "user", content: "read" }], tools: [{ name: "read", description: "read", parameters: { type: "object", properties: {} } }], stream };
+      const first = await client.chatCompletions(input);
+      assert.equal(first.reasoning_content, "inspect then read");
+      await client.chatCompletions({ ...input, messages: [...input.messages, { role: "assistant", content: first.content, tool_calls: first.tool_calls, reasoning_content: first.reasoning_content }, { role: "tool", tool_call_id: "r1", content: "ok" }] });
+      assert.equal(requests[1].messages[2].reasoning_content, "inspect then read");
+    } finally { await fake.close(); }
+  });
+}
+
 function startFakeServer(handler) {
   const server = http.createServer(handler);
   return new Promise((resolve) => {
@@ -273,6 +302,63 @@ test("LlmHttpClient does not retry a generic 400 as a stream capability fallback
       stream: true,
     }), (error) => error instanceof ProviderHttpError && error.status === 400);
     assert.equal(requests, 1);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("provider errors include model and host, explain 401 and 404, and omit the key", async () => {
+  const fake = await startFakeServer((req, res) => {
+    const status = String(req.url || "").includes("missing-model") ? 404 : 401;
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "Bearer sk-secret-value" } }));
+  });
+  try {
+    const client = new LlmHttpClient({
+      endpoint: fake.base + "/v1",
+      apiKey: "sk-secret-value",
+      timeoutMs: 5000,
+      provider: "openai",
+    });
+    await assert.rejects(
+      client.chatCompletions({
+        model: "gpt-4o",
+        systemPrompt: "sys",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [],
+      }),
+      (error) => {
+        assert.ok(error instanceof ProviderHttpError);
+        assert.equal(error.status, 401);
+        assert.match(error.message, /model=gpt-4o/);
+        assert.match(error.message, /endpoint=127\.0\.0\.1:/);
+        assert.match(error.message, /key 无效或不属于 openai/);
+        assert.doesNotMatch(error.message, /sk-secret-value/);
+        return true;
+      }
+    );
+    const missing = new LlmHttpClient({
+      endpoint: fake.base + "/v1/missing-model",
+      apiKey: "sk-secret-value",
+      timeoutMs: 5000,
+      provider: "openai",
+    });
+    await assert.rejects(
+      missing.chatCompletions({
+        model: "no-such-model",
+        systemPrompt: "sys",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [],
+      }),
+      (error) => {
+        assert.ok(error instanceof ProviderHttpError);
+        assert.equal(error.status, 404);
+        assert.match(error.message, /model=no-such-model/);
+        assert.match(error.message, /\/model list --remote/);
+        assert.doesNotMatch(error.message, /sk-secret-value/);
+        return true;
+      }
+    );
   } finally {
     await fake.close();
   }

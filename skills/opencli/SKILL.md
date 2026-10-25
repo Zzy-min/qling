@@ -1,26 +1,29 @@
 ---
 name: opencli
 description: >
-  正确调用本机 opencli 获取网页/社交平台数据。触发：opencli、抖音、douyin、小红书、
-  微博、B站、bilibili、TikTok、推特/twitter/X、知乎、豆瓣、boss、登录抓取、反爬、
-  _$jsvmprt、acrawler、挑战页、评论点赞播放量。此时必须加载本 skill 并用 bash 执行
-  opencli，禁止 url_fetch 强反爬站，禁止用 opencli tiktok 操作抖音。
-tags: [opencli, web, social, douyin, xiaohongshu, weibo, bilibili, tiktok, twitter]
+  可选的本机 opencli 手册。仅当用户明确要求使用 opencli 时加载。
+  网页搜索、打开链接和浏览器控制默认走 url_fetch、browser_fetch、browser_act，
+  不要因为抖音、小红书、微博、B站、TikTok 或普通网页自动改用 opencli。
+tags: [opencli]
 ---
 
 # opencli 调用手册（轻灵 Agent）
 
 本机 CLI：`opencli`（Universal CLI Hub）。通过 **bash 工具**执行，输出优先 **`-f json`**。
 
-## 0. 硬规则（先读）
+## 0. 启用条件
 
-1. **强反爬 / 需登录的平台数据 → 只用 opencli 站点命令**，不要用 `url_fetch` / 裸 `curl`。
+用户没有明确说出 opencli 时，不要加载或调用本技能。网页搜索用 `deepseek_search`，单页正文用 `deepseek_fetch`；没有 DeepSeek 密钥时再用 `url_fetch` / `browser_fetch`。点击、填表和登录态操作用 `browser_act`（`QLING_BROWSER_ACT=1`）。下面的命令只在用户点名 opencli 之后使用。
+
+## 0b. 硬规则（用户已要求 opencli 时）
+
+1. **用户已明确要求 opencli 后**，强反爬平台用对应站点命令，不要再改回 `url_fetch` / 裸 `curl` 硬抓。
 2. **抖音 ≠ TikTok**
    - `douyin.com` / 国内抖音 → `opencli douyin …`
    - `tiktok.com` 国际版 → `opencli tiktok …`
 3. 不确定有没有命令时：**先发现再调用**（见 §1），禁止臆造子命令。
 4. 返回 HTML 含 `_$jsvmprt` / `acrawler` / `window.location.reload` → 这是**反爬挑战页**，不是业务数据；应改用对应 `opencli <site>` 适配器，并检查登录。
-5. 轻灵 `browser_fetch` 适合文档站，**不保证**能过抖音风控；平台数据优先 opencli。
+5. 未点名 opencli 时，文档页和普通网页走 `browser_fetch` / `url_fetch`，浏览器控制走 `browser_act`。
 
 ## 1. 发现命令（必做习惯）
 
@@ -196,27 +199,23 @@ opencli browser mysess eval "document.title"
 
 | 工具 | 默认 | 用途 |
 |------|------|------|
-| **opencli**（via bash） | 本机 CLI | 平台结构化数据、登录会话、站点适配器 |
-| **url_fetch** | 开 | 白名单内简单 HTTP API / 静态资源 |
-| **browser_fetch** | 开 | 文档站等需 JS 渲染、弱反爬页面摘要 |
-| **browser_act** | **关** | 有限点击/填表（`QLING_BROWSER_ACT=1`）；强反爬仍用 opencli |
-| **skill opencli** | — | 本手册（调用平台前加载） |
+| **url_fetch** | 开 | 搜索结果、HTTP API、静态页 |
+| **browser_fetch** | 开 | 需 JS 渲染的只读页面摘要 |
+| **browser_act** | **关** | 点击/填表（`QLING_BROWSER_ACT=1`），默认浏览器控制 |
+| **opencli**（via bash） | 不默认 | 仅用户明确要求时的站点适配器 |
+| **skill opencli** | — | 本手册。用户没点名就不要加载 |
 
 完整路由：包内 `docs/web-routing.md`。
 
 ## 9. 最短决策树
 
 ```
-需要网页/平台数据？
-├─ 是社交/内容平台（抖/红/微/B/推/TikTok…）
-│   → skill name="opencli"
-│   → opencli list / <site> --help
-│   → whoami/login → 业务命令 -f json
-├─ 是普通文档/API（无强反爬）
-│   → url_fetch 或 browser_fetch
-├─ 需要本机已登录浏览器交互
-│   → opencli browser <session> …（推荐）
-│   → 或 browser_act（须 QLING_BROWSER_ACT=1，同进程 session 跨步保活）
-└─ 不确定
-    → opencli doctor / list，不要盲目 url_fetch
+需要网页或浏览器操作？
+├─ 用户没有明确说 opencli
+│   → 搜索 / 只读：url_fetch 或 browser_fetch
+│   → 点击 / 填表：browser_act（QLING_BROWSER_ACT=1，同进程 session 跨步保活）
+└─ 用户明确要求 opencli
+    → 加载本 skill
+    → opencli list / <site> --help
+    → whoami/login → 业务命令 -f json
 ```

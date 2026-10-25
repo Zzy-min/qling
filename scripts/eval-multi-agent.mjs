@@ -8,4 +8,4 @@ assert.throws(() => coordinator.register(spec("writer-b", ["src/runtime/types.ts
 coordinator.complete("writer-a");
 coordinator.register(spec("writer-b", ["src/runtime/types.ts"]));
 assert.equal(coordinator.list().length, 2);
-console.log(JSON.stringify({ eval: "multi-agent", passed: 2, conflicts: 1 }));
+console.log(JSON.stringify({ eval: "multi-agent", passed: 2, evidence: { executor: "component", model: "none", verifier: "assertion", claim: "Validates coordinator ownership conflict handling.", limitations: ["Does not run parallel Agents, worktree integration, or merge verification."] }, conflicts: 1 }));

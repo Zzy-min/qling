@@ -8,6 +8,7 @@ export const DASHBOARD_HTML = `<!doctype html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%234ade80'/%3E%3C/svg%3E">
   <title>轻灵 · 任务工作台 / Mission Control</title>
   <link rel="stylesheet" href="/assets/dashboard.css">
 </head>

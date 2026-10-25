@@ -6,7 +6,7 @@ description: 轻灵 Agent 自身使用指南
 # 轻灵 Agent 使用指南
 
 ## 任务执行三条基本规则
-1. **外部工具先关联分析**：调用 opencli/bash/url_fetch 等前，先判断工具与任务是否匹配、如何调用、期望输出是什么。
+1. **外部工具先关联分析**：调用 bash/url_fetch/browser_fetch/browser_act 等前，先判断工具与任务是否匹配、如何调用、期望输出是什么。opencli 不是默认路径。
 2. **成功后总结正确流程**：写清可复现步骤与关键命令，便于用户复用。
 3. **失败实事求是**：单流程失败或结果不准时明确承认，附错误证据，不编造成功。
 
@@ -19,21 +19,22 @@ node dist/index.js repl             # 简易 REPL
 ```
 
 ## 工具列表
-- **bash**: 执行 Shell 命令（支持 timeout、cwd 参数）；调用本机 **opencli** 也走 bash
+- **bash**: 执行 Shell 命令（支持 timeout、cwd 参数）。只有用户明确要求时才用它调用 opencli
 - **read**: 读取文件（path, offset, limit）
 - **write**: 写入文件（path, content）— 注意：覆盖写入，非追加
 - **search**: 搜索文件内容或文件名（pattern, file_glob, context, limit）
 - **planner**: 生成任务执行计划（goal）
-- **skill**: 动态加载知识文件；平台数据前先 `skill name="opencli"`
+- **skill**: 动态加载知识文件。用户没点名 opencli 时不要加载它
 - **todo**: 任务管理（action: list/add/done/cancel/remove/clear）
-- **url_fetch**: 受 Guard 约束的结构化网络请求；**不要**用来抓抖音等强反爬站
-- **browser_fetch**: JS 渲染文档页；不保证过抖音风控
+- **deepseek_search**: 默认网页搜索，调用 DeepSeek `/v1/tools/search`
+- **deepseek_fetch**: 用 DeepSeek `/v1/tools/fetch` 把单个网页转成 Markdown
+- **url_fetch**: HTTP API、静态资源，以及没有 DeepSeek 密钥时的兜底
+- **browser_fetch**: 需要本机浏览器渲染的只读页
 - **subtask**: 隔离子任务执行（独立上下文，共享记忆，深度=1）
 
-## opencli（本机 CLI Hub）
-- 先 `skill name="opencli"` 读手册，再 `bash` 执行命令
-- 抖音：`opencli douyin … -f json`（禁止 `opencli tiktok` 操作抖音）
-- 发现：`opencli list -f json` / `opencli <site> --help` / `opencli doctor`
+## opencli（可选，不默认）
+- 只有用户明确要求使用 opencli 时，才 `skill name="opencli"`，再 `bash` 执行
+- 网页搜索和浏览器控制不要改走这里
 
 ## CLI 模式
 - `run <task>` — 一次性执行任务后退出

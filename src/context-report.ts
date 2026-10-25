@@ -11,6 +11,7 @@ import {
   estimateContextLayers,
   type ContextLayerEstimate,
 } from "./context-tool-hygiene.js";
+import { resolveAutoCompactConfig } from "./session/compact-auto.js";
 
 export interface ContextReport {
   sessionId: string;
@@ -31,6 +32,7 @@ export interface ContextReport {
   sessionsDir: string;
   savedSessionCount: number;
   latestSavedSessionAt: string | null;
+  compactionBudgetSource: "window" | "model" | "legacy";
 }
 
 export interface ContextReportOptions {
@@ -150,6 +152,10 @@ export async function buildContextReport(
     sessionsDir: join(stateDir, "sessions"),
     savedSessionCount: savedSessions.length,
     latestSavedSessionAt: savedSessions[0]?.updatedAt ?? null,
+    compactionBudgetSource: resolveAutoCompactConfig(
+      env,
+      typeof agentLoop.getModel === "function" ? agentLoop.getModel() : undefined
+    ).budgetSource,
   };
 }
 
@@ -176,6 +182,7 @@ export async function buildLocalContextReport(options: LocalContextReportOptions
     sessionsDir: join(options.stateDir, "sessions"),
     savedSessionCount: savedSessions.length,
     latestSavedSessionAt: savedSessions[0]?.updatedAt ?? null,
+    compactionBudgetSource: "legacy",
   };
 }
 
@@ -191,6 +198,7 @@ export function formatContextReport(report: ContextReport): string[] {
           ["轮次", report.turnCount],
           ["消息数", report.messageCount],
           ["压缩次数", report.compactions],
+          ["压缩阈值", `source=${report.compactionBudgetSource ?? "legacy"}`],
         ],
       },
       {

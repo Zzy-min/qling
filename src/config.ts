@@ -3,6 +3,12 @@ import { existsSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import YAML from "yaml";
+import {
+  alignLoadedLlmConfig,
+  type LlmFieldSource,
+  type LlmFieldSources,
+} from "./providers/resolve-llm.js";
+import { getProviderPreset, lookupRetiredModel } from "./providers/presets.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type LogFormat = "text" | "json";
@@ -89,6 +95,7 @@ export interface QlingConfig {
     workspace_dir: string | null;
     file_cache_dir: string;
     file_state_dir: string;
+    code_runtime: "auto" | "native" | "wsl";
     max_steps: number;
     parse_retries: number;
     tool_repeat_limit: number;
@@ -135,6 +142,8 @@ export interface QlingConfig {
     artifact_store: boolean;
     evidence_goals: boolean;
     memory_cards: boolean;
+    reliability_v2: boolean;
+    trust_boundary: boolean;
     controlled_subagents: boolean;
   };
   logging: {
@@ -247,13 +256,17 @@ export interface CliGlobalOptions {
   endpoint?: string;
   apiKey?: string;
   tuiMode?: "auto" | "fullscreen" | "classic";
+  codeRuntime?: "auto" | "native" | "wsl";
 }
 
 export interface LoadedConfig {
   config: QlingConfig;
   warnings: string[];
   usedConfigPath?: string;
+  llmSources: LlmFieldSources;
 }
+
+export type { LlmFieldSource, LlmFieldSources };
 
 const HOME = os.homedir();
 const DEFAULT_STATE_DIR = path.join(HOME, ".qling");
@@ -263,7 +276,7 @@ export function buildDefaultConfig(): QlingConfig {
   return {
     llm: {
       provider: "deepseek",
-      model: "deepseek-chat",
+      model: "deepseek-flash",
       endpoint: "https://api.deepseek.com",
       api_key: "",
       request_timeout_ms: 120000,
@@ -273,6 +286,7 @@ export function buildDefaultConfig(): QlingConfig {
       workspace_dir: process.cwd(),
       file_cache_dir: DEFAULT_CACHE_DIR,
       file_state_dir: DEFAULT_STATE_DIR,
+      code_runtime: "auto",
       max_steps: 50,
       parse_retries: 2,
       tool_repeat_limit: 6,
@@ -313,6 +327,8 @@ export function buildDefaultConfig(): QlingConfig {
       artifact_store: false,
       evidence_goals: false,
       memory_cards: false,
+      reliability_v2: false,
+      trust_boundary: false,
       controlled_subagents: false,
     },
     logging: {
@@ -331,6 +347,8 @@ export function buildDefaultConfig(): QlingConfig {
       search: { enabled: true },
       planner: { enabled: true },
       url_fetch: { enabled: true },
+      deepseek_search: { enabled: true },
+      deepseek_fetch: { enabled: true },
     },
     memory: {
       wal_enabled: true,
@@ -356,8 +374,8 @@ export function buildDefaultConfig(): QlingConfig {
       max_parallel_states: 1,
     },
     vision: {
-      provider: "openai",
-      model: "gpt-4o",
+      provider: "deepseek",
+      model: "deepseek-flash",
       max_image_size_mb: 10,
       timeout_ms: 60000,
     },
@@ -497,13 +515,64 @@ export async function loadQlingConfig(
   const withCli = applyCliOverrides(merged, cli);
   applyPermissionModeCompat(withCli);
   normalizeAgentsIsolationConfig(withCli);
+  normalizeVisionConfig(withCli);
   normalizeRuntimeRoots(withCli);
   await mergeLocalMcpStore(withCli, warnings);
+  const llmSources = detectLlmSources(fromFile, fromEnv, cli);
+  alignLoadedLlmConfig(withCli.llm, llmSources, env, warnings);
 
   return {
     config: withCli,
     warnings,
     usedConfigPath,
+    llmSources,
+  };
+}
+
+function llmFieldDefined(
+  partial: Partial<QlingConfig> | undefined,
+  field: "provider" | "endpoint" | "model" | "api_key"
+): boolean {
+  return typeof partial?.llm?.[field] === "string";
+}
+
+function detectLlmFieldSource(
+  fromCli: boolean,
+  fromEnv: boolean,
+  fromFile: boolean
+): LlmFieldSource {
+  if (fromCli) return "cli";
+  if (fromEnv) return "env";
+  if (fromFile) return "file";
+  return "default";
+}
+
+function detectLlmSources(
+  fromFile: Partial<QlingConfig>,
+  fromEnv: Partial<QlingConfig>,
+  cli: CliGlobalOptions
+): LlmFieldSources {
+  return {
+    provider: detectLlmFieldSource(
+      Boolean(cli.provider?.trim()),
+      llmFieldDefined(fromEnv, "provider"),
+      llmFieldDefined(fromFile, "provider")
+    ),
+    endpoint: detectLlmFieldSource(
+      Boolean(cli.endpoint?.trim()),
+      llmFieldDefined(fromEnv, "endpoint"),
+      llmFieldDefined(fromFile, "endpoint")
+    ),
+    model: detectLlmFieldSource(
+      Boolean(cli.model?.trim()),
+      llmFieldDefined(fromEnv, "model"),
+      llmFieldDefined(fromFile, "model")
+    ),
+    apiKey: detectLlmFieldSource(
+      Boolean(cli.apiKey?.trim()),
+      llmFieldDefined(fromEnv, "api_key"),
+      llmFieldDefined(fromFile, "api_key")
+    ),
   };
 }
 
@@ -535,6 +604,9 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   if (config.llm.api_key) {
     process.env.QLING_LLM_API_KEY = config.llm.api_key;
   }
+  if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
+    process.env.QLING_LLM_STARTUP_PROVIDER = config.llm.provider;
+  }
 
   if (config.runtime.workspace_dir) {
     process.env.QLING_WORKSPACE_DIR = config.runtime.workspace_dir;
@@ -543,6 +615,7 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   }
   process.env.QLING_FILE_CACHE_DIR = config.runtime.file_cache_dir;
   process.env.QLING_FILE_STATE_DIR = config.runtime.file_state_dir;
+  process.env.QLING_CODE_RUNTIME = config.runtime.code_runtime;
   process.env.QLING_CONTEXT_WINDOW_TOKENS = String(config.context.window_tokens);
   process.env.QLING_COMPACTION_TRIGGER_RATIO = String(config.context.compaction_trigger_ratio);
   process.env.QLING_COMPACTION_MIN_SUMMARY_CHARS = String(config.context.compaction_min_summary_chars);
@@ -607,6 +680,8 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_FEATURES_ARTIFACT_STORE = String(config.features.artifact_store);
   process.env.QLING_FEATURES_EVIDENCE_GOALS = String(config.features.evidence_goals);
   process.env.QLING_FEATURES_MEMORY_CARDS = String(config.features.memory_cards);
+  process.env.QLING_FEATURES_RELIABILITY_V2 = String(config.features.reliability_v2);
+  process.env.QLING_FEATURES_TRUST_BOUNDARY = String(config.features.trust_boundary);
   process.env.QLING_FEATURES_CONTROLLED_SUBAGENTS = String(config.features.controlled_subagents);
 
   // Workflow
@@ -948,12 +1023,44 @@ function normalizeAgentsIsolationConfig(config: QlingConfig): void {
     nonGitPolicyRaw === "deny" || nonGitPolicyRaw === "off" ? (nonGitPolicyRaw as "deny" | "off") : "warn";
 }
 
+function normalizeVisionConfig(config: QlingConfig): void {
+  const defaults = buildDefaultConfig().vision;
+  const vision = config.vision ?? ({ ...defaults } as VisionConfig);
+  const provider = String(vision.provider ?? defaults.provider).trim().toLowerCase() || "deepseek";
+  const rawModel = String(vision.model ?? "").trim();
+  const migrated = rawModel ? (lookupRetiredModel(rawModel) ?? rawModel) : "";
+  const isLegacyOpenAiDefault =
+    migrated.toLowerCase() === "gpt-4o" ||
+    migrated.toLowerCase() === "gpt-4o-mini" ||
+    migrated.toLowerCase() === "gpt-4-vision-preview";
+  const model =
+    provider === "deepseek"
+      ? !migrated || isLegacyOpenAiDefault
+        ? "deepseek-flash"
+        : migrated
+      : migrated || getProviderPreset(provider)?.model || "deepseek-flash";
+
+  config.vision = {
+    provider,
+    model,
+    max_image_size_mb:
+      typeof vision.max_image_size_mb === "number" && vision.max_image_size_mb > 0
+        ? vision.max_image_size_mb
+        : defaults.max_image_size_mb,
+    timeout_ms:
+      typeof vision.timeout_ms === "number" && vision.timeout_ms > 0
+        ? vision.timeout_ms
+        : defaults.timeout_ms,
+  };
+}
+
 function applyCliOverrides(config: QlingConfig, cli: CliGlobalOptions): QlingConfig {
   const next = deepClone(config);
   if (cli.workspaceDir) next.runtime.workspace_dir = path.resolve(cli.workspaceDir);
   if (cli.noWorkspace) next.runtime.workspace_dir = null;
   if (cli.fileCacheDir) next.runtime.file_cache_dir = path.resolve(cli.fileCacheDir);
   if (cli.fileStateDir) next.runtime.file_state_dir = path.resolve(cli.fileStateDir);
+  if (cli.codeRuntime) next.runtime.code_runtime = cli.codeRuntime;
   if (cli.inspectPrompt !== undefined) next.logging.inspect_prompt = cli.inspectPrompt;
   if (cli.inspectRequest !== undefined) next.logging.inspect_request = cli.inspectRequest;
   if (cli.logFormat) next.logging.format = cli.logFormat;

@@ -61,6 +61,21 @@ test("cli: --tui-mode configures fullscreen compatibility mode", () => {
   assert.equal(invalid.code, "CLI_INVALID_OPTION_VALUE");
 });
 
+test("cli: --code-runtime selects native, WSL, or automatic project execution", () => {
+  for (const [args, expected] of [
+    [["run", "inspect", "--code-runtime", "native"], "native"],
+    [["--code-runtime=wsl", "chat"], "wsl"],
+    [["chat", "--code-runtime", "auto"], "auto"],
+  ]) {
+    const result = parseCliArgs(args);
+    assert.equal(result.kind, "ok");
+    assert.equal(result.global.codeRuntime, expected);
+  }
+  const invalid = parseCliArgs(["run", "inspect", "--code-runtime", "docker"]);
+  assert.equal(invalid.kind, "error");
+  assert.equal(invalid.code, "CLI_INVALID_OPTION_VALUE");
+});
+
 test("cli: acp is an explicit stdio adapter mode", () => {
   const result = parseCliArgs(["acp"]);
   assert.equal(result.kind, "ok");

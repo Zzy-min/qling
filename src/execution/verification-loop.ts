@@ -32,6 +32,14 @@ import { buildSafeEnv } from "../tools/bash.js";
 import { runManagedCommand } from "./managed-command.js";
 import { resolveProjectProfileIdentity } from "../runtime/project-profile.js";
 
+const DOCUMENT_DELIVERABLE_EXT = new Set([".md", ".markdown", ".docx", ".txt", ".pdf"]);
+
+/** 说明性文档不是项目测试的对象。家目录里的 npm test 不能拿来卡一份 Markdown。 */
+export function isDocumentDeliverablePath(filePath: string): boolean {
+  const base = filePath.replace(/\\/g, "/").split("/").pop() ?? filePath;
+  return DOCUMENT_DELIVERABLE_EXT.has(path.extname(base).toLowerCase());
+}
+
 export type ShellResult = {
   code: number;
   stdout: string;
@@ -163,6 +171,7 @@ export type WriteVerificationOutcome =
   | { kind: "noop" }
   | { kind: "pass"; summary: string; verificationBaseFingerprint: string; workspaceFingerprint: string }
   | { kind: "advisory" }
+  | { kind: "deliverable" }
   | { kind: "audit"; text: string }
   | {
       kind: "recover";
@@ -231,13 +240,20 @@ export async function runWriteToolVerification(
     : preparedCalls.some((t) => t.call.name === "write" || t.call.name === "patch" || t.call.name === "bash");
   if (!hasWrites) return { kind: "noop" };
 
+  const changedPaths = mutationObservations.flatMap((item) => item.changedPaths ?? []);
+  const projectRequiresVerification = (deps.projectProfile?.testCommands.length ?? 0) > 0
+    || deps.projectProfile?.environmentStatus === "degraded"
+    || deps.projectProfile?.environmentStatus === "unsupported";
+  if (!deps.verificationCommand && !projectRequiresVerification && changedPaths.length > 0 && changedPaths.every((item) => isDocumentDeliverablePath(item))) {
+    return { kind: "deliverable" };
+  }
+
   let stages = resolveVerificationStages({
     configuredCommand: deps.verificationCommand,
   });
   let projectRuntime: "native" | "wsl" | undefined;
   let projectCommand: Awaited<ReturnType<typeof resolveScopedVerificationCommand>>;
   if (stages.length === 0 && deps.projectProfile && deps.workspaceDir) {
-    const changedPaths = mutationObservations.flatMap((item) => item.changedPaths ?? []);
     const candidates = deps.projectProfile.testCommands
       .filter((item) => item.stage === "syntax" || item.stage === "targeted");
     for (const candidate of candidates) {

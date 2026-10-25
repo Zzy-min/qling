@@ -144,3 +144,26 @@ test("goal controller blocks on deterministic failure even when transcript claim
   assert.equal(result.status, "blocked");
   assert.equal((await manager.getGoalStatus()).status, "blocked");
 });
+
+test("outcome verifier rejects fresh evidence from the wrong source", async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-goal-source-"));
+  const manager = new SessionGoalManager({ stateDir, sessionId: "session-goal-source", clock: () => 4_000 });
+  const controller = new SessionGoalController({ manager });
+  await controller.init();
+  await controller.setGoal("HTTP is healthy", { turnCount: 0, tokens: 0 }, {
+    contract: {
+      objective: "HTTP is healthy",
+      deliverables: [{ id: "http", claim: "health endpoint succeeds", verifier: "http", required: true, freshnessMs: 500 }],
+      prohibitedSideEffects: [],
+      budget: {},
+    },
+  });
+  const result = await controller.afterTurn({
+    transcript: "assistant: healthy",
+    stats: { turnCount: 1, tokens: 10 },
+    evidence: [{ id: "wrong-source", claim: "health endpoint succeeds", source: "llm_judge", observedAt: 3_900, verdict: "pass", scope: "workspace", deterministic: false, redacted: false }],
+    now: 4_000,
+  });
+  assert.equal(result.status, "continue");
+  assert.match(result.reason, /missing/i);
+});

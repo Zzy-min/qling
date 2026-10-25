@@ -316,3 +316,26 @@ test("input buffer deletes character after cursor", () => {
   assert.equal(buffer.value, "ac");
   assert.equal(buffer.cursorPos, 2);
 });
+
+test("input buffer rejects DEL/BS control characters and deletes astral graphemes atomically", () => {
+  const buffer = new InputBuffer();
+  for (const ch of "a🧪b") buffer.insertChar(ch);
+  buffer.insertChar("\x7f");
+  buffer.insertChar("\x08");
+  assert.equal(buffer.value, "a🧪b");
+  assert.equal(buffer.cursorPos, "a🧪b".length);
+
+  buffer.moveLeft();
+  assert.equal(buffer.cursorPos, "a🧪".length);
+  buffer.backspace();
+  assert.equal(buffer.value, "ab");
+  assert.equal(buffer.cursorPos, 1);
+
+  buffer.insertChar("🚀");
+  assert.equal(buffer.value, "a🚀b");
+  buffer.moveLeft();
+  assert.equal(buffer.cursorPos, 1);
+  buffer.deleteAfterCursorChar();
+  assert.equal(buffer.value, "ab");
+  assert.equal(buffer.cursorPos, 1);
+});

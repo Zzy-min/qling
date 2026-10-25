@@ -64,6 +64,40 @@ test("patch: unique replacement works successfully", async () => {
   });
 });
 
+test("patch: LF search edits a CRLF file without changing its line endings", async () => {
+  await withTempDir(async (dir) => {
+    const file = join(dir, "qdp.py");
+    const original = [
+      "    _type_re = rf\"^{value}$\"",
+      "    _line_type_re = re.compile(_type_re)",
+      "    line = line.strip()",
+      "",
+    ].join("\r\n");
+    await writeFile(file, original, "utf-8");
+
+    const result = await runPatch({
+      path: "qdp.py",
+      chunks: [{
+        search: [
+          "    _type_re = rf\"^{value}$\"",
+          "    _line_type_re = re.compile(_type_re)",
+          "    line = line.strip()",
+        ].join("\n"),
+        replace: [
+          "    _type_re = rf\"^{value}$\"",
+          "    _line_type_re = re.compile(_type_re, re.IGNORECASE)",
+          "    line = line.strip()",
+        ].join("\n"),
+      }],
+    });
+
+    assert.equal(result.is_error, undefined);
+    const updated = await readFile(file, "utf-8");
+    assert.match(updated, /re\.compile\(_type_re, re\.IGNORECASE\)/);
+    assert.equal(updated.replace(/\r\n/g, "").includes("\n"), false);
+  });
+});
+
 test("patch: non-unique/multiple occurrences rejects and does not edit file", async () => {
   await withTempDir(async (dir) => {
     const file = join(dir, "target.txt");

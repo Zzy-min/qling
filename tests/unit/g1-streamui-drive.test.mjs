@@ -350,6 +350,63 @@ test("g1 replaySessionMessages paints user/assistant and rebuilds turn browse", 
   });
 });
 
+test("g1 replay hides workspace and thinking chain, and boxes the final result", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = createUi();
+    ui.start();
+    try {
+      clear();
+      ui.replaySessionMessages(
+        [
+          {
+            role: "user",
+            content: "<user_info>\nworkspace=WORKSPACE_SECRET\n</user_info>",
+            synthetic_reason: "runtime_environment",
+          },
+          {
+            role: "user",
+            content: "<dynamic_context>\nAGENTS rules dump\n</dynamic_context>",
+            synthetic_reason: "dynamic_context",
+          },
+          { role: "user", content: "请看一下滑块" },
+          {
+            role: "assistant",
+            content: [
+              "让我想想。",
+              "先读 streaming-tui.ts。",
+              "这里有一段很长的猜测，先不改实现。GUESS_NOT_A_STEP",
+              "然后跑测试。",
+              "最后改回放结果框。",
+              "再核对边框。",
+            ].join("\n"),
+            tool_calls: [{ function: { name: "read" } }],
+            reasoning_content: "REASONING_CHAIN_SECRET",
+          },
+          { role: "tool", content: "WORKSPACE_FILE_SECRET" },
+          { role: "assistant", content: "滑块已改为两格。" },
+        ],
+        { label: "已载入会话内容: resume-demo" }
+      );
+      const plain = stripAnsi(getOutput());
+      assert.match(plain, /请看一下滑块/);
+      assert.match(plain, /滑块已改为两格/);
+      assert.match(plain, /结果/);
+      assert.match(plain, /[╭┌]/);
+      assert.match(plain, /[╮┐]/);
+      assert.match(plain, /思考/);
+      assert.match(plain, /先读 streaming-tui/);
+      assert.doesNotMatch(plain, /WORKSPACE_SECRET/);
+      assert.doesNotMatch(plain, /AGENTS rules dump/);
+      assert.doesNotMatch(plain, /REASONING_CHAIN_SECRET/);
+      assert.doesNotMatch(plain, /WORKSPACE_FILE_SECRET/);
+      assert.doesNotMatch(plain, /GUESS_NOT_A_STEP/);
+      assert.doesNotMatch(plain, /让我想想/);
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
 test("g1 appendValidation leaves input frame intact below message", async () => {
   await withCapturedStdout(async (getOutput, clear) => {
     const ui = createUi();

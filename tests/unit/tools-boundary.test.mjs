@@ -71,6 +71,16 @@ test("bash: invalid cwd is rejected", async () => {
   assert.match(result.output, /^Error: \[(BASH_CWD_NOT_FOUND|BASH_OUTSIDE_ALLOWED_ROOT)\]/);
 });
 
+test("bash: missing in-workspace cwd reports a safe recovery anchor", async () => {
+  await withTempDir(async (dir) => {
+    const result = await runBash({ command: "echo hi", cwd: "missing-after-compaction" });
+    assert.equal(result.is_error, true);
+    assert.match(result.output, /^Error: \[BASH_CWD_NOT_FOUND\]/);
+    assert.match(result.output, new RegExp(`workspace: ${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"));
+    assert.match(result.output, /omit cwd/i);
+  });
+});
+
 test("search: empty pattern is rejected", async () => {
   const result = await runSearch({ pattern: "", target: "content" });
   assert.equal(result.is_error, true);

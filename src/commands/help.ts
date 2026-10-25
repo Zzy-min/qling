@@ -7,7 +7,7 @@ export const HELP_LINES = [
   "-----------------------------------------",
   "/help, /?               - 显示此帮助信息",
   "/init [--force]         - 生成轻灵本地项目指南",
-  "/model [list|use <p>|m] - 模型切换器（默认）或直切预设",
+  "/model [list|use <p>|m] - 模型切换器（默认只列当前服务商）或直切预设",
   "/plan [on|off|list|approve|desc] - Plan；list 为计划文件切换器",
   "/mode [status|cycle|normal|plan|auto] - 模式切换器；Shift+Tab 循环",
   "/always-approve         - 直切 auto（工具默认免确认）",

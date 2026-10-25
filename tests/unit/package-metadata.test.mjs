@@ -15,7 +15,7 @@ test("package.json has npm publish metadata for Phase 1.4", async () => {
   assert.ok(pkg.bin?.qling === "dist/index.js" || pkg.bin?.qling === "./dist/index.js");
   assert.equal(pkg.publishConfig?.access, "public");
   assert.ok(pkg.engines?.node);
-  assert.match(String(pkg.engines.node), /18/);
+  assert.match(String(pkg.engines.node), /^>=22$/);
   assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.includes("agent"));
   assert.ok(pkg.keywords.includes("local-first"));
   assert.ok(pkg.repository?.url?.includes("qling"));

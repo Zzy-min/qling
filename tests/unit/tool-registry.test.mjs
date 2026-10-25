@@ -4,8 +4,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { buildToolRegistry, createToolDispatcher } from "../../dist/tools/index.js";
+import { ALL_TOOLS, buildToolRegistry, createToolDispatcher } from "../../dist/tools/index.js";
 import { runWithRuntimeRoots } from "../../dist/runtime-paths.js";
+import { selectToolsForRequest } from "../../dist/harness/tool-capability.js";
 
 test("tool registry: static disable takes effect", () => {
   const tools = buildToolRegistry({
@@ -89,4 +90,17 @@ test("tool registry: includes lsp in static layer", () => {
   const tools = buildToolRegistry();
   const names = tools.map((t) => t.name);
   assert.equal(names.includes("lsp"), true);
+});
+
+test("tool registry: includes repository intelligence tools", () => {
+  const names = buildToolRegistry().map((tool) => tool.name);
+  assert.equal(names.includes("repo_map"), true);
+  assert.equal(names.includes("repo_query"), true);
+  assert.equal(names.includes("impact_analysis"), true);
+});
+
+test("tool registry: verify remains in the reliability core tool set", () => {
+  const names = selectToolsForRequest(ALL_TOOLS, "unrelated request", 1).map((tool) => tool.name);
+  assert.ok(names.includes("verify"));
+  assert.ok(names.includes("bg_reconcile"));
 });

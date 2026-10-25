@@ -2,6 +2,18 @@ import { randomUUID } from "node:crypto";
 
 export type EvidenceVerdict = "pass" | "fail" | "partial" | "unknown";
 export type EvidenceSource = "command" | "tool" | "filesystem" | "git" | "process" | "http" | "rule" | "llm_judge" | "side_effect";
+export type DeliverableVerifier = "file" | "git_diff" | "syntax" | "command" | "http" | "process" | "rule";
+
+export interface DeliverableContract {
+  id: string;
+  claim: string;
+  verifier?: DeliverableVerifier;
+  required: boolean;
+  freshnessMs?: number;
+  /** @deprecated Use freshnessMs. */
+  maxAgeMs?: number;
+  allowLlmJudge?: boolean;
+}
 
 export interface EvidenceRecord {
   id: string;
@@ -19,7 +31,7 @@ export interface EvidenceRecord {
 
 export interface OutcomeContract {
   objective: string;
-  deliverables: Array<{ id: string; claim: string; required: boolean; maxAgeMs?: number; allowLlmJudge?: boolean }>;
+  deliverables: DeliverableContract[];
   prohibitedSideEffects: Array<"workspace" | "process" | "network" | "external">;
   budget: { maxWallClockMs?: number; maxTokens?: number; maxToolCalls?: number; maxFailures?: number };
 }
@@ -73,9 +85,23 @@ export function evaluateOutcomeContract(
   const missing: string[] = [];
   const failed: string[] = [];
   for (const deliverable of contract.deliverables.filter((item) => item.required)) {
+    const freshnessMs = deliverable.freshnessMs ?? deliverable.maxAgeMs;
     const matching = evidence
       .filter((record) => record.claim === deliverable.claim)
-      .filter((record) => deliverable.maxAgeMs === undefined || now - record.observedAt <= deliverable.maxAgeMs)
+      .filter((record) => freshnessMs === undefined || now - record.observedAt <= freshnessMs)
+      .filter((record) => {
+        if (!deliverable.verifier) return true;
+        const expectedSources: Record<DeliverableVerifier, EvidenceSource[]> = {
+          file: ["filesystem"],
+          git_diff: ["git"],
+          syntax: ["command", "tool"],
+          command: ["command", "tool"],
+          http: ["http"],
+          process: ["process"],
+          rule: ["rule"],
+        };
+        return expectedSources[deliverable.verifier].includes(record.source);
+      })
       .sort((left, right) => right.observedAt - left.observedAt);
     if (matching.some((record) => record.deterministic && record.verdict === "fail")) {
       failed.push(deliverable.claim);

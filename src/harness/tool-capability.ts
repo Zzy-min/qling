@@ -65,6 +65,10 @@ export function classifyToolInvocation(invocation: ToolInvocation): ToolCapabili
   const base = invocation.definition
     ? defaultsFor(invocation.definition)
     : defaultsFor({ name: invocation.name, description: invocation.name, parameters: {} });
+  if (invocation.name === "url_fetch") {
+    const readOnly = ["GET", "HEAD"].includes(String(invocation.arguments.method ?? "GET").trim().toUpperCase());
+    return { ...base, readOnly, sideEffect: readOnly ? "network" : "external", risk: readOnly ? "low" : "high", idempotent: readOnly, reversible: readOnly, permission: readOnly ? "allow" : "ask" };
+  }
   if (invocation.name !== "bash") return base;
 
   const command = String(invocation.arguments.command ?? invocation.arguments.cmd ?? "").trim();

@@ -48,7 +48,7 @@ test("dashboard workbench renders tasks, filters and responsive detail", async (
     getPermissionMode: () => "allow",
   });
   const dashboard = new DashboardServer({ port, collector, workflowRuntime: workflow, agentLoop: agent });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, ...(process.env.QLING_E2E_BROWSER_CHANNEL ? { channel: process.env.QLING_E2E_BROWSER_CHANNEL } : {}) });
   const consoleErrors = [];
   const remoteRequests = [];
 

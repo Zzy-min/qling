@@ -1,38 +1,41 @@
-# 网页 / 平台数据路由
+# 网页 / 浏览器路由
 
-轻灵有多条「上网」路径。**先选对通道，再调用**，避免反爬挑战页被当成成功数据。
+轻灵上网的默认通道是自带工具。**opencli 不是默认路径。**
 
 ## 决策树
 
 ```
-需要外部数据？
-├─ 社交/内容平台（抖音、小红书、微博、B站、TikTok、X…）
-│   → skill name="opencli"
-│   → bash: opencli <site> … -f json
-│   → 禁止 url_fetch / browser_* 当主路径
+需要外部页面或浏览器操作？
+├─ 网页搜索
+│   → deepseek_search（DeepSeek POST /v1/tools/search）
 │
-├─ 普通 HTTPS API / 静态页
-│   → url_fetch（Guard 白名单 / 私网拦截）
+├─ 已知 URL，要 Markdown 正文
+│   → deepseek_fetch（DeepSeek POST /v1/tools/fetch）
 │
-├─ 文档站 / 弱反爬、需 JS 渲染摘要
-│   → browser_fetch（Playwright 只读抓取）
+├─ 没有 DeepSeek 密钥，或 Search/Fetch 失败
+│   → url_fetch（HTTP API / 静态页）
+│   → browser_fetch（需要本机浏览器渲染的只读页）
 │
-├─ 需要点击/填表等交互（实验）
-│   → 优先 opencli browser <session> …
-│   → 或启用 browser_act（QLING_BROWSER_ACT=1，默认关）
+├─ 点击、填表、跨步骤页面操作
+│   → browser_act（QLING_BROWSER_ACT=1，默认关）
 │
-└─ 不确定
-    → opencli list / doctor；不要盲目重试 url_fetch
+└─ 用户明确说「用 opencli」
+    → skill name="opencli"
+    → bash: opencli <site> … -f json
 ```
+
+没有这句明确要求时，不要因为站点是抖音、小红书、微博、B站、TikTok 或 X，就改走 opencli。对话模型不会自动搜索，必须由工具调用 Search/Fetch。
 
 ## 工具对照
 
 | 工具 | 默认 | 能力 | 典型场景 |
 |------|------|------|----------|
-| **opencli**（via bash） | 本机已装则可用 | 站点适配器、登录会话、结构化 JSON | 抖/红/微/B/推 |
-| **url_fetch** | 开 | HTTP + Guard | 公开 API、静态资源 |
-| **browser_fetch** | 开 | 无头浏览、正文摘要 | 文档站 SPA |
-| **browser_act** | **关** | goto/click/type/extract | 显式启用后的弱交互 |
+| **deepseek_search** | 开 | DeepSeek 自研搜索 | 网页搜索 |
+| **deepseek_fetch** | 开 | 单页转 Markdown | 搜索结果或已知 URL 的正文 |
+| **url_fetch** | 开 | HTTP + Guard | 公开 API、静态资源、搜索失败后的兜底 |
+| **browser_fetch** | 开 | 无头浏览、正文摘要 | 需要本机渲染的只读页 |
+| **browser_act** | **关** | goto/click/type/extract | 显式启用后的页面操作 |
+| **opencli**（via bash） | 不默认 | 站点适配器 | 仅用户点名时 |
 
 ## browser_act 启用与跨步会话
 
@@ -55,14 +58,13 @@ browser_act action=status
 - 空闲超时默认 10 分钟：`QLING_BROWSER_ACT_IDLE_TTL_MS`
 - 最大会话数默认 3：`QLING_BROWSER_ACT_MAX_SESSIONS`
 - 与 `url_fetch` **共用网络 Guard**；**Plan Mode 禁止**
-- 强反爬平台仍应 **opencli**，不要靠 browser_act 硬抠
 
 ## 失败诚实
 
 | 现象 | 含义 | 动作 |
 |------|------|------|
-| HTML 含 `_$jsvmprt` / `acrawler` | 反爬挑战页 | 换 opencli 站点命令 + 登录 |
-| `BROWSER_ACT_DISABLED` | 未开启交互 | 开 env 或改 opencli browser |
+| HTML 含 `_$jsvmprt` / `acrawler` | 反爬挑战页，这次抓取失败 | 说明失败；换 url_fetch / browser_fetch / browser_act，或询问是否改用 opencli |
+| `BROWSER_ACT_DISABLED` | 未开启交互 | 设置 `QLING_BROWSER_ACT=1` 后再用 browser_act |
 | Guard deny | 策略拦截 | 检查网络模式 / 白名单 |
 
 ## 使命通道通知
@@ -79,5 +81,5 @@ browser_act action=status
 
 ## 相关
 
-- Skill：`skills/opencli/SKILL.md`
+- 用户点名 opencli 时的命令手册：`skills/opencli/SKILL.md`
 - 沙箱/网络：`docs/docker.md`、环境变量 `QLING_GUARD_*`

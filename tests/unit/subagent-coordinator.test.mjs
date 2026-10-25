@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { SubagentCoordinator, shouldDelegateTask } from "../../dist/agents/coordinator.js";
 import { SubagentWorktreeManager } from "../../dist/agents/worktree-manager.js";
 import { assertOwnedMutationPath, isRelativePathOwned, normalizeOwnedPaths } from "../../dist/agents/ownership.js";
+
+const execFileAsync = promisify(execFile);
 
 function spec(id, overrides = {}) {
   return {
@@ -66,15 +70,71 @@ test("worktree manager creates a scoped branch and target without deleting it", 
     stateDir,
     executeGit: async (args, cwd) => {
       calls.push({ args, cwd });
-      if (args[0] === "rev-parse") return { stdout: "C:/repo\n" };
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return { stdout: "C:/repo\n" };
+      if (args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: "abc123\n" };
       return { stdout: "" };
     },
   });
   const result = await manager.create({ taskId: "task:one", workspaceDir: "C:/repo" });
   assert.equal(result.branch, "qling-agent/task-one");
+  assert.equal(result.baseCommit, "abc123");
   assert.equal(path.resolve(result.path).startsWith(path.resolve(stateDir)), true);
-  assert.deepEqual(calls[1].args.slice(0, 3), ["worktree", "add", "-b"]);
+  assert.deepEqual(calls[2].args.slice(0, 3), ["worktree", "add", "-b"]);
   assert.equal(calls.some((call) => call.args.includes("remove")), false);
+});
+
+test("worktree manager integrates owned changes and rejects a dirty parent target", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-worktree-integration-"));
+  const repo = path.join(root, "repo");
+  const state = path.join(root, "state");
+  await fs.mkdir(path.join(repo, "src"), { recursive: true });
+  await fs.writeFile(path.join(repo, "src", "a.txt"), "base-a\n");
+  await fs.writeFile(path.join(repo, "src", "b.txt"), "base-b\n");
+  await execFileAsync("git", ["init", "-q"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.email", "eval@example.invalid"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.name", "Qling Eval"], { cwd: repo });
+  await execFileAsync("git", ["add", "."], { cwd: repo });
+  await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: repo });
+  try {
+    const manager = new SubagentWorktreeManager({ stateDir: state });
+    const worktree = await manager.create({ taskId: "writer-a", workspaceDir: repo });
+    await fs.writeFile(path.join(worktree.path, "src", "a.txt"), "agent-a\n");
+    assert.deepEqual(await manager.integrateOwnedChanges({ worktreePath: worktree.path, workspaceDir: repo, ownedPaths: ["src/a.txt"] }), ["src/a.txt"]);
+    assert.equal(await fs.readFile(path.join(repo, "src", "a.txt"), "utf8"), "agent-a\n");
+
+    const worktreeB = await manager.create({ taskId: "writer-b", workspaceDir: repo });
+    await fs.writeFile(path.join(worktreeB.path, "src", "b.txt"), "agent-b\n");
+    await fs.writeFile(path.join(repo, "src", "b.txt"), "parent-b\n");
+    await assert.rejects(
+      () => manager.integrateOwnedChanges({ worktreePath: worktreeB.path, workspaceDir: repo, ownedPaths: ["src/b.txt"] }),
+      /integration conflict/i
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("worktree manager three-way merges non-overlapping parent and agent edits", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "qling-worktree-merge-"));
+  const repo = path.join(root, "repo");
+  const state = path.join(root, "state");
+  await fs.mkdir(path.join(repo, "src"), { recursive: true });
+  await fs.writeFile(path.join(repo, "src", "merge.txt"), "one\ntwo\nthree\n");
+  await execFileAsync("git", ["init", "-q"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.email", "eval@example.invalid"], { cwd: repo });
+  await execFileAsync("git", ["config", "user.name", "Qling Eval"], { cwd: repo });
+  await execFileAsync("git", ["add", "."], { cwd: repo });
+  await execFileAsync("git", ["commit", "-qm", "fixture"], { cwd: repo });
+  try {
+    const manager = new SubagentWorktreeManager({ stateDir: state });
+    const worktree = await manager.create({ taskId: "merge-writer", workspaceDir: repo });
+    await fs.writeFile(path.join(worktree.path, "src", "merge.txt"), "agent-one\ntwo\nthree\n");
+    await fs.writeFile(path.join(repo, "src", "merge.txt"), "one\ntwo\nparent-three\n");
+    await manager.integrateOwnedChanges({ worktreePath: worktree.path, workspaceDir: repo, ownedPaths: ["src/merge.txt"] });
+    assert.equal(await fs.readFile(path.join(repo, "src", "merge.txt"), "utf8"), "agent-one\ntwo\nparent-three\n");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("owned paths reject traversal and enforce the declared subtree", async () => {

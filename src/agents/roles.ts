@@ -24,7 +24,7 @@ export const ROLE_DEFINITIONS: Record<SubAgentRole, RoleDefinition> = {
   explore: {
     id: "explore",
     title: "探索",
-    description: "只读探索代码库：search/read/skill/planner/url_fetch，禁止写与 bash。",
+    description: "只读探索代码库和网页：search/read/skill/planner/deepseek_search/url_fetch，禁止写与 bash。",
     allowedTools: [
       "read",
       "search",
@@ -32,6 +32,8 @@ export const ROLE_DEFINITIONS: Record<SubAgentRole, RoleDefinition> = {
       "lsp",
       "skill",
       "planner",
+      "deepseek_search",
+      "deepseek_fetch",
       "url_fetch",
     ],
     canWrite: false,
@@ -51,6 +53,8 @@ export const ROLE_DEFINITIONS: Record<SubAgentRole, RoleDefinition> = {
       "skill",
       "todo",
       "planner",
+      "deepseek_search",
+      "deepseek_fetch",
       "url_fetch",
     ],
     canWrite: true,

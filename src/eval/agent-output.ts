@@ -1,10 +1,14 @@
 export interface ParsedAgentEvalOutput {
   answer: Record<string, unknown>;
   ok: boolean;
+  outcome?: string;
+  resultText?: string;
   usage: Record<string, unknown>;
   toolCalls: number;
   toolFailures: number;
   tools: string[];
+  toolAccesses: Array<{ tool: string; target?: string }>;
+  efficiencySignals?: Array<{ action: string; fingerprint?: string }>;
   answerParseError?: string;
 }
 
@@ -58,6 +62,18 @@ export function parseAgentEvalOutput(stdout: string): ParsedAgentEvalOutput {
   const result = [...events].reverse().find((event) => event.type === "result");
   if (!result) throw new Error("Agent evaluation produced no terminal result event");
   const tools = events.filter((event) => event.type === "tool_completed");
+  const toolAccesses = events
+    .filter((event) => event.type === "tool_started")
+    .map((event) => ({
+      tool: String(event.tool ?? "unknown"),
+      ...(typeof event.toolTarget === "string" ? { target: event.toolTarget } : {}),
+    }));
+  const efficiencySignals = events
+    .filter((event) => event.type === "efficiency_guard")
+    .map((event) => ({
+      action: String(event.recoveryAction ?? "unknown"),
+      ...(event.fingerprint ? { fingerprint: String(event.fingerprint) } : {}),
+    }));
   let answer: Record<string, unknown> = {};
   let answerParseError: string | undefined;
   try {
@@ -68,12 +84,18 @@ export function parseAgentEvalOutput(stdout: string): ParsedAgentEvalOutput {
   return {
     answer,
     ok: result.ok === true,
+    ...(typeof result.outcome === "string" ? { outcome: result.outcome } : {}),
+    ...(result.ok !== true && typeof result.result === "string" ? { resultText: result.result } : {}),
     usage: result.usage && typeof result.usage === "object"
       ? result.usage as Record<string, unknown>
       : {},
     toolCalls: tools.length,
-    toolFailures: tools.filter((event) => event.status === "failed").length,
+    toolFailures: tools.filter(
+      (event) => event.status === "failed" && event.policyRedirect !== true
+    ).length,
     tools: tools.map((event) => String(event.tool ?? "unknown")),
+    toolAccesses,
+    ...(efficiencySignals.length > 0 ? { efficiencySignals } : {}),
     ...(answerParseError ? { answerParseError } : {}),
   };
 }

@@ -59,6 +59,33 @@ test("tool capability evaluates bash arguments instead of trusting the tool name
   assert.equal(external.permission, "ask");
 });
 
+test("package installation requires explicit network authorization", () => {
+  for (const command of [
+    "python -m pip install numpy",
+    "pip3 install numpy",
+    '"pip3" install numpy',
+    '"C:\\Python\\Scripts\\pip3.exe" install numpy',
+    "pip install --target . numpy",
+    "npm install axios",
+    "npm ci",
+    "npm.cmd install axios",
+    "pnpm add axios",
+    "pnpm.cmd add axios",
+    "uv add numpy",
+    "uv sync",
+    "pipx install ruff",
+    "conda install numpy",
+    "go install example.com/tool@latest",
+    "winget install Git.Git",
+    "choco install git",
+    "scoop install git",
+  ]) {
+    const capability = classifyToolInvocation({ name: "bash", arguments: { command } });
+    assert.equal(capability.sideEffect, "network", command);
+    assert.equal(capability.permission, "ask", command);
+  }
+});
+
 test("git read-looking commands and inherited environment fail closed", () => {
   for (const command of ["git status --short", "git branch -D victim", "git diff --output=owned.txt", "dir \\\\attacker.example\\share", "ls /etc"]) {
     const capability = classifyToolInvocation({ name: "bash", arguments: { command } });
@@ -67,6 +94,17 @@ test("git read-looking commands and inherited environment fail closed", () => {
   }
   const inherited = classifyToolInvocation({ name: "bash", arguments: { command: "pwd", env_allowlist: ["OPTS"] } });
   assert.notEqual(inherited.sideEffect, "none");
+});
+
+test("quoted executables cannot bypass destructive or external classification", () => {
+  for (const command of ['"git" push origin main', '"C:\\Program Files\\Git\\cmd\\git.exe" push origin main']) {
+    const capability = classifyToolInvocation({ name: "bash", arguments: { command } });
+    assert.equal(capability.sideEffect, "external", command);
+    assert.equal(capability.risk, "critical", command);
+  }
+  const destructive = classifyToolInvocation({ name: "bash", arguments: { command: '"git" reset --hard' } });
+  assert.equal(destructive.sideEffect, "workspace");
+  assert.equal(destructive.risk, "critical");
 });
 
 test("diagnostic redaction handles quoted keys and URI credentials", () => {

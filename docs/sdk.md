@@ -30,10 +30,7 @@ const { config } = await loadQlingConfig({
 applyConfigToProcessEnv(config);
 
 const agent = new AgentLoop({
-  apiKey:
-    process.env.QLING_LLM_API_KEY ||
-    process.env.DEEPSEEK_API_KEY ||
-    process.env.OPENAI_API_KEY,
+  apiKey: config.llm.api_key,
   provider: config.llm.provider,
   endpoint: config.llm.endpoint,
   model: config.llm.model,

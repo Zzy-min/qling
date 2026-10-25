@@ -25,6 +25,27 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+for (const status of ["exhausted", "paused", "failed", "canceled"]) {
+  test(`streaming repl never displays success for ${status}`, async () => {
+    const calls = [];
+    const agent = createAgent(tmpdir());
+    const repl = new StreamingREPL(agent);
+    Object.assign(agent, {
+      getAgentRuntimeMode: () => "legacy", addUserMessage() {},
+      run: async () => { repl.currentRunStatus = status; return "task incomplete"; },
+      checkpointSession: async () => {}, getRecoveryState: () => null,
+      getMessagesSnapshot: () => [], reset() { throw new Error("unexpected reset"); },
+    });
+    repl.ui = new Proxy({}, { get: (_, name) => (...args) => { calls.push([name, ...args]); return false; } });
+    repl.scheduler = { setBusy() {}, async runDueTasksOnce() {} };
+    repl.goalController = { async afterTurn() { return { status: "none" }; } };
+    await repl.processPrompt("task");
+    assert.equal(calls.some(([name]) => name === "appendDone" || name === "appendFinal"), false);
+    assert.ok(calls.some(([name, text]) => name === "appendError" && text === "task incomplete"));
+    assert.ok(calls.some(([name, , text]) => name === "appendValidation" && text.includes(status)));
+  });
+}
+
 function createAgent(stateDir) {
   return {
     getModel: () => "test-model",

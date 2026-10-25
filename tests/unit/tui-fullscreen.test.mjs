@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import stringWidth from "string-width";
 
 import {
+  coalesceMouseEvents,
   consumeMouseInput,
   consumeMouseWheel,
   FullscreenRenderer,
@@ -12,7 +13,9 @@ import {
   resolveColorMode,
   resolveIconMode,
   resolveTuiMode,
+  wrapFullscreenInput,
 } from "../../dist/tui/fullscreen.js";
+import { StreamUI } from "../../dist/tui/streaming-tui.js";
 test("fullscreen mode resolves TTY and size boundaries", () => {
   assert.equal(parseTuiMode("fullscreen"), "fullscreen");
   assert.equal(parseTuiMode("bad"), null);
@@ -472,5 +475,110 @@ test("fullscreen clearConversationView removes entries and transient output in o
 
   assert.doesNotMatch(screen, /old conversation|old slash output|old task/);
   assert.match(screen, /输入任务/);
+  renderer.stop();
+});
+
+test("fullscreen input wraps long text inside the box instead of clipping it", () => {
+  const columns = 40;
+  const rows = 24;
+  const renderer = new FullscreenRenderer(
+    { workspace: "agent-cli", model: "active-model", ready: true, tokens: 0, branch: "main" },
+    { stdinTTY: true, stdoutTTY: true, columns, rows, colorMode: "none" },
+    { write: () => {} }
+  );
+  const text = "甲".repeat(60);
+  renderer.setInput(text, undefined, text.length);
+  const screen = renderer.snapshot();
+  assert.equal(screen.length, rows);
+  assert.ok(screen.every((line) => stringWidth(line) <= columns));
+  const boxStart = screen.findIndex((line) => line.startsWith("╭"));
+  const boxEnd = screen.findIndex((line, index) => index > boxStart && line.startsWith("╰"));
+  assert.ok(boxStart > 0 && boxEnd > boxStart);
+  const box = screen.slice(boxStart, boxEnd + 1).join("\n");
+  assert.equal((box.match(/甲/g) ?? []).length, 60);
+  assert.doesNotMatch(box, /…/);
+  assert.ok(boxEnd - boxStart > 2);
+  renderer.stop();
+});
+
+test("holding backspace coalesced in a single stdin chunk deletes backward without moving cursor right", () => {
+  const ui = new StreamUI("qling-agent-1.0");
+  ui.running = true;
+  const output = [];
+  ui.fullscreen = new FullscreenRenderer(
+    { workspace: "agent-cli", model: "qling-agent-1.0", ready: true, tokens: 0, branch: "main" },
+    { stdinTTY: true, stdoutTTY: true, columns: 80, rows: 24, colorMode: "none" },
+    { write: (chunk) => output.push(chunk) }
+  );
+  ui.fullscreen.start();
+  ui.setupInput();
+  try {
+    ui.dataHandler?.("abcdef");
+    assert.equal(ui.input.value, "abcdef");
+    assert.equal(ui.input.cursorPos, 6);
+
+    output.length = 0;
+    // Simulate key-repeat coalescing multiple DEL (\x7f) bytes in a single chunk
+    ui.dataHandler?.("\x7f\x7f\x7f");
+    assert.equal(ui.input.value, "abc");
+    assert.equal(ui.input.cursorPos, 3);
+    assert.doesNotMatch(ui.input.value, /\x7f/);
+
+    // Simulate key-repeat coalescing BS (\x08) bytes and extra DEL bytes past empty
+    ui.dataHandler?.("\x08\x08\x7f\x7f\x7f");
+    assert.equal(ui.input.value, "");
+    assert.equal(ui.input.cursorPos, 0);
+    const cursorMoves = [...output.join("").matchAll(/\x1b\[(\d+);(\d+)H\x1b\[\?25h/g)];
+    assert.equal(Number(cursorMoves.at(-1)?.[2]), 5);
+  } finally {
+    if (ui.dataHandler) process.stdin.removeListener("data", ui.dataHandler);
+    if (ui.resizeHandler) process.stdout.removeListener("resize", ui.resizeHandler);
+    process.stdin.pause();
+    ui.fullscreen.stop();
+  }
+});
+
+test("wrapFullscreenInput does not advance cursor column for zero-width or control characters", () => {
+  const wrapped = wrapFullscreenInput("\x7f\x7f", 40, 2);
+  assert.equal(wrapped.cursorCol, 0);
+});
+
+test("fullscreen mouse drag coalesces consecutive drag events, skips unchanged head redraws, and batches frame writes", () => {
+  const events = coalesceMouseEvents([
+    { kind: "down", column: 2, row: 3 },
+    { kind: "drag", column: 4, row: 3 },
+    { kind: "drag", column: 8, row: 3 },
+    { kind: "drag", column: 12, row: 3 },
+    { kind: "up", column: 12, row: 3 },
+  ]);
+  assert.deepEqual(events, [
+    { kind: "down", column: 2, row: 3 },
+    { kind: "drag", column: 12, row: 3 },
+    { kind: "up", column: 12, row: 3 },
+  ]);
+
+  const writes = [];
+  const renderer = new FullscreenRenderer(
+    { workspace: "agent-cli", model: "active-model", ready: true, tokens: 0, branch: "main" },
+    { stdinTTY: true, stdoutTTY: true, columns: 80, rows: 24, colorMode: "truecolor" },
+    { write: (chunk) => writes.push(chunk) }
+  );
+  renderer.start();
+  for (let i = 0; i < 40; i++) {
+    renderer.appendAssistant(`第 ${i} 条消息包含 \`code_${i}\` 与说明文本`);
+  }
+  writes.length = 0;
+
+  renderer.handleMouse({ kind: "down", column: 5, row: 5 });
+  assert.equal(writes.length, 0, "mouse down without active selection does not trigger an extra redraw");
+
+  renderer.handleMouse({ kind: "drag", column: 10, row: 5 });
+  assert.equal(writes.length, 1, "moving selection head flushes the whole frame in a single batched write");
+
+  // Repeat drag at the exact same cell: must be a no-op (0 writes)
+  const changed = renderer.handleMouse({ kind: "drag", column: 10, row: 5 });
+  assert.equal(changed, false);
+  assert.equal(writes.length, 1, "unchanged drag head must not trigger a redraw");
+
   renderer.stop();
 });

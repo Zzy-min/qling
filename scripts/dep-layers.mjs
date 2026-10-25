@@ -48,6 +48,7 @@ export function layerOf(rel) {
     p.startsWith("lsp/") ||
     p === "context-compactor.ts" ||
     p === "context-tool-hygiene.ts" ||
+    p === "context-history-repair.ts" ||
     p.startsWith("git/")
   ) {
     return "core-services";

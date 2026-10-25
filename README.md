@@ -1,6 +1,6 @@
 # 轻灵 Qling
 
-[![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#安装)
+[![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=node.js&logoColor=white)](#安装)
 [![GitHub Release](https://img.shields.io/github/v/release/Zzy-min/qling?label=release)](https://github.com/Zzy-min/qling/releases/latest)
 [![npm](https://img.shields.io/npm/v/@qlingzzy/qling?label=npm)](https://www.npmjs.com/package/@qlingzzy/qling)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -86,7 +86,7 @@ GitHub Release、WinGet 与 npm 可能按不同节奏发布；请分别查看 [R
 
 ### 从源码启动
 
-要求 Node.js 18+、npm 9+：
+要求 Node.js 22+、npm 9+：
 
 ```bash
 git clone https://github.com/Zzy-min/qling.git
@@ -116,6 +116,23 @@ qling setup
 ```powershell
 [Environment]::SetEnvironmentVariable('QLING_LLM_API_KEY', '<your-key>', 'User')
 ```
+
+配置优先级：默认值 < 工作目录 `qling.config.{yaml,yml,json}` 或 `--config` < `QLING_LLM_*` 环境变量 < CLI `--provider/--model/--endpoint/--api-key` < 当前进程里的 `/model` 会话切换（会话切换不写回配置文件）。
+
+只给 `--provider` 或 `QLING_LLM_PROVIDER`、且 endpoint/model 仍是默认值时，会用该 provider 的预设补齐 endpoint 和 model。`QLING_LLM_API_KEY` 只属于启动时的 provider，不会在切换供应商后继续当成新供应商的密钥。各供应商使用自己的环境变量：
+
+| Provider | 环境变量 |
+| --- | --- |
+| deepseek | `DEEPSEEK_API_KEY` |
+| openai | `OPENAI_API_KEY` |
+| dashscope | `DASHSCOPE_API_KEY` |
+| moonshot (kimi) | `MOONSHOT_API_KEY` |
+| zhipu | `ZHIPU_API_KEY` |
+| minimax | `MINIMAX_API_KEY` |
+| mimo | `MIMO_API_KEY` |
+| siliconflow | `SILICONFLOW_API_KEY` |
+
+`/model use <preset>` 切到另一家且没有对应 key 时会拒绝切换，不会把上一把 key 发到新 endpoint。`/model` 与 `/model list` 只显示当前服务商的预设、已知模型和当前模型。`qling models` 与 `/model list --remote` 只用当前服务商的 endpoint 和 Key 请求 `GET {endpoint}/models`（5 秒超时；失败或空列表则回退到该服务商预设，不打印 key）。`qling models --all` 才列出全部预设模型，且不会向其他服务商发请求或读取其他 Key。
 
 新开终端后运行：
 

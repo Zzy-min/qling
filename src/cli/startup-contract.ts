@@ -4,10 +4,10 @@ import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp" | "models";
 
-const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "版本": "version",
@@ -45,6 +45,7 @@ const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "connect": "connect",
   "连接器": "connect",
   "ACP": "acp",
+  "模型": "models",
 };
 
 interface TopLevelCommandSuggestion {
@@ -205,6 +206,15 @@ export type CliResolution = CliResolutionOk | CliResolutionErr;
 
 export function formatCliError(code: string, message: string): string {
   const t = getLocalizedText();
+  if (code === "QLING_API_KEY_MISSING") {
+    return `Error: [${code}]\n${formatLocalGuidancePanel({
+      title: message,
+      reason: "当前模型服务商缺少 API Key。",
+      next: "运行 `qling setup` 配置模型，并设置 QLING_LLM_API_KEY 或对应服务商的 API Key；本地 Ollama 可免密钥使用。",
+      example: "qling setup",
+      boundary: t.boundaries.localValidation,
+    })}`;
+  }
   if (message.includes("\n原因:") || message.includes(t.labels.reason + ":")) {
     return `Error: [${code}]\n${message}`;
   }
@@ -273,6 +283,21 @@ export function parseCliArgs(args: string[]): CliResolution {
         };
       }
       global.tuiMode = value as "auto" | "fullscreen" | "classic";
+      if (inline === null) i++;
+      continue;
+    }
+    if (arg === "--code-runtime" || arg.startsWith("--code-runtime=")) {
+      const inline = arg.startsWith("--code-runtime=") ? arg.slice("--code-runtime=".length) : null;
+      const value = String(inline ?? args[i + 1] ?? "").trim().toLowerCase();
+      if (!["auto", "native", "wsl"].includes(value)) {
+        return {
+          kind: "error",
+          code: "CLI_INVALID_OPTION_VALUE",
+          message: "--code-runtime 仅支持 auto、native 或 wsl。",
+          exitCode: 2,
+        };
+      }
+      global.codeRuntime = value as "auto" | "native" | "wsl";
       if (inline === null) i++;
       continue;
     }
@@ -647,6 +672,7 @@ ${binName} ${version} - 本地优先 AI Agent CLI 工作台
   ${binName}                          # 默认进入流式 TUI（chat）
   ${binName} chat                     # 显式进入流式 TUI
   ${binName} --tui-mode fullscreen    # 强制全屏 TUI（auto|fullscreen|classic）
+  ${binName} --code-runtime auto      # 代码任务运行时（auto|native|wsl）
   ${binName} --continue               # 恢复最近一次交互会话
   ${binName} --resume <session>       # 恢复指定交互会话
   ${binName} repl                     # 简易 REPL
@@ -686,6 +712,7 @@ TUI 环境变量:
   ${binName} permissions              # 查看本地权限默认策略与规则
   ${binName} permissions explain <tool> # 解释指定工具的权限决策
   ${binName} config                   # 查看本地配置摘要（密钥脱敏）
+  ${binName} models [--all]           # 默认只列当前服务商（远端失败回退该服务商预设，不打印 key）；--all 列出全部预设且不请求其他服务商
   ${binName} mcp                      # MCP 状态 / list / presets / add / remove
   ${binName} hooks                    # 查看本地 hooks/guard 配置摘要
   ${binName} hooks disable <name>     # 按名称禁用 JSON hook（不影响权限判定）

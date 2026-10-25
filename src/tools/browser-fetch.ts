@@ -21,6 +21,7 @@ export const browserFetchTool: ToolDefinition = {
 
 **约束**:
 - 仅限文档检索与公开信息获取。
+- 网络检查覆盖主文档与页面资源；不运行 iframe、弹出窗口或后台 Worker。
 - 不支持登录、表单提交或任何交互式自动化。`,
   parameters: {
     type: "object",
@@ -96,11 +97,46 @@ export async function runBrowserFetch(args: {
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
+    serviceWorkers: "block",
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   });
   const page = await context.newPage();
 
   try {
+    // Child targets have independent CDP sessions. This read-only extractor does
+    // not need them; disable them instead of leaving an unguarded redirect path.
+    await context.addInitScript(() => {
+      for (const name of ["Worker", "SharedWorker"]) {
+        Object.defineProperty(globalThis, name, { value: undefined, writable: false, configurable: false });
+      }
+      Object.defineProperty(window, "open", { value: () => null, writable: false, configurable: false });
+    });
+    context.on("page", (child) => { if (child !== page) void child.close().catch(() => undefined); });
+    // A protocol interceptor sees every redirect hop, unlike Playwright route().
+    // Let Chromium navigate normally so the final URL/origin and relative assets remain correct.
+    const protocol = await context.newCDPSession(page);
+    await protocol.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+    protocol.on("Fetch.requestPaused", (event) => {
+      void (async () => {
+        const allowedMethod = ["GET", "HEAD"].includes(event.request.method);
+        const decision = allowedMethod ? await checkUrlFetchPolicy(new URL(event.request.url), guard) : { allowed: false };
+        await protocol.send(decision.allowed ? "Fetch.continueRequest" : "Fetch.failRequest", {
+          requestId: event.requestId,
+          ...(!decision.allowed ? { errorReason: "BlockedByClient" } : {}),
+        });
+      })().catch(() => protocol.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" }).catch(() => undefined));
+    });
+    await context.route("**/*", async (route) => {
+      try {
+        const request = route.request();
+        if (request.isNavigationRequest() && request.frame() !== page.mainFrame()) { await route.abort("blockedbyclient"); return; }
+        if (!["GET", "HEAD"].includes(request.method())) { await route.abort("blockedbyclient"); return; }
+        const decision = await checkUrlFetchPolicy(new URL(request.url()), guard);
+        if (decision.allowed) await route.continue();
+        else await route.abort("blockedbyclient");
+      } catch { await route.abort("blockedbyclient").catch(() => undefined); }
+    });
+    await page.routeWebSocket("**/*", (socket) => socket.close());
     console.error(`🌐 正在打开浏览器访问: ${rawUrl}...`);
     await page.goto(rawUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 

@@ -28,8 +28,8 @@ function output(command, commandArgs) {
 }
 
 const nodeMajor = Number(process.versions.node.split(".")[0] ?? "0");
-if (!Number.isFinite(nodeMajor) || nodeMajor < 18) {
-  console.error(`Node.js >= 18 is required. Current: ${process.versions.node}`);
+if (!Number.isFinite(nodeMajor) || nodeMajor < 22) {
+  console.error(`Node.js >= 22 is required. Current: ${process.versions.node}`);
   process.exit(1);
 }
 

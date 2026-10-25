@@ -12,6 +12,12 @@ import { runSkill, skillTool } from "./skill.js";
 import { runSearch, searchTool } from "./search.js";
 import { runPlanner, plannerTool } from "./planner.js";
 import { runUrlFetch, urlFetchTool } from "./url-fetch.js";
+import {
+  deepseekFetchTool,
+  deepseekSearchTool,
+  runDeepseekFetch,
+  runDeepseekSearch,
+} from "./deepseek-web.js";
 import { runSubtask, subtaskTool } from "./subtask.js";
 import { runVisionAnalyze, visionAnalyzeTool } from "./vision-analyze.js";
 import { runBrowserFetch, browserFetchTool } from "./browser-fetch.js";
@@ -20,11 +26,21 @@ import { runCodeSymbols, codeSymbolsTool } from "./code-symbols.js";
 import { runLsp, lspTool } from "./lsp.js";
 import { runPatch, patchTool } from "./patch.js";
 import {
+  impactAnalysisTool,
+  repoMapTool,
+  repoQueryTool,
+  runImpactAnalysis,
+  runRepoMap,
+  runRepoQuery,
+} from "./repo-intelligence.js";
+import {
   bgKillTool,
   bgListTool,
+  bgReconcileTool,
   bgWaitTool,
   runBgKill,
   runBgList,
+  runBgReconcile,
   runBgWait,
 } from "./bg-task.js";
 import { toolError } from "./error-utils.js";
@@ -42,6 +58,26 @@ import {
   runPatchAnchored,
   runReadAnchored,
 } from "./anchored-edit.js";
+import { ToolCapabilityRegistry } from "../harness/tool-capability.js";
+import { runVerify, verifyTool } from "./verify.js";
+
+export const toolSearchTool: ToolDefinition = {
+  name: "tool_search",
+  description: "Search the local capability catalog with BM25 and return relevant tool names and usage schemas.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      limit: { type: "number" },
+    },
+    required: ["query"],
+  },
+  readOnly: true,
+  destructive: false,
+  concurrencySafe: true,
+  scenes: ["discovery"],
+  effortHint: "low",
+};
 
 export {
   bashTool,
@@ -52,6 +88,8 @@ export {
   searchTool,
   plannerTool,
   urlFetchTool,
+  deepseekSearchTool,
+  deepseekFetchTool,
   subtaskTool,
   visionAnalyzeTool,
   browserFetchTool,
@@ -62,10 +100,15 @@ export {
   bgListTool,
   bgWaitTool,
   bgKillTool,
+  bgReconcileTool,
   searchToolCatalogTool,
   useCatalogTool,
   readAnchoredTool,
   patchAnchoredTool,
+  repoMapTool,
+  repoQueryTool,
+  impactAnalysisTool,
+  verifyTool,
 };
 
 export const ALL_TOOLS: ToolDefinition[] = [
@@ -77,6 +120,8 @@ export const ALL_TOOLS: ToolDefinition[] = [
   searchTool,
   plannerTool,
   urlFetchTool,
+  deepseekSearchTool,
+  deepseekFetchTool,
   subtaskTool,
   visionAnalyzeTool,
   browserFetchTool,
@@ -87,6 +132,12 @@ export const ALL_TOOLS: ToolDefinition[] = [
   bgListTool,
   bgWaitTool,
   bgKillTool,
+  bgReconcileTool,
+  repoMapTool,
+  repoQueryTool,
+  impactAnalysisTool,
+  verifyTool,
+  toolSearchTool,
 ];
 
 export interface ToolRegistryBuildOptions {
@@ -121,6 +172,8 @@ const handlers: Record<string, ToolHandler> = {
   search: runSearch as ToolHandler,
   planner: runPlanner as ToolHandler,
   url_fetch: runUrlFetch as ToolHandler,
+  deepseek_search: runDeepseekSearch as ToolHandler,
+  deepseek_fetch: runDeepseekFetch as ToolHandler,
   subtask: runSubtask as ToolHandler,
   vision_analyze: runVisionAnalyze as ToolHandler,
   browser_fetch: runBrowserFetch as ToolHandler,
@@ -131,10 +184,15 @@ const handlers: Record<string, ToolHandler> = {
   bg_list: runBgList as ToolHandler,
   bg_wait: runBgWait as ToolHandler,
   bg_kill: runBgKill as ToolHandler,
+  bg_reconcile: runBgReconcile as ToolHandler,
   search_tool: runSearchToolCatalog as ToolHandler,
   use_tool: runUseCatalogTool as ToolHandler,
   read_anchored: runReadAnchored as ToolHandler,
   patch_anchored: runPatchAnchored as ToolHandler,
+  repo_map: runRepoMap as ToolHandler,
+  repo_query: runRepoQuery as ToolHandler,
+  impact_analysis: runImpactAnalysis as ToolHandler,
+  verify: runVerify as unknown as ToolHandler,
 };
 
 export type ToolDispatcher = (toolCall: ToolCall) => Promise<ToolResult>;
@@ -166,6 +224,17 @@ export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolD
         const result = await registry.callTool(parsed.serverName, parsed.toolName, toolCall.arguments);
         return { ...result, tool_call_id: toolCall.id };
       }
+    }
+    if (toolCall.name === "tool_search") {
+      const query = String(toolCall.arguments.query ?? "").trim();
+      if (!query) return { ...toolError("TOOL_SEARCH_INVALID", "query is required"), tool_call_id: toolCall.id };
+      const limit = Math.max(1, Math.min(20, Number(toolCall.arguments.limit ?? 8)));
+      const matches = new ToolCapabilityRegistry(ALL_TOOLS).search(query, limit);
+      return {
+        tool_call_id: toolCall.id,
+        output: matches.map((tool) => `${tool.name}: ${tool.description}\nschema: ${JSON.stringify(tool.parameters)}`).join("\n\n") || "(no matching tools)",
+        is_error: false,
+      };
     }
 
     if (toolCall.name === "search_tool") {

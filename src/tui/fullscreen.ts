@@ -7,6 +7,14 @@ import {
   modePromptPrefix,
   resolveGrokUiMode,
 } from "./mode-chrome.js";
+import {
+  contentOffsetToScrollOffset,
+  scrollbarClickToOffset,
+  scrollbarThumb,
+  scrollOffsetToContentOffset,
+  type ScrollbarThumb,
+} from "./scrollbar.js";
+import { extractImportantSteps } from "./thinking-fold.js";
 import { fg, paint } from "./theme.js";
 
 export type TuiMode = "auto" | "fullscreen" | "classic";
@@ -33,7 +41,17 @@ export interface FullscreenChrome {
 type Entry =
   | { kind: "user" | "result" | "notice" | "error"; text: string }
   | { kind: "assistant"; text: string; streaming?: boolean }
+  | { kind: "thinking"; text: string; durationMs?: number }
   | { kind: "tool"; tool: string; command: string; status: "running" | "success" | "error"; durationMs?: number; output?: string };
+
+interface ScrollbarHit {
+  column: number;
+  firstRow: number;
+  trackCells: number;
+  totalLines: number;
+  viewportLines: number;
+  maxOffset: number;
+}
 
 export interface FullscreenMouseEvent {
   kind: "down" | "drag" | "up";
@@ -41,9 +59,53 @@ export interface FullscreenMouseEvent {
   row: number;
 }
 
+/**
+ * 对标 grok-build `xai-grok-pager/src/app/event_loop.rs` `drain_and_process`：
+ * 当单个输入批次中包含连续的鼠标 `drag` 事件时，仅保留最新的 `drag` 终点坐标，
+ * 同时完整保留 `down` / `up` 边界，避免单次 I/O 批次触发数十次冗余重绘。
+ */
+export function coalesceMouseEvents(
+  events: readonly FullscreenMouseEvent[]
+): FullscreenMouseEvent[] {
+  if (events.length <= 1) return [...events];
+  const coalesced: FullscreenMouseEvent[] = [];
+  for (const event of events) {
+    if (
+      event.kind === "drag" &&
+      coalesced.length > 0 &&
+      coalesced[coalesced.length - 1]?.kind === "drag"
+    ) {
+      coalesced[coalesced.length - 1] = event;
+    } else {
+      coalesced.push(event);
+    }
+  }
+  return coalesced;
+}
+
 interface SelectionPoint {
   line: number;
   column: number;
+}
+
+interface EntryCacheRecord {
+  width: number;
+  expandThinking: boolean;
+  expandToolOutput: boolean;
+  styledLines: string[];
+  plainLines: string[];
+}
+
+interface BodyCacheRecord {
+  entriesRevision: number;
+  expandThinking: boolean;
+  expandToolOutput: boolean;
+  transientOutput: string | null;
+  progressLabel: string | null;
+  progressDuration: string;
+  overlayRef: string[] | null;
+  styledLines: string[];
+  plainLines: string[];
 }
 
 export function parseTuiMode(value: string | null | undefined): TuiMode | null {
@@ -198,6 +260,43 @@ export function resolveColorMode(
   return "ansi256";
 }
 
+/** 把输入按显示宽度折行，并记下光标落在哪一行。显式换行单独成行。 */
+export function wrapFullscreenInput(
+  value: string,
+  width: number,
+  cursorIndex: number
+): { lines: string[]; cursorRow: number; cursorCol: number } {
+  const safeWidth = Math.max(1, width);
+  const lines = [""];
+  let current = 0;
+  let cursorRow = 0;
+  let cursorCol = 0;
+  let seen = 0;
+  const markCursor = () => {
+    cursorRow = lines.length - 1;
+    cursorCol = current;
+  };
+  for (const char of Array.from(value)) {
+    if (seen === cursorIndex) markCursor();
+    if (char === "\n") {
+      lines.push("");
+      current = 0;
+      seen += char.length;
+      continue;
+    }
+    const charWidth = Math.max(0, stringWidth(char));
+    if (current > 0 && charWidth > 0 && current + charWidth > safeWidth) {
+      lines.push("");
+      current = 0;
+    }
+    lines[lines.length - 1] += char;
+    current += charWidth;
+    seen += char.length;
+  }
+  if (seen === cursorIndex || value.length === 0) markCursor();
+  return { lines, cursorRow, cursorCol };
+}
+
 function fit(value: string, width: number): string {
   if (width <= 0) return "";
   const plain = stripAnsi(value);
@@ -269,14 +368,22 @@ export class FullscreenRenderer {
   private input = "";
   private inputCursor = 0;
   private cursorColumn = 5;
+  private cursorRow = 1;
   private placeholder = "输入任务，/help 查看命令";
   private overlay: string[] | null = null;
   private expandToolOutput = false;
+  private expandThinking = false;
+  private scrollbarDragging = false;
+  private scrollbarHit: ScrollbarHit | null = null;
   private progress: { label: string; elapsedMs: number } | null = null;
   private transientOutput: string | null = null;
   private previous: string[] = [];
   private scrollOffset = 0;
   private maxScrollOffset = 0;
+  /** True while the viewport is glued to the newest line. */
+  private followTail = true;
+  /** Body line kept at the top of the viewport while the user is reading history. */
+  private anchoredTop: number | null = null;
   private active = false;
   private selectionAnchor: SelectionPoint | null = null;
   private selectionHead: SelectionPoint | null = null;
@@ -288,6 +395,11 @@ export class FullscreenRenderer {
   private screenBodyRows = new Map<number, number>();
   private visibleBodyFirstRow = 0;
   private visibleBodyLastRow = 0;
+  private entriesRevision = 0;
+  private entryRenderCache = new WeakMap<Entry, Map<number, EntryCacheRecord>>();
+  private bodyCacheByWidth = new Map<number, BodyCacheRecord>();
+  private lastDragScrollAt = 0;
+  private dragScrollSteps = 0;
   private readonly iconMode: TuiIconMode;
   private readonly writeRaw: (value: string) => void;
   private readonly writeClipboard: (value: string) => void | Promise<void>;
@@ -386,12 +498,51 @@ export class FullscreenRenderer {
   appendResult(text: string): void { this.append({ kind: "result", text }); }
   appendNotice(text: string): void { this.append({ kind: "notice", text }); }
   appendError(text: string): void { this.append({ kind: "error", text }); }
+  appendThinking(text: string, durationMs?: number): void {
+    const raw = String(text ?? "").trim();
+    if (!raw) return;
+    this.append({ kind: "thinking", text: raw, durationMs });
+  }
+
+  /** Replace a live assistant stream with a collapsed thinking block. */
+  foldAssistantIntoThinking(text: string, durationMs?: number): void {
+    const raw = String(text ?? "").trim();
+    if (!raw) return;
+    const previous = this.entries.at(-1);
+    const entry: Entry = { kind: "thinking", text: raw, durationMs };
+    if (previous?.kind === "assistant" && previous.streaming) {
+      this.entries[this.entries.length - 1] = entry;
+      this.entriesRevision += 1;
+      this.render();
+      return;
+    }
+    this.append(entry);
+  }
+
+  finishThinking(durationMs: number): void {
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const entry = this.entries[index];
+      if (entry?.kind === "thinking" && entry.durationMs === undefined) {
+        this.entries[index] = { ...entry, durationMs };
+        this.entriesRevision += 1;
+        this.render();
+        return;
+      }
+    }
+  }
+
+  toggleThinking(): boolean {
+    if (!this.entries.some((entry) => entry.kind === "thinking")) return false;
+    this.expandThinking = !this.expandThinking;
+    this.render();
+    return true;
+  }
 
   streamAssistant(text: string): void {
     const previous = this.entries.at(-1);
     if (previous?.kind === "assistant" && previous.streaming) {
       this.entries[this.entries.length - 1] = { kind: "assistant", text, streaming: true };
-      this.scrollOffset = 0;
+      this.entriesRevision += 1;
       this.render();
       return;
     }
@@ -402,7 +553,7 @@ export class FullscreenRenderer {
     const previous = this.entries.at(-1);
     if (previous?.kind === "assistant" && previous.streaming) {
       this.entries[this.entries.length - 1] = { kind: "assistant", text };
-      this.scrollOffset = 0;
+      this.entriesRevision += 1;
       this.render();
       return;
     }
@@ -412,6 +563,7 @@ export class FullscreenRenderer {
     const previous = this.entries.at(-1);
     if (previous?.kind === "tool" && previous.tool === tool && previous.command === command && previous.status === "running") {
       this.entries[this.entries.length - 1] = { kind: "tool", tool, command, status, durationMs, output };
+      this.entriesRevision += 1;
       this.render();
       return;
     }
@@ -420,13 +572,19 @@ export class FullscreenRenderer {
 
   clearEntries(): void {
     this.entries = [];
+    this.entriesRevision += 1;
+    this.bodyCacheByWidth.clear();
     this.scrollOffset = 0;
+    this.followTail = true;
+    this.anchoredTop = null;
     this.clearSelection();
     this.render();
   }
 
   clearConversationView(placeholder = "输入任务，/help 查看命令"): void {
     this.entries = [];
+    this.entriesRevision += 1;
+    this.bodyCacheByWidth.clear();
     this.transientOutput = null;
     this.progress = null;
     this.overlay = null;
@@ -434,6 +592,8 @@ export class FullscreenRenderer {
     this.inputCursor = 0;
     this.placeholder = placeholder;
     this.scrollOffset = 0;
+    this.followTail = true;
+    this.anchoredTop = null;
     this.clearSelection();
     this.render();
   }
@@ -445,6 +605,7 @@ export class FullscreenRenderer {
     );
     if (nextOffset === this.scrollOffset) return;
     this.scrollOffset = nextOffset;
+    this.noteUserScroll();
     this.render(false, false);
   }
 
@@ -455,26 +616,71 @@ export class FullscreenRenderer {
 
   scrollEnd(): void {
     this.scrollOffset = 0;
+    this.followTail = true;
+    this.anchoredTop = null;
     this.render();
   }
 
   handleMouse(event: FullscreenMouseEvent): boolean {
+    if (this.scrollbarDragging || this.hitScrollbar(event.column, event.row)) {
+      if (event.kind === "up") {
+        this.scrollbarDragging = false;
+        this.applyScrollbar(event.row);
+        return true;
+      }
+      this.scrollbarDragging = true;
+      this.selectionDragging = false;
+      this.selectionAnchor = null;
+      this.selectionHead = null;
+      this.selectionMoved = false;
+      this.applyScrollbar(event.row);
+      return true;
+    }
     if (event.kind === "down") {
       const point = this.selectionPointAt(event.column, event.row);
+      const hadActiveSelection =
+        this.selectionAnchor !== null ||
+        this.selectionHead !== null ||
+        this.selectionFeedback !== null;
       this.selectionAnchor = point;
       this.selectionHead = point;
       this.selectionDragging = point !== null;
       this.selectionMoved = false;
       this.selectionFeedback = null;
-      this.render();
+      this.lastDragScrollAt = 0;
+      this.dragScrollSteps = 0;
+      if (hadActiveSelection) {
+        this.render();
+      }
       return point !== null;
     }
     if (!this.selectionDragging || !this.selectionAnchor) return false;
 
+    let scrolledDuringDrag = false;
     if (event.kind === "drag") {
-      if (event.row <= this.visibleBodyFirstRow) this.scrollLines(2);
-      else if (event.row >= this.visibleBodyLastRow) this.scrollLines(-2);
+      const scrollDelta =
+        event.row <= this.visibleBodyFirstRow
+          ? 2
+          : event.row >= this.visibleBodyLastRow
+            ? -2
+            : 0;
+      if (scrollDelta !== 0) {
+        // 对标 grok-build `textarea.rs` `drag_scroll_interval`: 80ms -> 60ms -> 40ms 阶梯节流
+        const nowMs = this.now().getTime();
+        const minInterval =
+          this.dragScrollSteps === 0 ? 80 : this.dragScrollSteps === 1 ? 60 : 40;
+        if (this.lastDragScrollAt === 0 || nowMs - this.lastDragScrollAt >= minInterval) {
+          this.lastDragScrollAt = nowMs;
+          this.dragScrollSteps += 1;
+          scrolledDuringDrag = this.applyScrollLinesSilent(scrollDelta);
+        }
+      } else {
+        this.lastDragScrollAt = 0;
+        this.dragScrollSteps = 0;
+      }
     }
+    const prevHead = this.selectionHead;
+    const prevMoved = this.selectionMoved;
     const point = this.selectionPointAt(event.column, event.row, true);
     if (point) {
       this.selectionHead = point;
@@ -484,10 +690,12 @@ export class FullscreenRenderer {
     }
     if (event.kind === "up") {
       this.selectionDragging = false;
+      this.lastDragScrollAt = 0;
+      this.dragScrollSteps = 0;
       if (!this.selectionMoved) {
         this.selectionAnchor = null;
         this.selectionHead = null;
-        this.render();
+        if (prevMoved) this.render();
         return false;
       }
       const text = this.selectedTextFromActiveRange();
@@ -499,7 +707,28 @@ export class FullscreenRenderer {
       this.render();
       return copied;
     }
+    // 对标 grok-build `selection.rs` `update_active_text_drag`：
+    // 当选区终点与滚动位置均未变化时返回 false，跳过无意义的整帧重绘
+    const headChanged =
+      !prevHead ||
+      !this.selectionHead ||
+      compareSelectionPoint(prevHead, this.selectionHead) !== 0 ||
+      prevMoved !== this.selectionMoved;
+    if (!headChanged && !scrolledDuringDrag) {
+      return false;
+    }
     this.render();
+    return true;
+  }
+
+  private applyScrollLinesSilent(delta: number): boolean {
+    const nextOffset = Math.max(
+      0,
+      Math.min(this.maxScrollOffset, this.scrollOffset + delta)
+    );
+    if (nextOffset === this.scrollOffset) return false;
+    this.scrollOffset = nextOffset;
+    this.noteUserScroll();
     return true;
   }
 
@@ -558,8 +787,9 @@ export class FullscreenRenderer {
     if (this.entries.length > 240) {
       this.entries.splice(0, this.entries.length - 240);
       this.clearSelection();
+      this.anchoredTop = null;
     }
-    this.scrollOffset = 0;
+    this.entriesRevision += 1;
     this.render();
   }
 
@@ -621,6 +851,30 @@ export class FullscreenRenderer {
       const label = entry.streaming ? `${assistantIcon}  轻灵  ·  流式` : `${assistantIcon}  轻灵`;
       return [paint.primary(label), ...formatMarkdownForTerminal(entry.text, { width: bodyWidth }).map((line) => `    ${line}`), ""];
     }
+    if (entry.kind === "thinking") {
+      const folded = extractImportantSteps(entry.text, 3);
+      const header = entry.durationMs !== undefined
+        ? `◇  思考了 ${duration(entry.durationMs)}`
+        : "◇  思考";
+      if (this.expandThinking) {
+        const markdown = formatMarkdownForTerminal(entry.text, { width: bodyWidth });
+        return [
+          paint.thinking(header),
+          ...markdown.map((line) => paint.dim(`│  ${line}`)),
+          paint.dim("   Ctrl+E 折叠"),
+          "",
+        ];
+      }
+      const lines = [
+        paint.thinking(header),
+        ...folded.steps.map((step) => paint.dim(`│  ${step}`)),
+      ];
+      if (folded.expandable) {
+        lines.push(paint.dim(`   … ${folded.hidden > 0 ? `另有 ${folded.hidden} 步 · ` : ""}Ctrl+E 展开`));
+      }
+      lines.push("");
+      return lines;
+    }
     if (entry.kind === "notice") {
       return [
         ...entry.text.split(/\r\n?|\n/).map((line) => paint.dim(line)),
@@ -663,6 +917,151 @@ export class FullscreenRenderer {
     return [paint.success("☑ 分析完成"), fit(top, width), ...markdown.map((line) => `│ ${fit(line, width - 4)} │`), fit(bottom, width), ""];
   }
 
+  private cachedEntryLines(entry: Entry, width: number): EntryCacheRecord {
+    let byWidth = this.entryRenderCache.get(entry);
+    if (!byWidth) {
+      byWidth = new Map<number, EntryCacheRecord>();
+      this.entryRenderCache.set(entry, byWidth);
+    }
+    const existing = byWidth.get(width);
+    if (
+      existing &&
+      existing.expandThinking === this.expandThinking &&
+      existing.expandToolOutput === this.expandToolOutput
+    ) {
+      return existing;
+    }
+    const styledLines = this.entryLines(entry, width);
+    const plainLines = styledLines.map(stripAnsi);
+    const record: EntryCacheRecord = {
+      width,
+      expandThinking: this.expandThinking,
+      expandToolOutput: this.expandToolOutput,
+      styledLines,
+      plainLines,
+    };
+    byWidth.set(width, record);
+    return record;
+  }
+
+  private buildBodyWithPlain(width: number): { styledLines: string[]; plainLines: string[] } {
+    const progressLabel = this.progress?.label ?? null;
+    const progressDuration = this.progress ? duration(this.progress.elapsedMs) : "";
+    const cached = this.bodyCacheByWidth.get(width);
+    if (
+      cached &&
+      cached.entriesRevision === this.entriesRevision &&
+      cached.expandThinking === this.expandThinking &&
+      cached.expandToolOutput === this.expandToolOutput &&
+      cached.transientOutput === this.transientOutput &&
+      cached.progressLabel === progressLabel &&
+      cached.progressDuration === progressDuration &&
+      cached.overlayRef === this.overlay
+    ) {
+      return cached;
+    }
+
+    const styledLines: string[] = [];
+    const plainLines: string[] = [];
+    for (const entry of this.entries) {
+      const rendered = this.cachedEntryLines(entry, width);
+      styledLines.push(...rendered.styledLines);
+      plainLines.push(...rendered.plainLines);
+    }
+    if (this.transientOutput?.trim()) {
+      const transientStyled = [
+        ...formatMarkdownForTerminal(this.transientOutput, {
+          width: Math.max(20, width - 6),
+        }).map((line) => `    ${line}`),
+        "",
+      ];
+      styledLines.push(...transientStyled);
+      plainLines.push(...transientStyled.map(stripAnsi));
+    }
+    if (this.progress) {
+      const progressLine = paint.magenta(
+        `◯ 正在执行…  ${this.progress.label}  ·  等待 ${progressDuration}`
+      );
+      styledLines.push(progressLine, "");
+      plainLines.push(stripAnsi(progressLine), "");
+    }
+    if (this.overlay) {
+      styledLines.push(...this.overlay);
+      plainLines.push(...this.overlay.map(stripAnsi));
+    }
+
+    const record: BodyCacheRecord = {
+      entriesRevision: this.entriesRevision,
+      expandThinking: this.expandThinking,
+      expandToolOutput: this.expandToolOutput,
+      transientOutput: this.transientOutput,
+      progressLabel,
+      progressDuration,
+      overlayRef: this.overlay,
+      styledLines,
+      plainLines,
+    };
+    this.bodyCacheByWidth.set(width, record);
+    return record;
+  }
+
+  private buildBody(width: number): string[] {
+    return this.buildBodyWithPlain(width).styledLines;
+  }
+
+  private decorateScrollbar(
+    line: string,
+    rowIndex: number,
+    thumb: ScrollbarThumb | null,
+    following: boolean,
+  ): string {
+    const inThumb = thumb !== null && rowIndex >= thumb.start && rowIndex < thumb.start + thumb.length;
+    if (!inThumb) return `${line}  `;
+    // A hairline handle. The full block read as a second border.
+    const mark = following ? paint.dim("┃") : paint.secondary("┃");
+    return `${line} ${mark}`;
+  }
+
+  private hitScrollbar(column: number, row: number): boolean {
+    const hit = this.scrollbarHit;
+    if (!hit) return false;
+    return column === hit.column && row >= hit.firstRow && row < hit.firstRow + hit.trackCells;
+  }
+
+  private applyScrollbar(row: number): void {
+    const hit = this.scrollbarHit;
+    if (!hit || hit.trackCells <= 0) return;
+    const cell = Math.max(0, Math.min(hit.trackCells - 1, row - hit.firstRow));
+    const decision = scrollbarClickToOffset(
+      cell,
+      hit.trackCells,
+      hit.totalLines,
+      hit.viewportLines,
+    );
+    const span = Math.max(0, hit.totalLines - hit.viewportLines);
+    const contentOffset = decision.kind === "bottom"
+      ? span
+      : decision.kind === "offset"
+        ? decision.offsetFromTop
+        : 0;
+    const nextOffset = contentOffsetToScrollOffset(
+      contentOffset,
+      hit.maxOffset,
+      hit.totalLines,
+      hit.viewportLines,
+    );
+    if (nextOffset === this.scrollOffset) return;
+    this.scrollOffset = nextOffset;
+    this.noteUserScroll();
+    this.render(false, false);
+  }
+
+  /** A manual scroll parks the viewport. Reaching the bottom follows again. */
+  private noteUserScroll(): void {
+    this.followTail = this.scrollOffset === 0;
+    this.anchoredTop = null;
+  }
+
   private compose(): string[] {
     const width = Math.max(40, this.capabilities.columns);
     const rows = Math.max(12, this.capabilities.rows);
@@ -684,67 +1083,98 @@ export class FullscreenRenderer {
     const hints = fit(hintText, width - 10);
     const clock = this.now().toLocaleTimeString("zh-CN", { hour12: false });
     const footer = fit(hints, width - stringWidth(clock) - 1) + clock;
-    const value = this.input || this.placeholder;
     const inputWidth = width - 4;
-    const cursorPrefix = this.input.slice(0, this.inputCursor);
-    const cursorPrefixWidth = stringWidth(cursorPrefix);
-    const contentWidth = Math.max(1, inputWidth - 2);
-    let visibleValue = value;
-    let cursorInValue = cursorPrefixWidth;
-    if (this.input && cursorPrefixWidth > contentWidth - 1) {
-      let visiblePrefix = cursorPrefix;
-      while (visiblePrefix && stringWidth(visiblePrefix) > contentWidth - 2) {
-        visiblePrefix = visiblePrefix.slice(1);
-      }
-      visibleValue = `‹${visiblePrefix}${this.input.slice(this.inputCursor)}`;
-      cursorInValue = 1 + stringWidth(visiblePrefix);
-    }
     const promptPrefix = modePromptPrefix(uiMode);
+    const prefixWidth = stringWidth(promptPrefix);
+    const textWidth = Math.max(1, inputWidth - prefixWidth);
+    const wrapped = this.input
+      ? wrapFullscreenInput(this.input, textWidth, this.inputCursor)
+      : { lines: [this.placeholder], cursorRow: 0, cursorCol: 0 };
+    const maxInputLines = Math.max(1, Math.min(8, rows - header.length - 4));
+    let windowStart = 0;
+    if (wrapped.cursorRow >= maxInputLines) windowStart = wrapped.cursorRow - maxInputLines + 1;
+    windowStart = Math.max(0, Math.min(windowStart, Math.max(0, wrapped.lines.length - maxInputLines)));
+    const visibleWrapped = wrapped.lines.slice(windowStart, windowStart + maxInputLines);
+    const cursorVisibleRow = wrapped.cursorRow - windowStart;
+    const continuation = " ".repeat(prefixWidth);
+    const inputBody = visibleWrapped.map((line, index) => {
+      const prefix = !this.input || windowStart + index === 0 ? promptPrefix : continuation;
+      return fg(accent, "│ ") + fit(prefix + line, inputWidth) + fg(accent, " │");
+    });
     this.cursorColumn = Math.min(
-      this.capabilities.columns - 2,
-      3 + stringWidth(promptPrefix) + (this.input ? cursorInValue : 0)
+      this.capabilities.columns - 1,
+      3 + prefixWidth + (this.input ? wrapped.cursorCol : 0)
     );
-    const inputLabel = modeInputTopLabel(uiMode, "");
-    const topPrefix = `╭─ ${inputLabel} `;
-    const topBorder =
-      topPrefix +
-      "─".repeat(Math.max(1, width - stringWidth(topPrefix) - 1)) +
-      "╮";
+    const hidden = wrapped.lines.length > visibleWrapped.length;
+    const inputLabel = hidden
+      ? `${windowStart + 1}-${windowStart + visibleWrapped.length}/${wrapped.lines.length}`
+      : modeInputTopLabel(uiMode, "");
+    let topLabel = inputLabel;
+    while (stringWidth(`╭─ ${topLabel} ╮`) > width && topLabel.length > 1) {
+      topLabel = topLabel.slice(0, -1);
+    }
+    const topPrefix = `╭─ ${topLabel} `;
+    const topDash = Math.max(1, width - stringWidth(topPrefix) - 1);
+    const topBorder = topPrefix + "─".repeat(topDash) + "╮";
     const input = [
-      fg(accent, topBorder),
-      fg(accent, "│ ") + fit(`${promptPrefix}${visibleValue}`, inputWidth) + fg(accent, " │"),
+      fg(accent, stringWidth(topBorder) > width ? fit(topBorder, width) : topBorder),
+      ...inputBody,
       fg(accent, `╰${"─".repeat(width - 2)}╯`),
       paint.dim(footer),
     ];
-    const contentHeight = Math.max(1, rows - header.length - input.length);
-    let body = this.entries.flatMap((entry) => this.entryLines(entry, width));
-    if (this.transientOutput?.trim()) {
-      body.push(
-        ...formatMarkdownForTerminal(this.transientOutput, {
-          width: Math.max(20, width - 6),
-        }).map((line) => `    ${line}`),
-        ""
-      );
-    }
-    if (this.progress) {
-      body.push(
-        paint.magenta(
-          `◯ 正在执行…  ${this.progress.label}  ·  等待 ${duration(this.progress.elapsedMs)}`
-        ),
-        ""
-      );
-    }
-    if (this.overlay) body = [...body, ...this.overlay];
-    this.logicalBodyPlain = body.map(stripAnsi);
+    const contentHeight = Math.max(0, rows - header.length - input.length);
     const feedbackLineCount = this.selectionFeedback ? 1 : 0;
     const bottomContentHeight = Math.max(1, contentHeight - feedbackLineCount);
+    const narrowedWidth = width - 2;
+    const cachedNarrow = width >= 44 ? this.bodyCacheByWidth.get(narrowedWidth) : undefined;
+    let bodyRecord: { styledLines: string[]; plainLines: string[] };
+    let showScrollbar = false;
+    if (
+      cachedNarrow &&
+      cachedNarrow.entriesRevision === this.entriesRevision &&
+      cachedNarrow.expandThinking === this.expandThinking &&
+      cachedNarrow.expandToolOutput === this.expandToolOutput &&
+      cachedNarrow.transientOutput === this.transientOutput &&
+      cachedNarrow.overlayRef === this.overlay &&
+      cachedNarrow.styledLines.length > bottomContentHeight
+    ) {
+      // 滚动条已激活用窄宽度缓存直接命中，避免先算 width 再算 width - 2
+      bodyRecord = this.buildBodyWithPlain(narrowedWidth);
+      showScrollbar = true;
+    } else {
+      bodyRecord = this.buildBodyWithPlain(width);
+      showScrollbar = bodyRecord.styledLines.length > bottomContentHeight && width >= 44;
+      if (showScrollbar) {
+        bodyRecord = this.buildBodyWithPlain(narrowedWidth);
+      }
+    }
+    const contentWidth = showScrollbar ? narrowedWidth : width;
+    const body = bodyRecord.styledLines;
+    this.logicalBodyPlain = bodyRecord.plainLines;
     const maxOffset =
       body.length > bottomContentHeight
         ? Math.max(0, body.length - Math.max(1, bottomContentHeight - 1))
         : 0;
     this.maxScrollOffset = maxOffset;
+    if (this.followTail) {
+      this.scrollOffset = 0;
+      this.anchoredTop = null;
+    } else if (this.anchoredTop !== null) {
+      const parkedHeight = Math.max(1, bottomContentHeight - 1);
+      const next = body.length - (this.anchoredTop + parkedHeight);
+      this.scrollOffset = Math.max(0, Math.min(maxOffset, next));
+    }
     const offset = Math.min(maxOffset, this.scrollOffset);
     this.scrollOffset = offset;
+    if (offset === 0) {
+      this.followTail = true;
+      this.anchoredTop = null;
+    } else {
+      const parkedHeight = Math.max(1, bottomContentHeight - 1);
+      const end = body.length - offset;
+      this.anchoredTop = Math.max(0, end - parkedHeight);
+      this.followTail = false;
+    }
     const end = body.length - offset;
     const visibleHeight = Math.max(
       1,
@@ -754,7 +1184,7 @@ export class FullscreenRenderer {
     const visible = body
       .slice(visibleStart, end)
       .map((line, index) => {
-        const fitted = fit(line, width);
+        const fitted = fit(line, contentWidth);
         const selected = this.selectedCellsForLine(visibleStart + index);
         return selected
           ? highlightVisibleCells(fitted, selected[0], selected[1])
@@ -762,17 +1192,38 @@ export class FullscreenRenderer {
       });
     const scrollStatus = [
       ...(offset > 0
-        ? [fit(paint.warn(`↑ 已离开底部 · ${offset} 行`), width)]
+        ? [fit(paint.warn(`↑ 已离开底部 · ${offset} 行`), contentWidth)]
         : []),
       ...(this.selectionFeedback
-        ? [fit(paint.success(`✓ ${this.selectionFeedback}`), width)]
+        ? [fit(paint.success(`✓ ${this.selectionFeedback}`), contentWidth)]
         : []),
     ];
     const padded = [
       ...scrollStatus,
       ...visible,
       ...Array(Math.max(0, contentHeight - scrollStatus.length - visible.length)).fill(""),
-    ].map((line) => stringWidth(stripAnsi(line)) === width ? line : fit(line, width));
+    ].map((line) => stringWidth(stripAnsi(line)) === contentWidth ? line : fit(line, contentWidth));
+    const thumb = showScrollbar
+      ? scrollbarThumb(
+          padded.length,
+          body.length,
+          bottomContentHeight,
+          scrollOffsetToContentOffset(offset, maxOffset, body.length, bottomContentHeight),
+        )
+      : null;
+    const railed = showScrollbar
+      ? padded.map((line, index) => this.decorateScrollbar(line, index, thumb, offset === 0))
+      : padded;
+    this.scrollbarHit = showScrollbar
+      ? {
+          column: width,
+          firstRow: header.length + 1,
+          trackCells: padded.length,
+          totalLines: body.length,
+          viewportLines: bottomContentHeight,
+          maxOffset,
+        }
+      : null;
     this.screenBodyRows.clear();
     const firstBodyRow = header.length + scrollStatus.length + 1;
     for (let index = 0; index < visible.length; index++) {
@@ -780,7 +1231,8 @@ export class FullscreenRenderer {
     }
     this.visibleBodyFirstRow = firstBodyRow;
     this.visibleBodyLastRow = Math.max(firstBodyRow, firstBodyRow + visible.length - 1);
-    const lines = [...header, ...padded, ...input].slice(0, rows);
+    const lines = [...header, ...railed, ...input].slice(0, rows);
+    this.cursorRow = Math.max(1, lines.length - input.length + 2 + cursorVisibleRow);
     if (this.capabilities.colorMode === "none") return lines.map(stripAnsi);
     if (this.capabilities.colorMode === "ansi256") return lines.map(toAnsi256);
     return lines;
@@ -797,16 +1249,17 @@ export class FullscreenRenderer {
       Math.max(0, lines.length - 2),
       Math.max(0, lines.length - 1),
     ]);
+    let frameBuffer = "";
     for (let index = 0; index < lines.length; index++) {
       if (
         !force &&
         this.previous[index] === lines[index] &&
         (!refreshChrome || !fixedRows.has(index))
       ) continue;
-      this.writeRaw(`\x1b[${index + 1};1H\x1b[2K${lines[index]}`);
+      frameBuffer += `\x1b[${index + 1};1H\x1b[2K${lines[index]}`;
     }
     this.previous = lines;
-    const inputRow = Math.max(1, lines.length - 2);
-    this.writeRaw(`\x1b[${inputRow};${Math.max(3, this.cursorColumn)}H\x1b[?25h`);
+    frameBuffer += `\x1b[${Math.max(1, this.cursorRow)};${Math.max(3, this.cursorColumn)}H\x1b[?25h`;
+    this.writeRaw(frameBuffer);
   }
 }

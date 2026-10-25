@@ -139,21 +139,41 @@ function wrapVisibleText(text: string, width: number, firstPrefix = "", restPref
   let contentWidth = Math.max(1, safeWidth - sw(prefix));
   let current = "";
   let currentWidth = 0;
+  let activeAnsi = "";
 
-  for (const char of Array.from(text)) {
+  for (let idx = 0; idx < text.length;) {
+    const ansiMatch = text.slice(idx).match(/^\x1b\[[0-9;]*m/);
+    if (ansiMatch) {
+      const seq = ansiMatch[0];
+      current += seq;
+      if (seq === "\x1b[0m") {
+        activeAnsi = "";
+      } else {
+        activeAnsi += seq;
+      }
+      idx += seq.length;
+      continue;
+    }
+
+    const cp = text.codePointAt(idx);
+    if (cp === undefined) break;
+    const char = String.fromCodePoint(cp);
     const charWidth = sw(char);
-    if (current && currentWidth + charWidth > contentWidth) {
-      lines.push(prefix + current);
+    if (currentWidth > 0 && currentWidth + charWidth > contentWidth) {
+      const cleanedCurrent = current.replace(/(?:\x1b\[[0-9;]*m)+$/, "");
+      const needsReset = /\x1b\[[0-9;]*m/.test(cleanedCurrent) && !cleanedCurrent.endsWith("\x1b[0m");
+      lines.push(prefix + cleanedCurrent + (needsReset ? "\x1b[0m" : ""));
       prefix = restPrefix;
       contentWidth = Math.max(1, safeWidth - sw(prefix));
-      current = "";
+      current = activeAnsi;
       currentWidth = 0;
     }
     current += char;
     currentWidth += charWidth;
+    idx += char.length;
   }
 
-  lines.push(prefix + current);
+  lines.push(prefix + current + (activeAnsi ? "\x1b[0m" : ""));
   return lines;
 }
 
@@ -311,15 +331,18 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
 
     // 1. 处理代码块开始/结束
     if (line.trim().startsWith("```")) {
+      const span = Math.max(10, width - 4);
       if (!inCodeBlock) {
-        // starting, capture lang
-        const lang = line.trim().slice(3).trim() || "code";
-        const border = "─".repeat(Math.max(10, width - 4));
-        resultLines.push(DIM(`  ┌${border} [${lang}]`));
+        const rawLang = line.trim().slice(3).trim();
+        if (rawLang && sw(rawLang) + 4 < span) {
+          const fill = Math.max(2, span - sw(rawLang) - 3);
+          resultLines.push(DIM(`  ┌─ ${rawLang} ${"─".repeat(fill)}`));
+        } else {
+          resultLines.push(DIM(`  ┌${"─".repeat(span)}`));
+        }
         inCodeBlock = true;
       } else {
-        const border = "─".repeat(Math.max(10, width - 4));
-        resultLines.push(DIM("  └" + border));
+        resultLines.push(DIM(`  └${"─".repeat(span)}`));
         inCodeBlock = false;
       }
       i++;
@@ -377,7 +400,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
     if (headerMatch) {
       const content = headerMatch[2] || "";
       resultLines.push("");
-      resultLines.push(...wrapVisibleText(content, width).map((wrapped) => S.p(BOLD(renderInline(wrapped)))));
+      resultLines.push(...wrapVisibleText(renderInline(content), width).map((wrapped) => S.p(BOLD(wrapped))));
       resultLines.push("");
       i++;
       continue;
@@ -391,7 +414,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       const content = taskMatch[3] || "";
       const firstPrefix = indent + `  ${checked} `;
       const restPrefix = indent + "    ";
-      resultLines.push(...wrapVisibleText(content, width, firstPrefix, restPrefix).map(renderInline));
+      resultLines.push(...wrapVisibleText(renderInline(content), width, firstPrefix, restPrefix));
       i++;
       continue;
     }
@@ -403,7 +426,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       const content = ulMatch[2] || "";
       const firstPrefix = indent + "  • ";
       const restPrefix = indent + "    ";
-      resultLines.push(...wrapVisibleText(content, width, firstPrefix, restPrefix).map(renderInline));
+      resultLines.push(...wrapVisibleText(renderInline(content), width, firstPrefix, restPrefix));
       i++;
       continue;
     }
@@ -416,7 +439,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       const content = olMatch[3] || "";
       const firstPrefix = indent + "  " + num + " ";
       const restPrefix = indent + " ".repeat(sw("  " + num + " "));
-      resultLines.push(...wrapVisibleText(content, width, firstPrefix, restPrefix).map(renderInline));
+      resultLines.push(...wrapVisibleText(renderInline(content), width, firstPrefix, restPrefix));
       i++;
       continue;
     }
@@ -427,7 +450,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
       const indent = quoteMatch[1] || "";
       const content = quoteMatch[2] || "";
       const prefix = indent + "  > ";
-      resultLines.push(...wrapVisibleText(content, width, prefix, prefix).map((l) => S.s(renderInline(l))));
+      resultLines.push(...wrapVisibleText(renderInline(content), width, prefix, prefix).map((l) => S.s(l)));
       i++;
       continue;
     }
@@ -441,7 +464,7 @@ export function formatMarkdownForTerminal(text: string, options: { width: number
     }
 
     // 10. 普通行
-    resultLines.push(...wrapVisibleText(line, width).map(renderInline));
+    resultLines.push(...wrapVisibleText(renderInline(line), width));
     i++;
   }
 

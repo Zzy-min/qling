@@ -4,18 +4,19 @@
 
 import { readFile } from "fs/promises";
 import { stat } from "fs/promises";
+import { createHash } from "node:crypto";
 import { ToolDefinition, ToolResult } from "../types.js";
 import { getErrorMessage, toolError, toolSuccess } from "./error-utils.js";
 import { getRuntimeRootsFromEnv, isWithinAllowedRoots, resolveToolPath } from "../runtime-paths.js";
 
 const MAX_READ_LINES = 2000;
-const DEFAULT_READ_LINES = 500;
+const DEFAULT_READ_LINES = 100;
 const MAX_READ_BYTES = 2 * 1024 * 1024; // 2MB
 
 export const readTool: ToolDefinition = {
   name: "read",
   description:
-    "Read the contents of a local file (code, config, logs, text files). Binary files return an error. Supports line offset/limit for partial reads.",
+    "Read a hashed 100-line window from a local text file. Supports line offset/limit and returns a continuation cursor.",
   longDescription: `读取本地文件内容。**不会修改任何文件**。
 
 **使用场景**:
@@ -59,7 +60,7 @@ export const readTool: ToolDefinition = {
       description: "最多读取的行数。超过此数量的文件会被截断并提示总行数。最大 2000 行。",
       minimum: 1,
       maximum: 2000,
-      default: 500,
+      default: 100,
     },
   },
   examples: [
@@ -114,10 +115,9 @@ export async function runRead(args: {
 
     const lines = content.split("\n");
     const selected = lines.slice(offset, offset + limit);
-    const header =
-      lines.length > limit
-        ? `[显示第 ${offset + 1}-${offset + selected.length} 行，共 ${lines.length} 行]\n`
-        : "";
+    const hash = createHash("sha256").update(content, "utf8").digest("hex");
+    const nextOffset = offset + selected.length < lines.length ? offset + selected.length + 1 : null;
+    const header = `[path=${filePath} lines=${offset + 1}-${offset + selected.length}/${lines.length} sha256=${hash}${nextOffset ? ` next_offset=${nextOffset}` : ""}]\n`;
 
     return toolSuccess(header + selected.join("\n"));
   } catch (err: unknown) {

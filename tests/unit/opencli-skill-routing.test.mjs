@@ -22,10 +22,14 @@ test("opencli skill file exists with routing-rich frontmatter", () => {
   const raw = readFileSync(opencliSkillPath, "utf8");
   const meta = parseFrontmatter(raw, opencliSkillPath);
   assert.equal(meta.name, "opencli");
-  assert.match(meta.description, /抖音|douyin|opencli/i);
-  assert.match(meta.description, /url_fetch|tiktok/i);
-  assert.ok(meta.tags.some((t) => /douyin|opencli/i.test(t)));
+  assert.match(meta.description, /opencli/i);
+  assert.match(meta.description, /明确要求/);
+  assert.match(meta.description, /url_fetch/);
+  assert.match(meta.description, /browser_act/);
+  assert.equal(meta.tags.some((t) => /douyin|xiaohongshu|weibo|bilibili|tiktok|twitter/i.test(t)), false);
+  assert.ok(meta.tags.some((t) => /opencli/i.test(t)));
   assert.match(raw, /opencli douyin/);
+  assert.match(raw, /不要加载或调用本技能/);
   assert.match(raw, /TikTok|tiktok/);
   assert.match(raw, /xiaohongshu/);
   assert.match(raw, /xsec_token/);
@@ -39,8 +43,9 @@ test("opencli frontmatter parses identically after a CRLF checkout", () => {
   const meta = parseFrontmatter(crlfRaw, opencliSkillPath);
 
   assert.equal(meta.name, "opencli");
-  assert.match(meta.description, /抖音|douyin|opencli/i);
-  assert.ok(meta.tags.some((tag) => /douyin|opencli/i.test(tag)));
+  assert.match(meta.description, /opencli/i);
+  assert.match(meta.description, /明确要求/);
+  assert.ok(meta.tags.some((tag) => /opencli/i.test(tag)));
 });
 
 test("getSkillDirs includes package-bundled skills directory", () => {
@@ -58,7 +63,9 @@ test("listSkills discovers opencli from package skills path", async () => {
   const skills = await listSkills([join(repoRoot, "skills")]);
   const opencli = skills.find((s) => s.name === "opencli");
   assert.ok(opencli, `opencli not found in ${skills.map((s) => s.name).join(", ")}`);
-  assert.match(opencli.description, /opencli|抖音/i);
+  assert.match(opencli.description, /opencli/i);
+  assert.match(opencli.description, /明确要求/);
+  assert.doesNotMatch(opencli.description, /必须加载本 skill/);
 });
 
 test("runSkill loads opencli body with decision tree", async () => {
@@ -74,6 +81,7 @@ test("runSkill loads opencli body with decision tree", async () => {
     assert.notEqual(result.is_error, true, result.output);
     assert.match(result.output, /硬规则|决策树|opencli douyin/i);
     assert.match(result.output, /url_fetch/);
+    assert.match(result.output, /明确说出 opencli|明确要求 opencli/);
   } finally {
     process.chdir(prev);
     if (prevHome === undefined) delete process.env.QLING_HOME;
@@ -83,13 +91,18 @@ test("runSkill loads opencli body with decision tree", async () => {
   }
 });
 
-test("restrictions section routes social platforms to opencli skill", () => {
+test("restrictions do not default web search or browser control to opencli", () => {
   const section = buildRestrictionsSection();
-  assert.match(section.content, /skill name="opencli"/);
-  assert.match(section.content, /opencli douyin/);
-  assert.match(section.content, /xiaohongshu|xsec_token/);
+  assert.match(section.content, /deepseek_search/);
+  assert.match(section.content, /deepseek_fetch/);
   assert.match(section.content, /url_fetch/);
-  assert.match(section.content, /TikTok|tiktok/i);
+  assert.match(section.content, /browser_fetch/);
+  assert.match(section.content, /browser_act/);
+  assert.match(section.content, /明确说使用 opencli|明确要求 opencli/);
+  assert.match(section.content, /禁止.*自动调用 opencli/);
+  assert.doesNotMatch(section.content, /先 skill name="opencli"/);
+  assert.doesNotMatch(section.content, /优先 opencli/);
+  assert.doesNotMatch(section.content, /必须 opencli douyin/);
   assert.match(section.content, /关联分析|外部工具/);
   assert.match(section.content, /实事求是|失败/);
 });
@@ -105,11 +118,14 @@ test("workflow section encodes three task execution rules", () => {
   assert.match(section.content, /正确流程|可复现/);
   assert.match(section.content, /未完成|失败|实事求是|禁止把挑战页/);
   assert.match(section.content, /文档.*Skill.*能力.*当前运行状态/s);
+  assert.match(section.content, /识别\/分类.*消费\/转换\/序列化.*哨兵值/s);
   assert.match(section.content, /已确认.*可运行.*已登录.*已连接/s);
   assert.match(section.content, /本轮.*直接.*证据/s);
   assert.match(section.content, /只读探测.*--version.*list.*doctor.*whoami.*status.*--help/s);
   assert.match(section.content, /声明.*证据.*文档能力.*当前运行态.*任务结果/s);
-  assert.match(section.content, /opencli.*skill.*list -f json.*doctor.*--help/s);
+  assert.match(section.content, /明确要求 opencli/);
+  assert.match(section.content, /不要主动探测 opencli/);
+  assert.doesNotMatch(section.content, /OpenCLI 场景须先加载/);
   assert.match(section.content, /清理.*删除.*明确授权/s);
 });
 

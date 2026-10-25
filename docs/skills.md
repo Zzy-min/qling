@@ -28,7 +28,7 @@
 最后加载包内 `skills/`，因此项目或用户 skill 可以覆盖同名内置 skill。当前内置可执行项包括：
 
 - `qling`
-- `opencli`
+- `opencli`（仅当用户明确要求时使用，不是网页搜索或浏览器控制的默认通道）
 - `lifecycle-spec`
 - `lifecycle-plan`
 - `lifecycle-build`

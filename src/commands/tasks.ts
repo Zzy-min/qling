@@ -2,6 +2,7 @@ import { SlashCommand } from "./types.js";
 import {
   formatBgTaskLine,
   getBackgroundTaskRegistry,
+  isBackgroundTaskOwnedBy,
 } from "../runtime/background-tasks.js";
 
 function formatTimestamp(ts?: number): string {
@@ -22,7 +23,17 @@ export const tasksCommand: SlashCommand = {
   ],
   execute: async (args, context) => {
     const sub = (args[0] ?? "list").toLowerCase();
-    const reg = getBackgroundTaskRegistry();
+    const reg = getBackgroundTaskRegistry((context.agentLoop as any).getRuntimeRootDir?.());
+    const owner = {
+      workspaceDir: context.workspaceDir ?? (context.agentLoop as any).getWorkspaceDir?.() ?? process.cwd(),
+      sessionId: (context.agentLoop as any).getSessionId?.() ?? undefined,
+      leaseToken: (context.agentLoop as any).getSessionLeaseToken?.() ?? undefined,
+    };
+    const getOwned = (taskId: string) => {
+      const task = reg.get(taskId);
+      if (!task || !isBackgroundTaskOwnedBy(task, owner)) throw new Error(`task ${taskId} does not belong to the current workspace/session`);
+      return task;
+    };
 
     // ── shell background (G3.2) ─────────────────────────
     if (sub === "wait") {
@@ -36,6 +47,7 @@ export const tasksCommand: SlashCommand = {
         ? Math.max(0, Number.parseInt(timeoutRaw, 10) || 120_000)
         : 120_000;
       try {
+        getOwned(id);
         context.writeLine(`⏳ waiting ${id} (timeout ${timeoutMs}ms)…`);
         const task = await reg.wait(id, timeoutMs);
         context.writeLine(formatBgTaskLine(task));
@@ -58,6 +70,7 @@ export const tasksCommand: SlashCommand = {
       // shell bg id 以 bg_ 开头；否则走 loop cancel
       if (id.startsWith("bg_")) {
         try {
+          getOwned(id);
           const task = await reg.kill(id, "user");
           context.writeLine(`🛑 ${formatBgTaskLine(task)}`);
         } catch (err) {
@@ -150,6 +163,7 @@ export const tasksCommand: SlashCommand = {
       }
       if (id.startsWith("bg_")) {
         try {
+          getOwned(id);
           const task = await reg.kill(id, "user");
           context.writeLine(`🛑 ${formatBgTaskLine(task)}`);
         } catch (err) {
@@ -170,7 +184,7 @@ export const tasksCommand: SlashCommand = {
 
     if (effectiveSub === "clear") {
       let shellKilled = 0;
-      for (const t of reg.list({ includeFinished: false })) {
+      for (const t of reg.listOwned(owner, { includeFinished: false })) {
         try {
           await reg.kill(t.taskId, "user");
           shellKilled += 1;
@@ -189,7 +203,7 @@ export const tasksCommand: SlashCommand = {
     }
 
     // default list
-    const bgTasks = reg.list({ includeFinished: true, limit: 30 });
+    const bgTasks = reg.listOwned(owner, { includeFinished: true, limit: 30 });
     context.writeLine("");
     context.writeLine("⚙️ 【Shell 后台 task_id】");
     context.writeLine("-----------------------------------------");

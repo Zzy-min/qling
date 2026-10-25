@@ -21,7 +21,7 @@ import {
   resolveSlashUiPorts,
   type SlashUiPorts,
 } from "../slash-ports.js";
-import { InputBuffer } from "./input-buffer.js";
+import { InputBuffer, isInsertableInputChar } from "./input-buffer.js";
 import { formatProgressPulse } from "./progress.js";
 import {
   formatRoleHeader,
@@ -60,8 +60,8 @@ import {
 import { boldAnsi, dimAnsi, fg, getBorderChars, paint } from "./theme.js";
 import { enterTuiQuietMode, leaveTuiQuietMode } from "../runtime/console-guard.js";
 import {
-  isInternalUserNoise,
-  isToolOnlyAssistantText,
+  classifyReplayMessage,
+  type ReplayTranscriptItem,
 } from "../session/session-title.js";
 import {
   captureJumpRestore,
@@ -71,7 +71,9 @@ import {
 import type { TuiFocus } from "./focus-model.js";
 import { tabStructuralFocus } from "./focus-model.js";
 import { ScrollbackViewport } from "./scrollback-viewport.js";
+import { extractImportantSteps, formatThinkingSummary } from "./thinking-fold.js";
 import {
+  coalesceMouseEvents,
   consumeMouseInput,
   FullscreenRenderer,
   resolveColorMode,
@@ -250,6 +252,7 @@ export class StreamUI {
   private slashOutputActive = false;
   private assistantStreamOpen = false;
   private assistantStreamText = "";
+  private chainStartedAt = 0;
   private turnLog: Array<{ preview: string; fullText: string }> = [];
   /** 独立于终端原生历史的 managed scrollback 缓冲。 */
   private scrollbackViewport = new ScrollbackViewport({ maxTurns: 40 });
@@ -265,9 +268,12 @@ export class StreamUI {
   /** 对标 JumpRestore：打开浮层前快照，Esc 恢复 */
   private jumpRestore: JumpRestore | null = null;
   private turnSelected = 0;
+  private inputBatchDepth = 0;
+  private pendingInputRedraw = false;
+  private pendingCursorSync = false;
 
   constructor(
-    model: string = "deepseek-chat",
+    model: string = "deepseek-flash",
     tools: number = 0,
     options: { now?: () => number; slashUi?: SlashUiPorts; tuiMode?: TuiMode } = {}
   ) {
@@ -1233,6 +1239,14 @@ export class StreamUI {
   }
 
   private redrawInput(): void {
+    if (this.inputBatchDepth > 0) {
+      this.pendingInputRedraw = true;
+      return;
+    }
+    this.flushRedrawInput();
+  }
+
+  private flushRedrawInput(): void {
     if (this.fullscreen) {
       this.fullscreen.setInput(
         this.input.value,
@@ -1255,7 +1269,7 @@ export class StreamUI {
       process.stdout.write("\r\x1b[J");
     }
     this.writeInputValue(!this.input.value);
-    this.syncCursor();
+    this.flushSyncCursor();
     this.promptLive = true;
   }
 
@@ -1438,6 +1452,14 @@ export class StreamUI {
   }
 
   private syncCursor(): void {
+    if (this.inputBatchDepth > 0) {
+      this.pendingCursorSync = true;
+      return;
+    }
+    this.flushSyncCursor();
+  }
+
+  private flushSyncCursor(): void {
     if (this.fullscreen) {
       this.fullscreen.setInput(
         this.input.value,
@@ -1989,7 +2011,7 @@ export class StreamUI {
         mousePartial = mouse.pending;
         chunk = mouse.rest;
         this.queueFullscreenWheel(mouse.lineDelta);
-        for (const event of mouse.events) {
+        for (const event of coalesceMouseEvents(mouse.events)) {
           this.fullscreen.handleMouse(event);
         }
         if (!chunk) return;
@@ -2015,7 +2037,15 @@ export class StreamUI {
       }
 
       // 非 bracketed 粘贴：多字符纯文本整块插入（含单行 /dashboard web）
-      if (!bracketedPaste && !chunk.includes("\x1b") && chunk.length > 1) {
+      // 对标 grok-build `event_loop.rs` `is_pasteable_key_event`：
+      // 仅当整段 chunk 全部由可粘贴字符（或换行）组成、不含 \x7f / \x08 等控制键时才走批量粘贴，
+      // 防止长按 Backspace 连发合并的 "\x7f\x7f..." 被误判为粘贴并导致光标右移。
+      const isPurePasteableChunk =
+        !bracketedPaste &&
+        !chunk.includes("\x1b") &&
+        chunk.length > 1 &&
+        Array.from(chunk).every((c) => c === "\r" || c === "\n" || isInsertableInputChar(c));
+      if (isPurePasteableChunk) {
         const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
         // 管道/自动化输入中的单行尾换行代表 Enter，不应被识别成多行粘贴草稿。
         if (!process.stdin.isTTY && normalized.endsWith("\n")) {
@@ -2034,6 +2064,8 @@ export class StreamUI {
         }
       }
 
+      this.inputBatchDepth += 1;
+      try {
       for (const ch of chunk) {
         if (!partial && ch === "\x1b") {
           partial = ch;
@@ -2068,7 +2100,7 @@ export class StreamUI {
               else this.input.insertNewline();
             }
             pasteSawCarriageReturn = false;
-          } else if (ch >= " " || ch === "\t") {
+          } else if (isInsertableInputChar(ch)) {
             pasteSawCarriageReturn = false;
             this.input.insertChar(ch);
           }
@@ -2102,10 +2134,10 @@ export class StreamUI {
             return;
           }
           this.handleCtrlC();
-        } else if (seq === "\x7f") {
+        } else if (seq === "\x7f" || seq === "\x08") {
           partial = "";
           if (this.overlay && !(this.overlay.kind === "options" && this.overlay.filterable)) {
-            return;
+            continue;
           }
           this.handleBackspace();
         } else if (seq === "\x01") {
@@ -2238,16 +2270,29 @@ export class StreamUI {
         } else if (seq === "i" && (this.overlay?.kind === "turns" || this.focus === "scrollback")) {
           partial = "";
           this.focusPromptFromScrollback("输入焦点");
-        } else if (ch >= " " || ch === "\t") {
+        } else if (isInsertableInputChar(ch)) {
           partial = "";
           // 审批等选项面：取消字母快捷键，仅 ↑/↓ + Enter；可打印键一律吞掉
           // 斜杠切换器可键入过滤；其它浮层吞掉可打印键
           if (this.overlay && !(this.overlay.kind === "options" && this.overlay.filterable)) {
-            return;
+            continue;
           }
           this.handleChar(ch);
         } else {
           partial = "";
+        }
+      }
+      } finally {
+        this.inputBatchDepth = Math.max(0, this.inputBatchDepth - 1);
+        if (this.inputBatchDepth === 0) {
+          if (this.pendingInputRedraw) {
+            this.pendingInputRedraw = false;
+            this.pendingCursorSync = false;
+            this.flushRedrawInput();
+          } else if (this.pendingCursorSync) {
+            this.pendingCursorSync = false;
+            this.flushSyncCursor();
+          }
         }
       }
     };
@@ -2317,7 +2362,7 @@ export class StreamUI {
         // 斜杠过滤框内换行无意义，压成空格
         if (this.isFilterableOverlay()) this.input.insertChar(" ");
         else this.input.insertNewline();
-      } else if (ch >= " " || ch === "\t") {
+      } else if (isInsertableInputChar(ch)) {
         this.input.insertChar(ch);
       }
     }
@@ -2469,6 +2514,7 @@ export class StreamUI {
   }
 
   private handleCtrlE(): void {
+    if (!this.input.value && this.fullscreen?.toggleThinking()) return;
     this.input.moveEnd();
     this.redrawInput();
   }
@@ -3204,19 +3250,62 @@ export class StreamUI {
     this.clearProgressLine();
     const raw = String(text ?? "").trim();
     if (!raw) return;
+    const summary = formatThinkingSummary(raw);
     if (this.fullscreen) {
-      this.fullscreen.appendAssistant(raw);
-      this.scrollbackViewport.appendAssistant(raw);
+      this.fullscreen.appendThinking(raw);
+      this.scrollbackViewport.appendAssistant(summary);
       return;
     }
-    this.writeMarkdownBlock(raw, { roleHeader: true });
-    this.scrollbackViewport.appendAssistant(raw);
+    this.writeFoldedThinking(raw);
+    this.scrollbackViewport.appendAssistant(summary);
+  }
+
+  /**
+   * A streamed assistant turn that is about to call tools is the thinking
+   * chain, not the final answer. Collapse it in place.
+   */
+  foldStreamedThinking(text: string): void {
+    const raw = String(text ?? "").trim();
+    if (!raw) {
+      this.cancelAssistantStream();
+      return;
+    }
+    const durationMs = this.chainStartedAt > 0
+      ? Math.max(0, this.now() - this.chainStartedAt)
+      : undefined;
+    this.chainStartedAt = 0;
+    if (this.fullscreen) {
+      this.fullscreen.foldAssistantIntoThinking(raw, durationMs && durationMs > 0 ? durationMs : undefined);
+      this.scrollbackViewport.appendAssistant(formatThinkingSummary(raw));
+      this.assistantStreamOpen = false;
+      this.assistantStreamText = "";
+      return;
+    }
+    if (this.assistantStreamOpen) {
+      this.assistantStreamOpen = false;
+      this.assistantStreamText = "";
+      return;
+    }
+    this.appendThinking(raw);
+  }
+
+  private writeFoldedThinking(raw: string): void {
+    const folded = extractImportantSteps(raw, 3);
+    const lines = [
+      paint.thinking("◇  思考"),
+      ...folded.steps.map((step) => paint.dim(`│  ${step}`)),
+    ];
+    if (folded.expandable) {
+      lines.push(paint.dim(`   … ${folded.hidden > 0 ? `另有 ${folded.hidden} 步 · ` : ""}已折叠`));
+    }
+    process.stdout.write("\n" + lines.join("\n") + "\n");
   }
 
   appendAssistantDelta(delta: string): void {
     const visibleDelta = sanitizeStreamingText(delta);
     if (!visibleDelta) return;
     if (this.fullscreen) {
+      if (!this.assistantStreamOpen) this.chainStartedAt = this.now();
       this.assistantStreamOpen = true;
       this.assistantStreamText += visibleDelta;
       this.fullscreen.streamAssistant(this.assistantStreamText);
@@ -3226,6 +3315,7 @@ export class StreamUI {
     this.stopProgress();
     if (!this.assistantStreamOpen) {
       this.assistantStreamOpen = true;
+      this.chainStartedAt = this.now();
       this.assistantStreamText = "";
       process.stdout.write("\n" + S.p(BOLD(formatRoleHeader("assistant"))) + "  " + S.g(BOLD("流式")) + "\n");
     }
@@ -3262,7 +3352,7 @@ export class StreamUI {
 
   appendCogitated(durationMs: number): void {
     if (this.fullscreen) {
-      this.fullscreen.appendNotice(`◆ 思考完成 · ${fmtDur(durationMs)}`);
+      this.fullscreen.finishThinking(durationMs);
       return;
     }
     this.ensureStreamMode();
@@ -3414,14 +3504,17 @@ export class StreamUI {
   /**
    * 会话切换/恢复后：把已 hydrate 的 messages 回放到终端，并重建 turnLog。
    * - 先擦掉当前输入框，避免叠出多份输入框
-   * - 过滤 Token 预算 nudge、纯 tool 占位助手行
+   * - 不回放工作环境等 synthetic 消息，也不倾倒完整思维链
+   * - 工具前的助手正文折成思考要点；无工具调用的最终回答走结果框
    * - 可选 statusLine 与最终输入框一次画完（调用方勿再 appendValidation）
+   * 模型上下文不在这里裁剪，仍由会话消息本身保持完整。
    */
   replaySessionMessages(
     messages: Array<{
       role?: string;
       content?: unknown;
       tool_calls?: Array<{ function?: { name?: string } }>;
+      synthetic_reason?: string;
     }>,
     options: {
       maxMessages?: number;
@@ -3442,16 +3535,8 @@ export class StreamUI {
     this.scrollbackViewport.clear();
 
     const dialog = (Array.isArray(messages) ? messages : [])
-      .map((m) => {
-        const role = String(m?.role || "");
-        if (role !== "user" && role !== "assistant") return null;
-        const text = this.formatReplayMessageText(m);
-        if (!text.trim()) return null;
-        if (role === "user" && isInternalUserNoise(text)) return null;
-        if (role === "assistant" && isToolOnlyAssistantText(text)) return null;
-        return { role: role as "user" | "assistant", text };
-      })
-      .filter((m): m is { role: "user" | "assistant"; text: string } => m !== null);
+      .map((m) => classifyReplayMessage(m))
+      .filter((m): m is ReplayTranscriptItem => m !== null);
 
     if (this.fullscreen) {
       this.fullscreen.clearEntries();
@@ -3472,9 +3557,10 @@ export class StreamUI {
             this.turnLog.push({ preview: preview || "(空)", fullText: msg.text });
             if (this.turnLog.length > 40) this.turnLog.shift();
             this.scrollbackViewport.startUserTurn(msg.text);
+          } else if (msg.role === "thinking") {
+            this.appendThinking(msg.text);
           } else {
-            this.fullscreen.appendAssistant(msg.text);
-            this.scrollbackViewport.appendAssistant(msg.text);
+            this.appendFinal(msg.text);
           }
         }
       }
@@ -3521,9 +3607,10 @@ export class StreamUI {
           this.turnLog.push({ preview: preview || "(空)", fullText: msg.text });
           if (this.turnLog.length > 40) this.turnLog.shift();
           this.scrollbackViewport.startUserTurn(msg.text);
+        } else if (msg.role === "thinking") {
+          this.appendThinking(msg.text);
         } else {
-          this.scrollbackViewport.appendAssistant(msg.text);
-          this.writeReplayAssistant(msg.text);
+          this.appendFinal(msg.text);
         }
       }
     }
@@ -3543,29 +3630,6 @@ export class StreamUI {
     }
   }
 
-  private formatReplayMessageText(message: {
-    content?: unknown;
-    tool_calls?: Array<{ function?: { name?: string } }>;
-  }): string {
-    if (typeof message.content === "string" && message.content.trim()) {
-      return message.content;
-    }
-    if (message.content != null && typeof message.content !== "string") {
-      try {
-        return JSON.stringify(message.content);
-      } catch {
-        return String(message.content);
-      }
-    }
-    const tools = message.tool_calls;
-    if (Array.isArray(tools) && tools.length > 0) {
-      return tools
-        .map((tc) => `[tool] ${tc?.function?.name || "call"}`)
-        .join(", ");
-    }
-    return "";
-  }
-
   private clipReplayLines(lines: string[], maxLines: number): string[] {
     if (lines.length <= maxLines) return lines;
     const head = Math.max(1, Math.floor(maxLines * 0.7));
@@ -3575,25 +3639,6 @@ export class StreamUI {
       DIM(`… 省略 ${lines.length - head - tail} 行 …`),
       ...lines.slice(-tail),
     ];
-  }
-
-  /**
-   * 回放助手消息：走与 appendFinal 相同的 Markdown 渲染（含表格），
-   * 避免历史里 `| col |` 原样倾倒、表格错位。
-   */
-  private writeReplayAssistant(text: string): void {
-    const width = process.stdout.columns || 100;
-    const mdWidth = Math.max(40, width - 4);
-    process.stdout.write("\n" + S.p(formatRoleHeader("assistant")) + "\n");
-    const mdLines = formatMarkdownForTerminal(text, { width: mdWidth });
-    // 含表格时提高行上限，尽量不把 ┌─┬─┐ 结构从中间截断
-    const hasTable =
-      /\|.+\|/.test(text) ||
-      mdLines.some((line) => /[┌┬┐├┼┤└┴┘]/.test(line.replace(/\x1b\[[0-9;]*m/g, "")));
-    const maxLines = hasTable ? 120 : 64;
-    for (const line of this.clipReplayLines(mdLines, maxLines)) {
-      process.stdout.write(line + "\n");
-    }
   }
 
   appendFinal(text: string): void {

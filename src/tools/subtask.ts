@@ -3,7 +3,6 @@
 // ============================================================
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { SubtaskRunner } from "../agent/subtask.js";
 import { toolError, toolSuccess } from "./error-utils.js";
 import { bashTool } from "./bash.js";
 import { readTool } from "./read.js";
@@ -17,6 +16,7 @@ import { patchTool } from "./patch.js";
 import { codeSymbolsTool } from "./code-symbols.js";
 import { lspTool } from "./lsp.js";
 import { getRuntimeRootsFromEnv } from "../runtime-paths.js";
+import { resolveActiveLlm } from "../providers/resolve-llm.js";
 import {
   filterToolsForRole,
   isKnownSubAgentRole,
@@ -30,7 +30,7 @@ import {
   parseParallelTasks,
 } from "../agent/subtask-parallel.js";
 import { loadRoleCatalog } from "../agents/role-loader.js";
-import { UsageLedger } from "../usage-ledger.js";
+import { UsageLedger, type UsageLedgerSnapshot } from "../usage-ledger.js";
 import { randomUUID } from "node:crypto";
 import { getSubagentCoordinator, type SubtaskSpec } from "../agents/coordinator.js";
 import { SubagentWorktreeManager } from "../agents/worktree-manager.js";
@@ -49,6 +49,18 @@ const SUBTASK_TOOL_POOL = [
   plannerTool,
   urlFetchTool,
 ];
+
+export function subtaskErrorWithUsage(
+  code: string,
+  message: string,
+  usageSnapshot: UsageLedgerSnapshot,
+  usageIsIncomplete: boolean,
+): ToolResult {
+  return {
+    ...toolError(code, message, { retriable: false, category: "runtime" }),
+    meta: { usageSnapshot, usageIsIncomplete },
+  };
+}
 
 export const subtaskTool: ToolDefinition = {
   name: "subtask",
@@ -118,24 +130,17 @@ function buildRunnerConfig(
   const controlledToolNames = new Set(["read", "search", "code_symbols", "lsp", "skill", "write", "patch"]);
   const tools = filterToolsForRole(SUBTASK_TOOL_POOL, role)
     .filter((tool) => !(ownedPaths && ownedPaths.length > 0) || controlledToolNames.has(tool.name));
-  const apiKey =
-    process.env.QLING_LLM_API_KEY ??
-    process.env.DEEPSEEK_API_KEY ??
-    process.env.OPENAI_API_KEY ??
-    "";
+  const llm = resolveActiveLlm(process.env);
+  const apiKey = llm.apiKey;
 
   return {
     apiKey,
     tools,
     parent: {
       apiKey,
-      provider: process.env.QLING_LLM_PROVIDER ?? "deepseek",
-      endpoint:
-        process.env.QLING_LLM_ENDPOINT ??
-        process.env.OPENAI_BASE_URL ??
-        process.env.DEEPSEEK_BASE_URL ??
-        "https://api.deepseek.com",
-      model: process.env.QLING_LLM_MODEL ?? "deepseek-chat",
+      provider: llm.provider,
+      endpoint: llm.endpoint,
+      model: llm.model,
       tools,
       runtime: {
         workspaceDir: workspaceDir ?? roots.workspaceDir,
@@ -167,6 +172,9 @@ export async function runSubtask(args: {
   timeout_ms?: number;
   owned_paths?: unknown;
 }): Promise<ToolResult> {
+  // Load the AgentLoop-backed runner only after this tool module is initialized.
+  // This keeps direct SDK/tool use from entering the tools -> AgentLoop -> tools ESM cycle.
+  const { SubtaskRunner } = await import("../agent/subtask.js");
   const parallelTasks = parseParallelTasks(args.tasks);
   const singleTask = String(args.task ?? "").trim();
   const rootsForRoles = getRuntimeRootsFromEnv();
@@ -282,6 +290,7 @@ export async function runSubtask(args: {
   const coordinator = getSubagentCoordinator();
   let worktreePath: string | undefined;
   let worktreeBranch: string | undefined;
+  let integratedFiles: string[] | undefined;
   let registered = false;
 
   if (controlled && role === "implement") {
@@ -339,6 +348,8 @@ export async function runSubtask(args: {
   }
 
   const runner = new SubtaskRunner(parent);
+  let consumedUsage: UsageLedgerSnapshot | undefined;
+  let consumedUsageIsIncomplete = true;
 
   try {
     const result = await runner.run({
@@ -350,37 +361,72 @@ export async function runSubtask(args: {
       role,
       tools,
     });
+    consumedUsage = result.usage;
+    consumedUsageIsIncomplete = result.usageIsIncomplete;
     if (!result.success) {
       if (registered) coordinator.fail(taskId, result.contractText || result.output);
-      return toolError("SUBTASK_FAILED", result.contractText || result.output, {
-        retriable: false,
-        category: "runtime",
-      });
+      return subtaskErrorWithUsage(
+        "SUBTASK_FAILED",
+        result.contractText || result.output,
+        result.usage,
+        result.usageIsIncomplete,
+      );
     }
     if (registered && worktreePath) {
-      const changed = await new SubagentWorktreeManager({ stateDir: getRuntimeRootsFromEnv().fileStateDir })
-        .listChangedFiles(worktreePath);
+      const manager = new SubagentWorktreeManager({ stateDir: getRuntimeRootsFromEnv().fileStateDir });
+      const changed = await manager.listChangedFiles(worktreePath);
       const outside = changed.filter((file) => !isRelativePathOwned(file, ownedPaths));
       if (outside.length > 0) {
         coordinator.fail(taskId, `changes outside ownership: ${outside.join(", ")}`);
-        return toolError("SUBTASK_OWNERSHIP_VIOLATION", `subtask changed files outside owned_paths: ${outside.join(", ")}`, {
-          retriable: false,
-          category: "permission",
+        return {
+          ...subtaskErrorWithUsage(
+            "SUBTASK_OWNERSHIP_VIOLATION",
+            `subtask changed files outside owned_paths: ${outside.join(", ")}`,
+            result.usage,
+            result.usageIsIncomplete,
+          ),
+          meta: {
+            usageSnapshot: result.usage,
+            usageIsIncomplete: result.usageIsIncomplete,
+            taskId,
+          },
+        };
+      }
+      if (process.env.QLING_SUBTASK_AUTO_INTEGRATE === "true") {
+        integratedFiles = await manager.integrateOwnedChanges({
+          worktreePath,
+          workspaceDir: getRuntimeRootsFromEnv().workspaceDir ?? process.cwd(),
+          ownedPaths,
         });
       }
     }
     if (registered) coordinator.complete(taskId);
     return {
-      ...toolSuccess(result.contractText || result.output),
+      ...toolSuccess(`${result.contractText || result.output}${integratedFiles ? `\n【已集成】${integratedFiles.join(", ") || "无变更"}` : ""}`),
       meta: {
         usageSnapshot: result.usage,
         usageIsIncomplete: result.usageIsIncomplete,
         ...(result.backgroundTaskId ? { backgroundTaskId: result.backgroundTaskId } : {}),
-        ...(registered ? { taskId, worktreePath, worktreeBranch, ownedPaths } : {}),
+        ...(registered ? { taskId, worktreePath, worktreeBranch, ownedPaths, integratedFiles } : {}),
       },
     };
   } catch (err) {
     if (registered) coordinator.fail(taskId, err instanceof Error ? err.message : String(err));
+    if (consumedUsage) {
+      return {
+        ...subtaskErrorWithUsage(
+          "SUBTASK_RUN_FAILED",
+          err instanceof Error ? err.message : String(err),
+          consumedUsage,
+          consumedUsageIsIncomplete,
+        ),
+        meta: {
+          usageSnapshot: consumedUsage,
+          usageIsIncomplete: consumedUsageIsIncomplete,
+          ...(registered ? { taskId } : {}),
+        },
+      };
+    }
     return toolError("SUBTASK_RUN_FAILED", err instanceof Error ? err.message : String(err), {
       retriable: false,
       category: "runtime",

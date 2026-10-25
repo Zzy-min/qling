@@ -23,8 +23,16 @@ export {
   getProviderPreset,
   listProviderPresets,
   resolveModelCandidates,
+  lookupModelWindow,
   type ProviderPreset,
 } from "./providers/presets.js";
+export {
+  resolveLlmSettings,
+  resolveProviderApiKey,
+  resolveActiveLlm,
+  endpointHost,
+  type LlmFieldSources,
+} from "./providers/resolve-llm.js";
 export {
   getMcpPreset,
   listMcpPresets,

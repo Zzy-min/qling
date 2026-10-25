@@ -31,6 +31,9 @@ function isGrantReusableFor(
   toolName: string,
   args?: Record<string, unknown> | null
 ): boolean {
+  if (normalizeTool(toolName) === "url_fetch") {
+    return ["GET", "HEAD"].includes(String(args?.method ?? "GET").trim().toUpperCase());
+  }
   if (normalizeTool(toolName) !== "bash") return true;
   const record = args && typeof args === "object" ? (args as Record<string, unknown>) : null;
   const raw = record?.command ?? record?.cmd;

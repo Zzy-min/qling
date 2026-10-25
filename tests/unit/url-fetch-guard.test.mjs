@@ -84,3 +84,29 @@ test("guard redaction masks secrets", () => {
   assert.doesNotMatch(redacted, /SECRET_KEY_XYZ/);
   assert.match(redacted, /\[REDACTED\]/);
 });
+
+test("redirects are checked before following and oversized bodies are canceled", async () => {
+  const oldFetch = globalThis.fetch;
+  try {
+    await withEnv({ QLING_GUARD_ENABLED: "true", QLING_GUARD_NETWORK_MODE: "guarded", QLING_GUARD_NETWORK_URL_FETCH_ALLOWED_URL_PREFIXES: '["https://allowed.invalid/"]', QLING_GUARD_NETWORK_URL_FETCH_DENY_PRIVATE_IPS: "false", QLING_GUARD_NETWORK_URL_FETCH_FOLLOW_REDIRECTS: "true" }, async () => {
+      const requested = [];
+      globalThis.fetch = async (url, init) => {
+        requested.push(String(url));
+        assert.equal(init.redirect, "manual");
+        return new Response(null, { status: 302, headers: { location: "http://127.0.0.1/private" } });
+      };
+      const redirected = await runUrlFetch({ url: "https://allowed.invalid/start" });
+      assert.equal(redirected.is_error, true);
+      assert.match(redirected.output, /REDIRECT_BLOCKED/);
+      assert.deepEqual(requested, ["https://allowed.invalid/start"]);
+      let canceled = false;
+      globalThis.fetch = async () => new Response(new ReadableStream({
+        pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); },
+        cancel() { canceled = true; },
+      }), { headers: { "content-type": "text/plain" } });
+      const oversized = await runUrlFetch({ url: "https://allowed.invalid/large" });
+      assert.equal(oversized.is_error, true);
+      assert.equal(canceled, true);
+    });
+  } finally { globalThis.fetch = oldFetch; }
+});

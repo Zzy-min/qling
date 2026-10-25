@@ -22,6 +22,7 @@ import type { ExecutionEventBus } from "../execution/event-bus.js";
 import type { RecoveryController } from "../execution/recovery-controller.js";
 import type { FailureClassification, RecoveryState, RunOutcome } from "../execution/types.js";
 import { classifyFailure } from "../execution/failure-classifier.js";
+import { formatModelCallFailure, isModelRetryTerminal } from "../providers/model-retry.js";
 import {
   executePreparedTools,
   fingerprintToolAction,
@@ -498,9 +499,11 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     }
 
     const response = await host.chat(systemPrompt);
-    const { content, tool_calls, usage } = response;
+    const { content, tool_calls, usage, reasoning_content } = response;
     host.counters = applyProviderUsage(host.counters, usage, host.usageLedger);
-    host.messages.push({ role: "assistant", content, tool_calls });
+    host.messages.push({ role: "assistant", content, tool_calls,
+      ...(reasoning_content !== undefined ? { reasoning_content } : {}),
+    });
     // 有工具调用时：中间推理/说明走 thinking（Markdown 渲染）；无工具时只由 appendFinal 展示，避免双份
     if (!response.streamed && tool_calls && tool_calls.length > 0 && content?.trim()) {
       host.emit("thinking", content);
@@ -821,7 +824,23 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         "post-mutation-audit-v1",
       );
     }
+    if (verifyOutcome.kind === "deliverable") {
+      efficiency.acceptDocumentDeliverable();
+    }
     if (verifyOutcome.kind === "recover") {
+      if (verifyOutcome.strategy === "workspace_changed_during_verification") {
+        const prior = host.messages.filter(
+          (message) => message.role === "user" && message.content === verifyOutcome.userMessage,
+        ).length;
+        if (prior >= 1) {
+          host.recoveryController.pauseActiveRun();
+          host.executionEventBus.completeAttempt(runId, "recovering");
+          return {
+            status: "paused",
+            text: "验证已连续两次因工作区指纹变化作废，自动重试已停止。已写入的文件仍保留。请直接查看交付文件；不要在这个失败循环里继续执行。",
+          };
+        }
+      }
       efficiency.recordTools([{
         tool: "verify",
         failed: true,
@@ -925,6 +944,8 @@ export interface OuterLoopHost {
   providerRetryLimit?: number;
   sleep?: (delayMs: number) => Promise<void>;
   onProviderRetry?: () => void;
+  /** Persist completed tool results before a terminal model failure. */
+  checkpointSession?: () => Promise<unknown>;
   setActiveRun: (
     run: { runId: string; sessionId: string; originalTask: string; startedAt: number } | null
   ) => void;
@@ -1008,6 +1029,38 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       }
       host.executionEventBus.completeAttempt(runId, "failed");
       const failure = classifyFailure(error, { provider: true });
+      if (isModelRetryTerminal(error)) {
+        host.executionEventBus.emit({
+          runId,
+          sessionId: host.sessionId,
+          type: "failure",
+          status: "failed",
+          stage: "provider",
+          category: failure.category,
+          fingerprint: failure.fingerprint,
+          recoveryAction: "checkpoint_and_fail",
+        });
+        host.executionEventBus.completeRun(runId, "failed");
+        host.recoveryController.completeRun("failed");
+        host.setActiveRun(null);
+        let saved = false;
+        if (host.checkpointSession) {
+          try {
+            await host.checkpointSession();
+            saved = true;
+          } catch (checkpointError) {
+            console.warn(
+              `[model-retry] 会话保存失败: ${checkpointError instanceof Error ? checkpointError.message : "unknown"}`,
+            );
+          }
+        }
+        return {
+          status: "failed",
+          runId,
+          text: formatModelCallFailure(error, host.sessionId, saved),
+          failure,
+        };
+      }
       const providerRetryLimit = Math.max(0, host.providerRetryLimit ?? 3);
       if (failure.category === "provider_transient" && transportAttempts < providerRetryLimit) {
         transportAttempts++;

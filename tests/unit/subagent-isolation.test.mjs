@@ -400,10 +400,10 @@ test("05 isolation: explorer subagent keeps the role allowlist and does not reco
 
 test("builtin role allowlists do not include MCP tools; mcp__* is opt-in only", () => {
   assert.deepEqual(ROLE_DEFINITIONS.explore.allowedTools, [
-    "read", "search", "code_symbols", "lsp", "skill", "planner", "url_fetch",
+    "read", "search", "code_symbols", "lsp", "skill", "planner", "deepseek_search", "deepseek_fetch", "url_fetch",
   ]);
   assert.deepEqual(ROLE_DEFINITIONS.implement.allowedTools, [
-    "read", "search", "code_symbols", "lsp", "write", "patch", "bash", "skill", "todo", "planner", "url_fetch",
+    "read", "search", "code_symbols", "lsp", "write", "patch", "bash", "skill", "todo", "planner", "deepseek_search", "deepseek_fetch", "url_fetch",
   ]);
   assert.deepEqual(ROLE_DEFINITIONS.review.allowedTools, [
     "read", "search", "code_symbols", "lsp", "skill", "planner",

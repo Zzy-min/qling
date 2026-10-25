@@ -36,7 +36,7 @@
     "docs/web-routing.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "os": [
     "darwin",
@@ -90,6 +90,11 @@
     "eval:llm": "npm run build && node scripts/eval-llm.mjs",
     "eval:agent": "npm run build && node scripts/eval-agent.mjs",
     "eval:agent-coding": "npm run build && node scripts/eval-agent-coding.mjs",
+    "eval:agent-repo": "npm run build && node scripts/eval-agent-repo.mjs",
+    "eval:agent-security": "npm run build && node scripts/eval-agent-security.mjs",
+    "eval:agent-security-suite": "npm run build && node scripts/eval-agent-security-suite.mjs",
+    "eval:agent-multi-write": "npm run build && node scripts/eval-agent-multi-write.mjs",
+    "eval:swebench-lite": "npm run build && node scripts/eval-swebench-lite.mjs",
     "eval:harness": "npm run build && node scripts/eval-harness.mjs",
     "eval:context": "npm run build && node scripts/eval-context.mjs",
     "eval:memory": "npm run build && node scripts/eval-memory.mjs",
@@ -107,11 +112,16 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.2.1",
+    "@ast-grep/lang-go": "^0.0.6",
+    "@ast-grep/lang-java": "^0.0.7",
+    "@ast-grep/lang-python": "^0.0.6",
+    "@ast-grep/lang-rust": "^0.0.7",
+    "@ast-grep/napi": "^0.45.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
     "@opentelemetry/resources": "^2.9.0",
     "@opentelemetry/sdk-trace-base": "^2.9.0",
-    "axios": "^1.7.0",
+    "axios": "^1.19.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.0",
     "motion": "^12.43.0",

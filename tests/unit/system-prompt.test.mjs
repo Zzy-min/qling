@@ -12,7 +12,7 @@ import {
   heuristicReflect,
   sanitizeWorkspaceLabel,
 } from "../../dist/agent/system-prompt.js";
-import { buildDefaultRegistry } from "../../dist/pipeline/sections.js";
+import { buildDefaultRegistry, buildWorkflowSection } from "../../dist/pipeline/sections.js";
 import {
   formatMandatoryRulesBlock,
   loadMandatoryRuleFiles,
@@ -109,6 +109,15 @@ test("mandatory rules use a compact dynamic reference", () => {
   assert.ok(reference.length < 220);
   assert.match(reference, /system/);
   assert.doesNotMatch(reference, /必须验证后再报告。必须验证后再报告。/);
+});
+
+test("workflow requires bidirectional round-trip auditing for format changes", () => {
+  const workflow = buildWorkflowSection().content;
+  assert.match(workflow, /reader.*writer|读取端.*写入端|读写双向/i);
+  assert.match(workflow, /round[- ]?trip|往返/iu);
+  assert.match(workflow, /边界定位|起始行|终止行/);
+  assert.match(workflow, /实际存在/);
+  assert.match(workflow, /适用时|双向契约/);
 });
 
 test("assembled prompt contains one full mandatory-rules copy", async () => {

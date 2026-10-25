@@ -12,6 +12,11 @@ import {
 } from "../pipeline/sections.js";
 import type { PromptSectionRegistry } from "../types.js";
 import type { Message, ToolCall } from "../types.js";
+import {
+  formatProjectProfile,
+  inspectProjectProfileCached,
+  type CodeRuntime,
+} from "../runtime/project-profile.js";
 import type { MemoryStore } from "../memory.js";
 import type { LlmChatResponse } from "../providers/llm-client.js";
 import { SECTION_IDS } from "../pipeline/sections.js";
@@ -198,12 +203,39 @@ export async function assembleSystemPrompt(options: {
     contextPayload,
     "mandatory-rules-v1"
   );
+  if (process.env.QLING_FEATURES_RELIABILITY_V2 === "true" && options.workspaceDir) {
+    try {
+      const requestedRuntime = (process.env.QLING_CODE_RUNTIME ?? "auto") as CodeRuntime;
+      const profile = await inspectProjectProfileCached({
+        workspaceDir: options.workspaceDir,
+        requestedRuntime: ["auto", "native", "wsl"].includes(requestedRuntime)
+          ? requestedRuntime
+          : "auto",
+      });
+      upsertSyntheticMessage(
+        options.messages,
+        "project_preflight",
+        formatProjectProfile(profile),
+        "project-preflight-v2"
+      );
+    } catch (error) {
+      upsertSyntheticMessage(
+        options.messages,
+        "project_preflight",
+        `<project_preflight status="degraded">Project inspection failed: ${error instanceof Error ? error.message : String(error)}</project_preflight>`,
+        "project-preflight-v2"
+      );
+    }
+  }
   // system 主干中的 RULES section 是完整硬规则的唯一副本。
   const parts = [
     options.baseSystemPrompt.trim(),
     staticSections,
   ].filter((p) => p && p.trim().length > 0);
-  if (process.env.QLING_FEATURES_HARNESS_PROMPT !== "true") {
+  if (
+    process.env.QLING_FEATURES_HARNESS_PROMPT !== "true" &&
+    process.env.QLING_FEATURES_RELIABILITY_V2 !== "true"
+  ) {
     return parts.join("\n\n");
   }
 

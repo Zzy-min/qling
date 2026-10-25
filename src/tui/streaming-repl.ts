@@ -45,6 +45,7 @@ export class StreamingREPL {
   private closed = false;
   private onClose: (() => void) | null = null;
   private lastExecutionStatus = "";
+  private currentRunStatus = "";
   private readonly handleSlashCommandOverride?: SlashCommandHandler;
   private bgEventHandler: ((event: BackgroundTaskEvent) => void) | null = null;
   private streamedResponse = "";
@@ -163,7 +164,7 @@ export class StreamingREPL {
     if (this.closed) return;
     this.closed = true;
     if (this.bgEventHandler) {
-      getBackgroundTaskRegistry().off("event", this.bgEventHandler);
+      getBackgroundTaskRegistry(this.agent.getRuntimeRootDir()).off("event", this.bgEventHandler);
       this.bgEventHandler = null;
     }
     try {
@@ -197,11 +198,14 @@ export class StreamingREPL {
         // ignore paint failures during shutdown
       }
     };
-    getBackgroundTaskRegistry().on("event", this.bgEventHandler);
+    getBackgroundTaskRegistry(this.agent.getRuntimeRootDir()).on("event", this.bgEventHandler);
 
     const subscribe = (this.agent as any).subscribeExecutionEvents;
     if (typeof subscribe === "function") {
       subscribe.call(this.agent, (event: any) => {
+        if (event.type === "run_started" || event.type === "run_completed" || event.stage === "agent") {
+          this.currentRunStatus = event.status ?? "";
+        }
         const strategy = event.recoveryAction ? ` · ${event.recoveryAction}` : "";
         const status = `${event.stage ?? "run"}:${event.status ?? event.type}${strategy}`;
         if (status === this.lastExecutionStatus) return;
@@ -226,11 +230,18 @@ export class StreamingREPL {
     });
     this.agent.on("stream_fallback", (reason: string) => {
       this.ui.appendValidation("warn", `流式输出不可用，已单次回退完整响应 · ${reason}`);
+      void this.refreshStatusLine();
+    });
+    this.agent.on("model_retry", () => {
+      void this.refreshStatusLine();
+    });
+    this.agent.on("model_fallback", () => {
+      void this.refreshStatusLine();
     });
 
     this.agent.on("tool_start", (name: string, args: Record<string, unknown>) => {
       if (this.streamedResponse) {
-        this.ui.completeAssistantStream(this.streamedResponse);
+        this.ui.foldStreamedThinking(this.streamedResponse);
         this.streamedResponse = "";
       }
       const cmd = this.argsToCommand(name, args);
@@ -469,6 +480,7 @@ export class StreamingREPL {
           this.streamedResponse = "";
           this.ui.appendState("thinking", "running");
           this.ui.startProgress("agent");
+          this.currentRunStatus = "";
           const response = this.agent.getAgentRuntimeMode() === "actor"
             ? await this.agent.submitPrompt(currentPrompt)
             : await (async () => {
@@ -476,11 +488,13 @@ export class StreamingREPL {
                 return this.agent.run();
               })();
           this.ui.stopProgress();
-          this.ui.appendState("running", "done");
+          const incomplete = ["exhausted", "paused", "failed", "canceled", "recovering"].includes(this.currentRunStatus);
+          this.ui.appendState("running", incomplete ? this.currentRunStatus : "done");
 
           if (response && response.trim()) {
             if (!this.ui.completeAssistantStream(response)) {
-              this.ui.appendFinal(response);
+              if (incomplete) this.ui.appendError(response);
+              else this.ui.appendFinal(response);
             }
           }
           this.streamedResponse = "";
@@ -488,7 +502,8 @@ export class StreamingREPL {
           await this.agent.checkpointSession();
 
           const totalMs = Date.now() - startTime;
-          this.ui.appendDone(totalMs);
+          if (incomplete) this.ui.appendValidation("warn", `任务未完成 · ${this.currentRunStatus} · ${Math.round(totalMs / 1000)}s`);
+          else this.ui.appendDone(totalMs);
 
           // Actor may already have accepted a safe-boundary interjection. Keep the
           // fixed chrome busy until the actor has drained it, while its own promise

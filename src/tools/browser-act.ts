@@ -36,7 +36,7 @@ export function isBrowserActEnabled(
 export const browserActTool: ToolDefinition = {
   name: "browser_act",
   description:
-    "Interactive browser with cross-step sessions (open→goto→click→extract→close). DISABLED by default — QLING_BROWSER_ACT=1. Prefer opencli for social platforms.",
+    "Interactive browser with cross-step sessions (open→goto→click→extract→close). DISABLED by default — QLING_BROWSER_ACT=1. This is the browser-control path; do not switch to opencli unless the user asked for opencli.",
   longDescription: `有限交互浏览器（Playwright）+ **跨步会话**。默认关闭。
 
 **启用**: \`QLING_BROWSER_ACT=1\`
@@ -51,7 +51,7 @@ export const browserActTool: ToolDefinition = {
 - goto / click / type / wait_for / extract / press（在已有会话上操作）
 - 无会话时：goto 会自动 open；click/type 等需先 open 或 goto
 
-**不要用**: 抖音/小红书等 → opencli；只读文档 → browser_fetch
+**分工**: 网页搜索用 deepseek_search，单页正文用 deepseek_fetch。只读兜底用 browser_fetch 或 url_fetch。浏览器点击和填表用本工具。不要把控制改到 opencli，除非用户明确要求。
 
 **安全**: 网络 Guard；Plan Mode 禁止；空闲默认 10min 回收（QLING_BROWSER_ACT_IDLE_TTL_MS）`,
   parameters: {
@@ -148,7 +148,7 @@ export async function runBrowserAct(args: {
   if (!isBrowserActEnabled()) {
     return toolError(
       "BROWSER_ACT_DISABLED",
-      "browser_act 默认关闭。启用: QLING_BROWSER_ACT=1。平台数据请用 opencli；只读文档用 browser_fetch。见 docs/web-routing.md",
+      "browser_act 默认关闭。启用: QLING_BROWSER_ACT=1。网页搜索用 deepseek_search，只读页面用 deepseek_fetch、url_fetch 或 browser_fetch。见 docs/web-routing.md",
       { category: "permission" }
     );
   }

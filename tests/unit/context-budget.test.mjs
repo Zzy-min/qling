@@ -15,6 +15,16 @@ test("unknown model window preserves the legacy 6000 trigger", () => {
   assert.equal(budget.triggerTokens, 6000);
 });
 
+test("model window flows through auto compact as source=model and unknown stays legacy", () => {
+  const known = resolveAutoCompactConfig({}, "gpt-4o");
+  assert.equal(known.budgetSource, "model");
+  assert.equal(known.windowTokens, 128000);
+  assert.equal(known.maxTokens, 108800);
+  const unknown = resolveAutoCompactConfig({ QLING_CONTEXT_WINDOW_TOKENS: "0" }, "missing-model");
+  assert.equal(unknown.budgetSource, "legacy");
+  assert.equal(unknown.maxTokens, 6000);
+});
+
 test("auto compact resolves window and bounded ratio from env", () => {
   const config = resolveAutoCompactConfig({
     QLING_CONTEXT_WINDOW_TOKENS: "20000",

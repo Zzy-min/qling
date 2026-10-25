@@ -20,6 +20,33 @@ test("stagesSummary is honest when empty", () => {
   assert.match(stagesSummary(null), /none|未|none/i);
 });
 
+test("a prior drift warning cannot authorize verifier changes to unrelated source files", async () => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), "qling-verify-drift-"));
+  try {
+    await writeFile(join(workspaceDir, "target.ts"), "export const target = 1;\n");
+    await writeFile(join(workspaceDir, "other.ts"), "export const other = 1;\n");
+    const result = await runWriteToolVerification([{ call: { id: "w", name: "write", arguments: { path: "target.ts" } } }], {
+      workspaceDir, verificationCommand: "verify",
+      observations: [{ tool: "write", failed: false, mutation: "updated", changedPaths: ["target.ts"] }],
+      messages: [{ role: "user", content: "验证命令修改了工作区，验证结果已作废。请检查新增副作用后重新验证。" }],
+      runCommand: async () => { await writeFile(join(workspaceDir, "other.ts"), "export const other = 2;\n"); return { code: 0, stdout: "PASS", stderr: "" }; },
+      emit() {},
+    });
+    assert.equal(result.kind, "recover");
+    assert.equal(result.strategy, "workspace_changed_during_verification");
+  } finally { await rm(workspaceDir, { recursive: true, force: true }); }
+});
+
+test("standalone documents remain deliverable when preflight discovers no project verifier", async () => {
+  const result = await runWriteToolVerification([{ call: { id: "doc", name: "write", arguments: { path: "answer.md" } } }], {
+    verificationCommand: null,
+    projectProfile: { revision: "nogit", dirtyFingerprint: "test", parserVersion: "test", ecosystems: [], manifests: [], lockfiles: [], testCommands: [], runtime: "native", environmentStatus: "ready", blockers: [] },
+    observations: [{ tool: "write", failed: false, mutation: "created", changedPaths: ["answer.md"] }],
+    messages: [], emit() {}, verifier: { verify: async () => ({ verdict: "PASS", details: "", steps: [] }) },
+  });
+  assert.equal(result.kind, "deliverable");
+});
+
 test("advisory verification treats structured tool errors as FAIL without consulting LLM", async () => {
   const emitted = [];
   let verifierCalled = false;
@@ -338,4 +365,38 @@ test("runWriteToolVerification uses the ProjectProfile targeted test after an in
   } finally {
     await rm(workspaceDir, { recursive: true, force: true });
   }
+});
+
+test("an explicit verifier takes precedence over a markdown deliverable extension", async () => {
+  let ran = false;
+  const recovery = new RecoveryController();
+  recovery.startRun({ runId: "doc", sessionId: "s", originalTask: "write the plan" });
+  const outcome = await runWriteToolVerification(
+    [{ call: { id: "w", name: "write", arguments: { path: "Desktop/上海一日游方案-2026-10-24.md" } } }],
+    {
+      verificationCommand: "npm test",
+      workspaceDir: process.cwd(),
+      observations: [{
+        tool: "write",
+        failed: false,
+        mutation: "created",
+        mutationId: "m",
+        changedPaths: ["C:/Users/Lenovo/Desktop/上海一日游方案-2026-10-24.md"],
+      }],
+      runCommand: async () => {
+        ran = true;
+        return { code: 1, stdout: "", stderr: "Error: no test specified" };
+      },
+      recoveryController: recovery,
+      executionEventBus: new ExecutionEventBus(),
+      emit() {},
+      getRecoveryState: () => recovery.getRecoveryState(),
+      verifier: { verify: async () => ({ verdict: "PASS", details: "unused", steps: [] }) },
+      messages: [],
+      runId: "doc",
+    },
+  );
+  assert.equal(ran, true);
+  assert.notEqual(outcome.kind, "deliverable");
+  assert.notEqual(outcome.kind, "pass");
 });
