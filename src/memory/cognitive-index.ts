@@ -128,14 +128,52 @@ export class CognitiveIndex {
   }
 
   searchVector(queryVector: number[], limit: number = 10): SemanticSearchResult[] {
-    const all = this.db.prepare("SELECT * FROM embeddings").all() as any[];
-    const results: SemanticSearchResult[] = [];
-
-    for (const row of all) {
-      const vector = Array.from(new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4));
-      const score = this.cosineSimilarity(queryVector, vector);
+    if (!Number.isFinite(limit) || limit <= 0) return [];
+    const capacity = Math.floor(limit);
+    if (!capacity) return [];
+    type Candidate = { id: string; score: number; order: number };
+    // Worst candidate at the root; ties retain the original database order.
+    const heap: Candidate[] = [];
+    const worse = (a: Candidate, b: Candidate) => a.score < b.score || (a.score === b.score && a.order > b.order);
+    const queryNorm = Math.sqrt(queryVector.reduce((sum, value) => sum + value * value, 0));
+    let order = 0;
+    for (const row of this.db.prepare("SELECT id, vector FROM embeddings").iterate() as Iterable<{ id: string; vector: Buffer }>) {
+      const vector = new Float32Array(row.vector.buffer, row.vector.byteOffset, row.vector.byteLength / 4);
+      let dot = 0, norm = 0;
+      if (vector.length === queryVector.length) {
+        for (let i = 0; i < vector.length; i++) {
+          dot += queryVector[i] * vector[i];
+          norm += vector[i] * vector[i];
+        }
+      }
+      const similarity = dot / (queryNorm * Math.sqrt(norm));
+      const candidate = { id: row.id, score: Number.isNaN(similarity) ? 0 : similarity, order: order++ };
+      if (heap.length < capacity) {
+        heap.push(candidate);
+        let child = heap.length - 1;
+        while (child > 0) {
+          const parent = (child - 1) >> 1;
+          if (!worse(heap[child], heap[parent])) break;
+          [heap[child], heap[parent]] = [heap[parent], heap[child]];
+          child = parent;
+        }
+      } else if (worse(heap[0], candidate)) {
+        heap[0] = candidate;
+        let parent = 0;
+        while (parent * 2 + 1 < heap.length) {
+          let child = parent * 2 + 1;
+          if (child + 1 < heap.length && worse(heap[child + 1], heap[child])) child++;
+          if (!worse(heap[child], heap[parent])) break;
+          [heap[child], heap[parent]] = [heap[parent], heap[child]];
+          parent = child;
+        }
+      }
+    }
+    const lookup = this.db.prepare("SELECT id, content, metadata, created_at FROM embeddings WHERE id = ?");
+    return heap.sort((a, b) => b.score - a.score || a.order - b.order).map(({ id, score }) => {
+      const row = lookup.get(id) as { id: string; content: string; metadata: string | null; created_at: number };
       const metadata = JSON.parse(row.metadata || "{}");
-      results.push({
+      return {
         entry: {
           id: row.id,
           content: row.content,
@@ -144,10 +182,9 @@ export class CognitiveIndex {
           createdAt: row.created_at,
         },
         score,
-        source: "vector",
-      });
-    }
-    return results.sort((a, b) => b.score - a.score).slice(0, limit);
+        source: "vector" as const,
+      };
+    });
   }
 
   // --- 知识图谱操作 ---
@@ -301,18 +338,6 @@ export class CognitiveIndex {
   }
 
   // --- 辅助工具 ---
-
-  private cosineSimilarity(v1: number[], v2: number[]): number {
-    if (v1.length !== v2.length) return 0;
-    let dotProduct = 0, normA = 0, normB = 0;
-    for (let i = 0; i < v1.length; i++) {
-      dotProduct += v1[i] * v2[i];
-      normA += v1[i] * v1[i];
-      normB += v2[i] * v2[i];
-    }
-    const similarity = dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-    return isNaN(similarity) ? 0 : similarity;
-  }
 
   close(): void {
     this.db.close();
