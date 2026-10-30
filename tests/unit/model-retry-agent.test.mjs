@@ -65,6 +65,8 @@ function createAgent(stateDir, options = {}) {
     apiKey: "test-key",
     model: "primary-model",
     maxIterations: options.maxIterations ?? 4,
+    iterationPolicy: options.iterationPolicy,
+    maxModelTurns: options.maxModelTurns,
     experimental: { streaming: Boolean(options.streaming) },
     runtime: {
       workspaceDir: stateDir,
@@ -80,6 +82,42 @@ function createAgent(stateDir, options = {}) {
   agent.checkAutoDream = async () => {};
   return agent;
 }
+
+test("continuous task windows persist current turn usage and a resumable budget pause", async () => {
+  const previous = snapshotEnv();
+  applyQuietEnv(0);
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "qling-window-snapshot-"));
+  const agent = createAgent(stateDir, { maxIterations: 2, iterationPolicy: "continuous", maxModelTurns: 3 });
+  let calls = 0;
+  const windows = [];
+  try {
+    agent.on("iteration_window", event => windows.push(event));
+    agent.llmClient.chatCompletions = async () => {
+      calls++;
+      return {
+        content: "", finishReason: "tool_calls",
+        usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+        tool_calls: [{ id: `window-${calls}`, type: "function", function: { name: "read", arguments: JSON.stringify({ path: `file-${calls}.txt` }) } }],
+      };
+    };
+    agent.pipeline.execute = async call => ({ tool_call_id: call.id, output: "read complete" });
+    agent.addUserMessage("analyze project");
+    const outcome = await agent.runDetailed();
+    assert.equal(outcome.status, "paused");
+    assert.equal(calls, 3);
+    assert.deepEqual(windows.map(event => event.modelTurns), [2]);
+    const snapshot = JSON.parse(await fs.readFile(path.join(stateDir, "sessions", `${agent.getSessionId()}.json`), "utf8"));
+    assert.equal(snapshot.turnCount, 3);
+    assert.equal(snapshot.sessionTokens, 36);
+    assert.equal(snapshot.recoveryState.status, "paused");
+    assert.equal(snapshot.messages.filter(message => message.role === "tool").length, 3);
+    assert.equal(snapshot.activeRun.runId, outcome.runId);
+  } finally {
+    await agent.shutdown();
+    await fs.rm(stateDir, { recursive: true, force: true });
+    restoreEnv(previous);
+  }
+});
 
 test("model-retry agent: stream interruptions do not replay tool calls or keep partial assistant text", async () => {
   const previous = snapshotEnv();

@@ -91,6 +91,18 @@ test("config report shows missing api key", () => {
   assert.match(text, /Api key\s*: missing/);
 });
 
+test("config report distinguishes checkpoint windows from hard model-turn budgets", () => {
+  const config = createConfig();
+  config.runtime.iteration_policy = 'continuous';
+  config.runtime.max_model_turns = 80;
+  const report = buildLocalConfigReport(config);
+  assert.equal(report.iterationPolicy, 'continuous');
+  assert.equal(report.maxModelTurns, 80);
+  const text = formatLocalConfigReport(report).join('\n');
+  assert.match(text, /iteration_policy=continuous/);
+  assert.match(text, /max_model_turns=80/);
+});
+
 test("config report includes runtime permissions features and local boundary", () => {
   const text = formatLocalConfigReport(buildLocalConfigReport(createConfig())).join("\n");
 

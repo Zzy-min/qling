@@ -121,6 +121,7 @@ import {
   runInnerIterationLoop,
   runOuterAgentLoop,
   type InnerLoopOutcome,
+  type InnerLoopHost,
   type TokenCounters,
 } from "./agent/main-loop.js";
 
@@ -193,6 +194,7 @@ export class AgentLoop extends AgentEventEmitter {
   private messages: Message[] = [];
   private config: AgentConfig;
   private turnCount = 0;
+  private runCanceledByUser = false;
   private runtimeRootDir: string;
   /** Raw file-state directory before path.resolve, so "" / "." cannot become cwd. */
   private requestedFileStateDir: string;
@@ -430,6 +432,8 @@ export class AgentLoop extends AgentEventEmitter {
       model: resolved.model,
       systemPrompt: config.systemPrompt ?? "",
       maxIterations: config.maxIterations ?? 50,
+      iterationPolicy: config.iterationPolicy ?? "fixed",
+      maxModelTurns: config.maxModelTurns ?? 0,
       tools: (config.tools ?? ALL_TOOLS).map((tool) => ({ ...tool })),
       runtime: {
         workspaceDir: config.runtime?.workspaceDir ?? process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
@@ -941,6 +945,8 @@ export class AgentLoop extends AgentEventEmitter {
     if (this.runAbortController) throw new Error("agent run already in progress");
     const controller = new AbortController();
     this.runAbortController = controller;
+    this.runCanceledByUser = false;
+    const iterationBudget = { modelTurns: 0, initialToolCalls: this.toolCallTotal };
     const retryPolicy = resolveModelRetryPolicy();
     this.modelRetryBudget = { remaining: retryPolicy.runRetryBudget };
     this.stickyModel = null;
@@ -958,7 +964,7 @@ export class AgentLoop extends AgentEventEmitter {
         setActiveRun: (run) => {
           this.activeRun = run;
         },
-        executeInner: () => this.executeRunInternal(),
+        executeInner: () => this.executeRunInternal(iterationBudget),
         isCanceled: () => controller.signal.aborted,
         providerRetryLimit: this.config.runtime?.providerRetryLimit,
         checkpointSession: () => this.checkpointSession(),
@@ -975,6 +981,7 @@ export class AgentLoop extends AgentEventEmitter {
     const controller = this.runAbortController;
     if (!controller || controller.signal.aborted) return false;
     const runId = this.activeRun?.runId;
+    this.runCanceledByUser = true;
     controller.abort();
     this.approvalGate.cancelAll();
     if (runId) this.scheduleBackgroundTermination(runId);
@@ -1013,7 +1020,7 @@ export class AgentLoop extends AgentEventEmitter {
     return true;
   }
 
-  private async executeRunInternal(): Promise<InnerLoopOutcome> {
+  private async executeRunInternal(iterationBudget?: InnerLoopHost["iterationBudget"]): Promise<InnerLoopOutcome> {
     await this.initPromise;
     const workspaceDir = this.config.runtime?.workspaceDir || process.cwd();
     const checkpointStore = this.activeRun ? new (await import("./runtime/run-checkpoint.js")).RunCheckpointStore({
@@ -1126,6 +1133,10 @@ export class AgentLoop extends AgentEventEmitter {
       sessionId: this.sessionId,
       sessionLeaseToken: this.sessionLease?.token,
       maxIterations: this.config.maxIterations,
+      iterationPolicy: this.config.iterationPolicy,
+      maxModelTurns: this.config.maxModelTurns,
+      iterationBudget,
+      isCanceled: () => this.runCanceledByUser,
       toolRepeatLimit: Math.max(1, this.config.runtime?.toolRepeatLimit ?? 6),
       parseRetries: this.config.runtime?.parseRetries ?? 0,
       verificationCommand: this.verificationCommand,
@@ -1190,20 +1201,22 @@ export class AgentLoop extends AgentEventEmitter {
         if (!canWriteMidTurnCheckpoint(this.requestedFileStateDir)) {
           return Promise.resolve(undefined);
         }
+        syncCounters();
         return this.checkpointSession();
       },
     };
-    const result = await runInnerIterationLoop(host);
-    // write back mutable counters from host
-    this.turnCount = host.turnCount;
-    this.sessionTokens = host.counters.sessionTokens;
-    this.sessionPromptTokens = host.counters.sessionPromptTokens;
-    this.sessionCompletionTokens = host.counters.sessionCompletionTokens;
-    this.tokenUsageSource = host.counters.tokenUsageSource;
-    this.compactionCount = host.compactionCount;
-    this.toolCallTotal = host.toolCallTotal;
-    this.toolFailureTotal = host.toolFailureTotal;
-    return result;
+    const syncCounters = () => {
+      this.turnCount = host.turnCount;
+      this.sessionTokens = host.counters.sessionTokens;
+      this.sessionPromptTokens = host.counters.sessionPromptTokens;
+      this.sessionCompletionTokens = host.counters.sessionCompletionTokens;
+      this.tokenUsageSource = host.counters.tokenUsageSource;
+      this.compactionCount = host.compactionCount;
+      this.toolCallTotal = host.toolCallTotal;
+      this.toolFailureTotal = host.toolFailureTotal;
+    };
+    try { return await runInnerIterationLoop(host); }
+    finally { syncCounters(); }
   }
 
   private formatRecoveryPause(reason: string, next: string): string {

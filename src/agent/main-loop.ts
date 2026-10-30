@@ -179,6 +179,12 @@ export interface InnerLoopHost {
   sessionId: string;
   sessionLeaseToken?: string;
   maxIterations: number;
+  iterationPolicy?: "fixed" | "continuous";
+  maxModelTurns?: number;
+  /** Shared across automatic provider/recovery reentry, renewed only for a user execution/resume. */
+  iterationBudget?: { modelTurns: number; checkpointedTurns?: number; initialToolCalls?: number };
+  /** Explicit user cancellation, not an operator pause's AbortSignal. */
+  isCanceled?: () => boolean;
   toolRepeatLimit: number;
   parseRetries: number;
   verificationCommand: string | null;
@@ -387,8 +393,60 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     : null;
   if (host.checkpointSession && !checkpointScheduler) noteMidTurnCheckpointSkipped(checkpointStateDir);
   let stopContinuations = 0;
+  const continuous = host.iterationPolicy === "continuous";
+  const windowSize = Number.isFinite(host.maxIterations) && host.maxIterations >= 1
+    ? Math.floor(host.maxIterations) : 50;
+  const hardTurnLimit = Number.isFinite(host.maxModelTurns) && host.maxModelTurns! >= 1
+    ? Math.floor(host.maxModelTurns!) : null;
+  const budget = host.iterationBudget ??= { modelTurns: 0 };
+  budget.initialToolCalls ??= host.toolCallTotal;
+  const throwIfCanceled = () => {
+    if (!host.isCanceled?.()) return;
+    host.recoveryController.completeRun("canceled");
+    const error = new Error("Agent run canceled");
+    error.name = "AgentRunCanceledError";
+    throw error;
+  };
+  const checkpointBoundary = async () => {
+    const state = efficiency.getProgressState();
+    if (host.checkpointStore && host.usageLedger) {
+      await saveCheckpointSafely(host, {
+        sequence: host.turnCount, phase: state.phase, progressState: state,
+        ...(state.recoveryEpisode ? { recoveryEpisode: state.recoveryEpisode } : {}),
+        usage: host.usageLedger.snapshot(),
+        toolMetrics: { calls: host.toolCallTotal, failures: host.toolFailureTotal, policyRedirects: 0 },
+      });
+    }
+    if (host.checkpointSession && canWriteMidTurnCheckpoint(checkpointStateDir)) {
+      try { await host.checkpointSession(); }
+      catch (error) { host.emit("checkpoint_failed", error instanceof Error ? error.message : String(error)); }
+    }
+  };
 
-  for (let i = 0; i < host.maxIterations; i++) {
+  for (let i = 0; continuous || i < host.maxIterations; i++) {
+    throwIfCanceled();
+    if (continuous && hardTurnLimit !== null && budget.modelTurns >= hardTurnLimit) {
+      host.recoveryController.pauseActiveRun();
+      await checkpointBoundary();
+      throwIfCanceled();
+      host.emit("model_turn_budget_exhausted", { modelTurns: budget.modelTurns, toolCalls: host.toolCallTotal - budget.initialToolCalls });
+      return {
+        status: "paused",
+        text: `模型轮次预算暂停：已完成 ${budget.modelTurns} 次模型响应、${host.toolCallTotal - budget.initialToolCalls} 次工具调用。任务未被标记失败；可用 /recover retry 续接下一执行窗口。`,
+      };
+    }
+    if (continuous && budget.modelTurns > 0 && budget.modelTurns % windowSize === 0 && budget.checkpointedTurns !== budget.modelTurns) {
+      await checkpointBoundary();
+      throwIfCanceled();
+      budget.checkpointedTurns = budget.modelTurns;
+      const progress = { modelTurns: budget.modelTurns, toolCalls: host.toolCallTotal - budget.initialToolCalls, windowSize };
+      host.emit("iteration_window", progress);
+      host.executionEventBus.emit({
+        runId: host.activeRunId ?? `run_untracked_${host.turnCount}`,
+        sessionId: host.sessionId, type: "iteration_window", status: "running", stage: "run",
+        recoveryAction: "checkpoint_and_continue",
+      });
+    }
     host.turnCount++;
     const runId = host.activeRunId ?? `run_untracked_${host.turnCount}`;
     const attemptId = `attempt_${runId}_${host.turnCount}`;
@@ -499,6 +557,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     }
 
     const response = await host.chat(systemPrompt);
+    budget.modelTurns++;
     const { content, tool_calls, usage, reasoning_content } = response;
     host.counters = applyProviderUsage(host.counters, usage, host.usageLedger);
     host.messages.push({ role: "assistant", content, tool_calls,
@@ -684,6 +743,17 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         sessionLeaseToken: host.sessionLeaseToken,
       }
     );
+    // Account for completed tools before verification can pause, repair, or throw.
+    const totals = logTurnTelemetry(
+      { turn: host.turnCount, toolCalls: turnToolCalls, toolFailures: turnToolFailures },
+      {
+        toolCallTotal: host.toolCallTotal, toolFailureTotal: host.toolFailureTotal,
+        compactionCount: host.compactionCount, retryCountTotal: host.retryCountTotal,
+        format: host.loggingFormat,
+      }
+    );
+    host.toolCallTotal = totals.toolCallTotal;
+    host.toolFailureTotal = totals.toolFailureTotal;
     checkpointScheduler?.afterToolBatch();
     const failureSignal = efficiency.recordTools(observations);
     const progressSignal = efficiency.recordObservationProgress(observations);
@@ -739,8 +809,8 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         ...(state.recoveryEpisode ? { recoveryEpisode: state.recoveryEpisode } : {}),
         usage: host.usageLedger.snapshot(),
         toolMetrics: {
-          calls: host.toolCallTotal + turnToolCalls,
-          failures: host.toolFailureTotal + turnToolFailures,
+          calls: host.toolCallTotal,
+          failures: host.toolFailureTotal,
           policyRedirects: observations.filter((item) => item.redirected).length,
         },
       })
@@ -859,7 +929,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       host.executionEventBus.completeAttempt(runId, "recovering");
       if (host.checkpointStore && host.usageLedger) {
         const state = efficiency.getProgressState();
-        await saveCheckpointSafely(host, { sequence: host.turnCount, phase: state.phase, progressState: state, ...(state.recoveryEpisode ? { recoveryEpisode: state.recoveryEpisode } : {}), usage: host.usageLedger.snapshot(), toolMetrics: { calls: host.toolCallTotal + turnToolCalls, failures: host.toolFailureTotal + turnToolFailures, policyRedirects: observations.filter((item) => item.redirected).length }, latestVerification: { verdict: "fail", fingerprint: verifyOutcome.failureMessage } });
+        await saveCheckpointSafely(host, { sequence: host.turnCount, phase: state.phase, progressState: state, ...(state.recoveryEpisode ? { recoveryEpisode: state.recoveryEpisode } : {}), usage: host.usageLedger.snapshot(), toolMetrics: { calls: host.toolCallTotal, failures: host.toolFailureTotal, policyRedirects: observations.filter((item) => item.redirected).length }, latestVerification: { verdict: "fail", fingerprint: verifyOutcome.failureMessage } });
       }
       continue;
     }
@@ -890,7 +960,7 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       }
       if (host.checkpointStore && host.usageLedger) {
         const state = efficiency.getProgressState();
-        await saveCheckpointSafely(host, { sequence: host.turnCount, phase: state.phase, progressState: state, usage: host.usageLedger.snapshot(), toolMetrics: { calls: host.toolCallTotal + turnToolCalls, failures: host.toolFailureTotal + turnToolFailures, policyRedirects: observations.filter((item) => item.redirected).length }, latestVerification: { verdict: "pass", fingerprint: verifyOutcome.summary } });
+        await saveCheckpointSafely(host, { sequence: host.turnCount, phase: state.phase, progressState: state, usage: host.usageLedger.snapshot(), toolMetrics: { calls: host.toolCallTotal, failures: host.toolFailureTotal, policyRedirects: observations.filter((item) => item.redirected).length }, latestVerification: { verdict: "pass", fingerprint: verifyOutcome.summary } });
       }
     }
 
@@ -904,18 +974,6 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     host.memoryStore.addConversationTurn("assistant", content);
     host.knowledgeAdapter.onAssistantMessage(content);
     await host.knowledgeAdapter.onTurnEnd(host.turnCount);
-    const totals = logTurnTelemetry(
-      { turn: host.turnCount, toolCalls: turnToolCalls, toolFailures: turnToolFailures },
-      {
-        toolCallTotal: host.toolCallTotal,
-        toolFailureTotal: host.toolFailureTotal,
-        compactionCount: host.compactionCount,
-        retryCountTotal: host.retryCountTotal,
-        format: host.loggingFormat,
-      }
-    );
-    host.toolCallTotal = totals.toolCallTotal;
-    host.toolFailureTotal = totals.toolFailureTotal;
     host.executionEventBus.completeAttempt(runId, "succeeded");
   }
 

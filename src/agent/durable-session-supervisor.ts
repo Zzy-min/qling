@@ -222,6 +222,8 @@ export class DurableSessionSupervisor {
       endpoint: config.llm.endpoint,
       model: config.llm.model,
       maxIterations: config.runtime.max_steps,
+      iterationPolicy: config.runtime.iteration_policy,
+      maxModelTurns: config.runtime.max_model_turns,
       tools,
       runtime: {
         workspaceDir: config.runtime.workspace_dir || process.cwd(),

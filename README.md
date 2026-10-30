@@ -455,6 +455,21 @@ npm run dep:layers -- --strict
 - `browser_fetch` 需要单独安装 Playwright Chromium。
 - GitHub Release、WinGet、npm 与 Scoop 可能处于不同版本节奏，请以各分发渠道显示的版本为准。
 
+## 长任务的轮次与工具计数
+
+普通 CLI/TUI、ACP 和任务服务默认采用连续任务循环。`runtime.max_steps` 是模型响应的检查点窗口（默认 50），不是工具调用次数或任务结束条件；达到窗口后保存检查点并继续原任务，不需要再输入“继续”。停滞提示不重置已执行工具、变更账本或验证状态。
+
+```yaml
+runtime:
+  iteration_policy: continuous
+  max_steps: 20             # 每 20 次模型响应检查点续跑
+  max_model_turns: 0        # 不设置模型轮次硬上限；仍服从取消、安全和费用预算
+```
+
+可设置 `max_model_turns: 100`，在单次执行/恢复达到该模型响应预算时暂停，保留会话；`iteration_policy: fixed` 恢复旧的 `max_steps` 硬上限行为。环境变量对应 `QLING_RUNTIME_ITERATION_POLICY` 和 `QLING_RUNTIME_MAX_MODEL_TURNS`，`/config` 可查看生效值。连续模式可能运行更久并消耗更多 Token，应按需要配置硬预算。
+
+SDK 直接创建 Agent 和子代理仍默认使用固定 `maxIterations` 预算；SDK 可显式设置 `iterationPolicy: "continuous"` 与 `maxModelTurns`。每个模型响应可以请求零个、一个或多个工具；工具超时、模型请求重试和工具停滞分别处理，不应混同为任务失败。
+
 ## 文档
 
 - [安装与卸载](docs/install.md)

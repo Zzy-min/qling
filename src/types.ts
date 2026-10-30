@@ -68,6 +68,10 @@ export interface AgentConfig {
   model: string;
   systemPrompt: string;
   maxIterations: number;
+  /** Fixed preserves SDK/subagent budgets; continuous treats maxIterations as a checkpoint window. */
+  iterationPolicy?: "fixed" | "continuous";
+  /** Optional hard model-response budget in continuous mode; 0 means no turn-count cap. */
+  maxModelTurns?: number;
   tools: ToolDefinition[];
   // v2 新增
   sections?: PromptSectionRegistry;

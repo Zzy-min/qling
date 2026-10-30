@@ -11,6 +11,8 @@ export interface LocalConfigReport {
   stateDir: string;
   cacheDir: string;
   maxSteps: number;
+  iterationPolicy: "fixed" | "continuous";
+  maxModelTurns: number;
   permissionMode: string;
   permissionRuleCount: number;
   features: Record<string, boolean>;
@@ -98,6 +100,8 @@ export function buildLocalConfigReport(
     stateDir: safeText(config.runtime.file_state_dir),
     cacheDir: safeText(config.runtime.file_cache_dir),
     maxSteps: Number(config.runtime.max_steps ?? 0),
+    iterationPolicy: config.runtime.iteration_policy === "fixed" ? "fixed" : "continuous",
+    maxModelTurns: Number(config.runtime.max_model_turns ?? 0),
 
     permissionMode: safeText(config.guard.permissions.default, "allow"),
     permissionRuleCount: config.guard.permissions.rules?.length ?? 0,
@@ -153,7 +157,7 @@ export function formatLocalConfigReport(
     `Workspace  : ${report.workspaceDir}`,
     `State dir  : ${report.stateDir}`,
     `Cache dir  : ${report.cacheDir}`,
-    `Runtime    : max_steps=${report.maxSteps}`,
+    `Runtime    : max_steps=${report.maxSteps} iteration_policy=${report.iterationPolicy} max_model_turns=${report.maxModelTurns}`,
     `Permissions: ${formatPermissionMode(report.permissionMode)}`,
     `Rules      : ${report.permissionRuleCount}`,
     `Features   : ${formatFeatureFlags(report.features)}`,

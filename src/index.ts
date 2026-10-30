@@ -1103,6 +1103,8 @@ async function main() {
     endpoint: loaded.config.llm.endpoint,
     model: loaded.config.llm.model,
     maxIterations: loaded.config.runtime.max_steps,
+    iterationPolicy: loaded.config.runtime.iteration_policy,
+    maxModelTurns: loaded.config.runtime.max_model_turns,
     tools,
     runtime: {
       workspaceDir: loaded.config.runtime.workspace_dir,

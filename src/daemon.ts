@@ -327,6 +327,8 @@ async function executeMissionInBackground(
       endpoint: loadedConfig.llm.endpoint,
       model: loadedConfig.llm.model,
       maxIterations: loadedConfig.runtime.max_steps,
+      iterationPolicy: loadedConfig.runtime.iteration_policy,
+      maxModelTurns: loadedConfig.runtime.max_model_turns,
       tools,
       runtime: {
         workspaceDir: loadedConfig.runtime.workspace_dir || process.cwd(),

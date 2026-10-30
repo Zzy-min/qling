@@ -97,6 +97,8 @@ export interface QlingConfig {
     file_state_dir: string;
     code_runtime: "auto" | "native" | "wsl";
     max_steps: number;
+    iteration_policy: "fixed" | "continuous";
+    max_model_turns: number;
     parse_retries: number;
     tool_repeat_limit: number;
     timeout_ms: number;
@@ -288,6 +290,8 @@ export function buildDefaultConfig(): QlingConfig {
       file_state_dir: DEFAULT_STATE_DIR,
       code_runtime: "auto",
       max_steps: 50,
+      iteration_policy: "continuous",
+      max_model_turns: 0,
       parse_retries: 2,
       tool_repeat_limit: 6,
       timeout_ms: 300000,

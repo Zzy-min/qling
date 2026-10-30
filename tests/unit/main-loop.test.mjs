@@ -715,6 +715,7 @@ test("inner loop cannot report success while configured verification is failing"
     const outcome = await runInnerIterationLoop(host);
     assert.notEqual(outcome.status, "succeeded");
     assert.ok(host.messages.some((message) => message.synthetic_reason === "efficiency_recovery"));
+    assert.equal(host.toolCallTotal, 1, "the completed write remains counted when verification returns to repair");
   } finally {
     rmSync(workspaceDir, { recursive: true, force: true });
   }
