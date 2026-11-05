@@ -226,7 +226,8 @@ describe("MCPRegistry per-server max_output_bytes", () => {
         assert.equal(small.meta?.truncated, true);
         assert.equal(typeof small.meta?.spillPath, "string");
         assert.ok(resolve(small.meta.spillPath).startsWith(resolve(join(root, "sessions", "s-per", "mcp")) + sep));
-        assert.equal(normal.meta, undefined);
+        assert.equal(normal.meta?.truncated, undefined);
+        assert.ok(normal.meta?.mcp, "structured MCP metadata is preserved");
         assert.equal(normal.output, big);
 
         await registry.disconnectAll();

@@ -1,5 +1,9 @@
 # Qling Scoop bucket
 
+<!-- release-1.4.0-status -->
+当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+
+
 ## 公共安装（推荐）
 
 ```powershell

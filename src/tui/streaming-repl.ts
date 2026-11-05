@@ -400,6 +400,9 @@ export class StreamingREPL {
         (this.ui as any).setModel?.(model);
         await this.refreshStatusLine();
       },
+      requestExit: async () => {
+        await this.close();
+      },
       // slash 多行输出：只追加文本，禁止每行重画输入框
       writeLine: (line = "") => {
         if (typeof (this.ui as any).appendSlashLine === "function") {

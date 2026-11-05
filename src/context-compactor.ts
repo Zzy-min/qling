@@ -385,6 +385,18 @@ export class ContextCompactor {
     // 历史修复，保证 assistant.tool_calls 与 tool 结果严格配对。
     const repaired = repairHistory(result);
     const finalMessages = repaired.messages;
+    const validation = validateCompactionCandidate(messages, finalMessages);
+    if (!validation.ok) {
+      return {
+        messages: [...messages],
+        status: "failed",
+        reason: `compaction candidate rejected: ${validation.reason}`,
+        summarySource: summaryResult.source,
+        consecutiveFailures: this.consecutiveFailures,
+        breakerOpen: this.isBreakerOpen(),
+        historyRepair: repaired.report,
+      };
+    }
     const preservedSyntheticReasons = [...new Set(finalMessages
       .map((message) => message.synthetic_reason)
       .filter((value) => typeof value === "string")
@@ -733,4 +745,63 @@ export function skeletonizeMessages(messages: Message[], modifiedFiles: Set<stri
   }
 
   return result;
+}
+export interface CompactionValidation {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * 提交前校验：压缩候选不得丢失最新真实用户约束、不得制造孤儿 tool 消息或重复 tool_call id。
+ * 失败时调用方必须保留原历史，而不是用半成品替换。
+ */
+export function validateCompactionCandidate(
+  original: Message[],
+  candidate: Message[]
+): CompactionValidation {
+  if (candidate.length === 0 && original.length > 0) {
+    return { ok: false, reason: "candidate is empty" };
+  }
+
+  const lastRealUser = [...original]
+    .reverse()
+    .find((message) => message.role === "user" && !message.synthetic_reason);
+  if (
+    lastRealUser &&
+    !candidate.some(
+      (message) =>
+        message.role === "user" &&
+        !message.synthetic_reason &&
+        message.content === lastRealUser.content
+    )
+  ) {
+    return { ok: false, reason: "latest user constraint was dropped" };
+  }
+
+  const declaredToolIds = new Set<string>();
+  const answeredToolIds = new Set<string>();
+  for (const message of candidate) {
+    for (const call of message.tool_calls ?? []) {
+      if (declaredToolIds.has(call.id)) {
+        return { ok: false, reason: `duplicate tool_call id: ${call.id}` };
+      }
+      declaredToolIds.add(call.id);
+    }
+    if (message.role !== "tool") continue;
+    if (!message.tool_call_id || !declaredToolIds.has(message.tool_call_id)) {
+      // 逆序（结果先于调用）与孤儿同属协议违例：结果必须出现在声明之后。
+      return { ok: false, reason: `orphan tool result: ${message.tool_call_id ?? "(missing)"}` };
+    }
+    if (answeredToolIds.has(message.tool_call_id)) {
+      return { ok: false, reason: `duplicate tool result: ${message.tool_call_id}` };
+    }
+    answeredToolIds.add(message.tool_call_id);
+  }
+  for (const id of declaredToolIds) {
+    if (!answeredToolIds.has(id)) {
+      return { ok: false, reason: `missing tool result: ${id}` };
+    }
+  }
+
+  return { ok: true };
 }

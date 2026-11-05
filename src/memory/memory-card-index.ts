@@ -211,6 +211,8 @@ export class MemoryCardIndex {
     const cardsWithVectors = rows.map((row) => ({ card: this.rowToCard(row), vector: this.rowVector(row) }));
     const superseded = new Set(cardsWithVectors.map((item) => item.card.supersedes).filter(Boolean));
     const queryTokens = tokenize(query);
+    // 非空 query 的相关性门槛：仅先验分数不足以证明记忆与当前任务相关。
+    const minSemantic = 0.2;
     const scored = cardsWithVectors
       .filter(({ card }) => !superseded.has(card.id))
       .filter(({ card }) => options.includeSensitive || !["sensitive", "secret"].includes(card.sensitivity))
@@ -229,9 +231,13 @@ export class MemoryCardIndex {
           `importance=${card.importance.toFixed(2)}`,
           recency > 0.5 ? "recent" : "",
         ].filter(Boolean);
-        return { card, vector, score, reason: reasons.join(", ") };
+        return { card, vector, score, keyword, semantic, reason: reasons.join(", ") };
       })
-      .filter((item) => item.score > 0)
+      .filter((item) => {
+        // 空 query 用于列举；非空 query 必须有词法或语义证据，零命中时 abstain。
+        if (queryTokens.size === 0) return item.score > 0;
+        return item.keyword > 0 || item.semantic >= minSemantic;
+      })
       .sort((left, right) => right.score - left.score || left.card.id.localeCompare(right.card.id));
 
     const selected: typeof scored = [];

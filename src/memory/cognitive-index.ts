@@ -127,6 +127,12 @@ export class CognitiveIndex {
     );
   }
 
+  /** 删除一个主记忆的向量投影；删除后该 id 不再参与语义检索。 */
+  removeVector(id: string): boolean {
+    if (!this.db) return false;
+    return this.db.prepare("DELETE FROM embeddings WHERE id = ?").run(id).changes > 0;
+  }
+
   searchVector(queryVector: number[], limit: number = 10): SemanticSearchResult[] {
     if (!Number.isFinite(limit) || limit <= 0) return [];
     const capacity = Math.floor(limit);

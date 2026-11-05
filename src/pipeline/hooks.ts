@@ -28,6 +28,8 @@ import {
 } from "../plan/plan-artifacts.js";
 import { getPermissionGrantStore } from "../guard/permission-grants.js";
 import { splitShell, unwrap } from "../guard/shell-split.js";
+import { fingerprintToolArguments } from "../guard/approval-fingerprint.js";
+import { computerActionSchema, isComputerObservation, isBlockedComputerKey, normalizeComputerKeys } from "../computer-use/schema.js";
 
 // --- 0. 动态工具选择器（<30 工具限制 + 场景路由）---
 
@@ -193,6 +195,9 @@ export class SpeculativeClassifier {
 
   classify(toolCall: ToolCall): ClassifierResult {
     const def = this.toolDefs.find((t) => t.name === toolCall.name);
+    if (toolCall.name === "computer_use" && !isComputerObservation(toolCall.arguments)) {
+      return { label: "ask", reason: "桌面输入需要逐次人工确认；窗口内容不能授予权限" };
+    }
 
     // Unknown-outcome reconciliation is an operator acknowledgment, not a
     // reusable session permission. It must ask even when normal mode is allow.
@@ -387,6 +392,22 @@ export class HookManager {
   }
 
   async runPreHook(ctx: ToolHookContext, sessionId?: string): Promise<HookResult> {
+    // 一次性审批凭据只覆盖 ask，不允许绕过 deny / rate limit / 危险分类。
+    const approved =
+      Boolean(ctx.approvedToolCallId) &&
+      ctx.approvedToolCallId === ctx.toolCallId &&
+      Boolean(ctx.approvedArgsHash) &&
+      ctx.approvedArgsHash === fingerprintToolArguments(ctx.arguments);
+    const computer = ctx.toolName === "computer_use";
+    const observation = computer && isComputerObservation(ctx.arguments);
+    if (computer) {
+      const args = computerActionSchema.safeParse(ctx.arguments);
+      if (!args.success || args.data.delivery_mode === "foreground" ||
+          (args.data.action === "key" && isBlockedComputerKey(normalizeComputerKeys(args.data.keys ?? "")))) {
+        return { decision: "deny", blockingError: "Computer Use: 无效动作、危险键位或未开放的前台模式", preventContinuation: true };
+      }
+      if (this.planMode && !observation) return { decision: "deny", blockingError: "Plan Mode: 禁止桌面输入", preventContinuation: true };
+    }
     const httpWrite = ctx.toolName === "url_fetch" && !["GET", "HEAD"].includes(String(ctx.arguments.method ?? "GET").trim().toUpperCase());
     if (this.planMode && httpWrite) {
       return { decision: "deny", blockingError: "Plan Mode: url_fetch 仅允许 GET/HEAD 只读请求。", preventContinuation: true };
@@ -459,9 +480,9 @@ export class HookManager {
           preventContinuation: true,
         };
       }
-      if (permResult.decision === "ask") {
+      if (permResult.decision === "ask" && !observation && !approved) {
         // G3.3：会话 grant → 跳过 ask
-        if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
+        if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments, sessionId)) {
           await appendGuardAudit(this.guardConfig, {
             tool: ctx.toolName,
             action: "allow",
@@ -522,8 +543,8 @@ export class HookManager {
       };
     }
 
-    if (classification.label === "ask") {
-      if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) {
+    if (classification.label === "ask" && !approved) {
+      if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments, sessionId)) {
         // grant 覆盖 classifier ask（危险 deny 仍拦截）
       } else {
         return {
@@ -540,7 +561,8 @@ export class HookManager {
       const result = await handler(ctx);
       if (result.decision === "deny") return result;
       if (result.decision === "ask") {
-        if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments)) continue;
+        if (approved) continue;
+        if (ctx.toolName !== "bg_reconcile" && getPermissionGrantStore().hasAllow(ctx.toolName, ctx.arguments, sessionId)) continue;
         return result;
       }
     }
@@ -585,9 +607,13 @@ export class ToolPipeline {
     this.toolDefs = toolDefs;
   }
 
-  async execute(toolCall: ToolCall, runner: (tc: ToolCall) => Promise<ToolResult>): Promise<ToolResult> {
+  async execute(
+    toolCall: ToolCall,
+    runner: (tc: ToolCall) => Promise<ToolResult>,
+    options: { approvedToolCallId?: string; approvedArgsHash?: string } = {}
+  ): Promise<ToolResult> {
     const def = this.toolDefs.find((t) => t.name === toolCall.name);
-    const hookCtx = this.buildHookContext(toolCall, def);
+    const hookCtx = this.buildHookContext(toolCall, def, options.approvedToolCallId, options.approvedArgsHash);
 
     // 1. PreHook（含 Permission Matrix + Rate Limiter + Speculative Classifier）
     const preResult = await this.hookManager.runPreHook(hookCtx, this.sessionId ?? undefined);
@@ -627,12 +653,17 @@ export class ToolPipeline {
 
   private buildHookContext(
     toolCall: ToolCall,
-    def: ToolDefinition | undefined
+    def: ToolDefinition | undefined,
+    approvedToolCallId?: string,
+    approvedArgsHash?: string
   ): ToolHookContext {
     const cmd = String(toolCall.arguments.command ?? "");
     const matched = matchDangerousPatterns(cmd, def?.dangerousPatterns ?? []);
 
     return {
+      toolCallId: toolCall.id,
+      approvedToolCallId,
+      approvedArgsHash,
       toolName: toolCall.name,
       arguments: toolCall.arguments,
       inputSchema: def?.parameters ?? {},

@@ -12,7 +12,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
-    include: ["src/dashboard-web/**/*.test.tsx"],
+    include: ["src/dashboard-web/**/*.test.{ts,tsx}"],
     setupFiles: [fileURLToPath(new URL("./src/dashboard-web/test-setup.ts", import.meta.url))],
   },
 });

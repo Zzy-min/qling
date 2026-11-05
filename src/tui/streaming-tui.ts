@@ -33,19 +33,22 @@ import {
   truncateVisible,
 } from "./shell.js";
 import {
-  formatOptionPickerPanel,
   formatScrollbackViewportPanel,
-  formatSessionPickerPanel,
+  renderSessionPickerPanel,
   paintOptionPickerPanel,
   paintScrollbackViewportPanel,
   paintSessionPickerPanel,
+  renderOptionPickerPanel,
   type OptionPickerItem,
+  type OptionPickerPanelRender,
   type OptionPickerSpec,
   type SessionPickerItem,
   type TurnBrowseItem,
 } from "./overlay-panel.js";
 import { sortSessionFleet } from "./session-fleet.js";
 import { formatMarkdownForTerminal, looksLikeMarkdown } from "./markdown.js";
+import { formatSkillSummaryLines, summarizeSkillOutput } from "./skill-summary.js";
+import { formatFlatInfoPanels } from "./info-card.js";
 import { getPackageVersion } from "../package-version.js";
 import type { RecoveryState } from "../execution/types.js";
 import {
@@ -79,9 +82,20 @@ import {
   resolveColorMode,
   resolveIconMode,
   resolveTuiMode,
+  type FullscreenMouseEvent,
   type TuiMode,
 } from "./fullscreen.js";
 import { readClipboardText, writeClipboardText } from "../runtime/clipboard.js";
+
+/**
+ * 将 SGR 滚轮行增量换算为选择器步数。
+ * 约定与全屏正文一致：lineDelta > 0 = 滚轮向上 = 选择更靠前的项。
+ */
+export function overlayWheelStep(lineDelta: number, linesPerNotch = 3): number {
+  if (lineDelta === 0) return 0;
+  const notches = Math.max(1, Math.round(Math.abs(lineDelta) / Math.max(1, linesPerNotch)));
+  return lineDelta > 0 ? -notches : notches;
+}
 
 // ── ANSI 颜色工具（短别名兼容既有调用） ─────────────────
 
@@ -164,6 +178,8 @@ export class StreamUI {
   private termRestoreHandler: (() => void) | null = null;
   private wheelScrollTimer: NodeJS.Timeout | null = null;
   private pendingWheelLines = 0;
+  private overlayScrollbar: OptionPickerPanelRender['scrollbar'] | null = null;
+  private overlayScrollDragging = false;
   private statusLine: string | null = null;
   private statusLineEnabled = true;
   private progressTimer: NodeJS.Timeout | null = null;
@@ -221,6 +237,8 @@ export class StreamUI {
         kind: "sessions";
         items: SessionPickerItem[];
         selected: number;
+        rowMap: Array<number | null>;
+        hovered: number | null;
         /** 面板本身行数 */
         lineCount: number;
         /** 面板 + 其下输入框(+hints) 总行数，用于原地擦除 */
@@ -245,6 +263,12 @@ export class StreamUI {
         onPick: (item: OptionPickerItem) => void | Promise<void>;
         onDismiss?: () => void;
         shortcuts?: Record<string, string>;
+        /** 命令分组折叠状态（默认收起「高级」） */
+        collapsedSections: Set<string>;
+        /** 面板行 → 条目下标，用于鼠标命中 */
+        rowMap: Array<number | null>;
+        /** 鼠标悬停条目下标 */
+        hovered: number | null;
         lineCount: number;
         blockLines: number;
       } = null;
@@ -458,6 +482,8 @@ export class StreamUI {
         0,
         mapped.findIndex((i) => i.active)
       ),
+      rowMap: [],
+      hovered: null,
       lineCount: 0,
       blockLines: 0,
     };
@@ -497,7 +523,8 @@ export class StreamUI {
       this.closeOverlay(undefined, true);
     }
 
-    let selected = 0;
+    let selected = items.findIndex((i) => !i.disabled && !i.section);
+    if (selected < 0) selected = 0;
     if (spec.selectedId) {
       const byId = items.findIndex((i) => i.id === spec.selectedId);
       if (byId >= 0) selected = byId;
@@ -521,11 +548,17 @@ export class StreamUI {
       onPick: spec.onPick,
       onDismiss: spec.onDismiss,
       shortcuts: spec.shortcuts,
+      collapsedSections: new Set(spec.defaultCollapsed ?? []),
+      rowMap: [],
+      hovered: null,
       lineCount: 0,
       blockLines: 0,
     };
     // 打开时若输入区已有检索词（如 /skill search foo），立即按词过滤
-    if (filterable && this.input.value.trim()) {
+    if (
+      filterable &&
+      (this.input.value.trim() || this.overlay.collapsedSections.size > 0)
+    ) {
       this.refilterSlashPicker();
     } else {
       this.paintOverlay(false);
@@ -727,7 +760,7 @@ export class StreamUI {
       this.fullscreen.copySelection();
       return;
     }
-    if (this.fullscreen && (seq === "\x1b[5~" || seq === "\x1b[6~" || seq === "\x1b[F" || seq === "\x1b[4~")) {
+    if (this.fullscreen && !this.overlay && (seq === "\x1b[5~" || seq === "\x1b[6~" || seq === "\x1b[F" || seq === "\x1b[4~")) {
       if (seq === "\x1b[5~") this.fullscreen.scrollPages(1);
       else if (seq === "\x1b[6~") this.fullscreen.scrollPages(-1);
       else this.fullscreen.scrollEnd();
@@ -786,12 +819,14 @@ export class StreamUI {
       return;
     }
     if (seq === "\x1b[5~") {
-      if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
+      if (this.overlay?.kind === "options") this.moveOverlaySelection(-5);
+      else if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
       else this.navigateTurns(-1);
       return;
     }
     if (seq === "\x1b[6~") {
-      if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
+      if (this.overlay?.kind === "options") this.moveOverlaySelection(5);
+      else if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
       else this.navigateTurns(1);
       return;
     }
@@ -1712,6 +1747,9 @@ export class StreamUI {
       label: string;
       description: string;
       argumentHint: string;
+      aliases?: string[];
+      category?: string;
+      categoryLabel?: string;
     }>) => {
       const raw = listFn();
       if (!raw.length) return;
@@ -1725,17 +1763,21 @@ export class StreamUI {
       const mapped = raw.map((c) => ({
         id: c.id,
         label: c.label,
-        description: c.argumentHint
-          ? `${c.description}  ${c.argumentHint}`
-          : c.description,
+        description: c.description,
+        tag: c.categoryLabel || undefined,
+        hint:
+          c.argumentHint ||
+          (c.aliases?.length ? c.aliases.join(" ") : undefined),
+        aliases: c.aliases ?? [],
         _argumentHint: c.argumentHint,
       }));
-      const filtered = this.filterSlashItems(mapped, this.input.value);
+      const grouped = this.groupSlashItems(mapped);
       this.showOptionPicker({
         title: "命令切换 · Slash",
-        footerHint: "键入/粘贴检索 · 可带参数如 /dashboard web · ↑/↓ · Enter · Esc",
+        footerHint: "键入检索 · ↑/↓ · PgUp/PgDn · Tab 补全 · 可带参数 · Enter · Esc",
         filterable: true,
-        items: filtered,
+        defaultCollapsed: ["高级"],
+        items: grouped,
         onPick: (item) => {
           if (!item.id) return; // 无匹配占位
           const full = raw.find((c) => c.id === item.id);
@@ -1779,8 +1821,109 @@ export class StreamUI {
   }
 
   /**
+   * 斜杠切换器空查询时按分类分组（对标 Grok palette 的 SectionHeader）。
+   * 搜索时由 filterSlashItems 丢弃 section，只保留命中的命令。
+   */
+  private groupSlashItems(items: OptionPickerItem[]): OptionPickerItem[] {
+    const order = ["常用", "上下文", "Git", "记忆", "连接器", "高级"];
+    const groups = new Map<string, OptionPickerItem[]>();
+    for (const item of items) {
+      const key = item.tag || "其他";
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(item);
+      else groups.set(key, [item]);
+    }
+    const keys = [
+      ...order.filter((key) => groups.has(key)),
+      ...Array.from(groups.keys()).filter((key) => !order.includes(key)),
+    ];
+    return keys.flatMap((label) => [
+      {
+        id: "",
+        label,
+        section: true,
+        disabled: true,
+        collapsible: true,
+        sectionCount: groups.get(label)?.length ?? 0,
+      } as OptionPickerItem,
+      ...(groups.get(label) ?? []),
+    ]);
+  }
+
+  /** 收起的分组只保留标题，不渲染组内命令。 */
+  private applySlashCollapse(
+    items: OptionPickerItem[],
+    collapsed: Set<string>
+  ): OptionPickerItem[] {
+    const out: OptionPickerItem[] = [];
+    let skip = false;
+    for (const item of items) {
+      if (item.section) {
+        skip = collapsed.has(item.label);
+        out.push({ ...item, collapsed: skip });
+      } else if (!skip) {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
+  /** 对标 Grok FuzzyMatcher：字符按顺序出现即可命中（如 thm → /theme）。 */
+  private isSubsequence(text: string, needle: string): boolean {
+    if (needle.length < 3) return false;
+    let cursor = 0;
+    for (const ch of needle) {
+      const at = text.indexOf(ch, cursor);
+      if (at < 0) return false;
+      cursor = at + 1;
+    }
+    return true;
+  }
+
+  /**
+   * Nucleo 风格细节分：连续匹配长度、起始位置、词边界。
+   * 只作为同一档位内的排序权重（0–100），不改变精确/前缀/包含的层级。
+   */
+  private fuzzyDetailScore(text: string, needle: string): number {
+    if (!needle) return 0;
+    const index = text.indexOf(needle);
+    if (index >= 0) {
+      const boundary =
+        index === 0 || /[\/_\-\s.]/.test(text[index - 1] ?? "") ? 18 : 0;
+      const continuous = Math.min(30, needle.length * 6);
+      return Math.max(
+        0,
+        50 + continuous + boundary - Math.min(20, index * 2)
+      );
+    }
+    if (needle.length < 3) return 0;
+    const points: number[] = [];
+    let cursor = 0;
+    for (const ch of needle) {
+      const at = text.indexOf(ch, cursor);
+      if (at < 0) return 0;
+      points.push(at);
+      cursor = at + 1;
+    }
+    let maxRun = 1;
+    let run = 1;
+    for (let i = 1; i < points.length; i++) {
+      if (points[i] === points[i - 1]! + 1) run += 1;
+      else run = 1;
+      maxRun = Math.max(maxRun, run);
+    }
+    const first = points[0] ?? 0;
+    const last = points[points.length - 1] ?? first;
+    const gaps = Math.max(0, last - first + 1 - points.length);
+    const boundary =
+      first === 0 || /[\/_\-\s.]/.test(text[first - 1] ?? "") ? 15 : 0;
+    return Math.max(0, 35 + maxRun * 5 + boundary - first * 2 - gaps * 4);
+  }
+
+  /**
    * 按输入检索最近命令 / skill：前缀匹配优先，其次包含匹配。
-   * 空或仅 `/` 时返回全量（按名称排序）。
+   * 空或仅 `/` 时返回全量（保留分类分组顺序）。
+   * 搜索时丢弃 section 行，只返回可执行命令。
    *
    * 斜杠带参数：`/dashboard web` 只按命令名段 `dashboard` 过滤，
    * 避免参数 token 把合法命令滤成「无匹配」。
@@ -1793,7 +1936,8 @@ export class StreamUI {
     const raw = prefix.trim();
     const p = raw.toLowerCase();
     if (!p || p === "/") {
-      return [...all].sort((a, b) => a.id.localeCompare(b.id));
+      // Grok 命令面板保留目录分组顺序；空查询不再按 id 重排
+      return [...all];
     }
 
     // 斜杠命令：过滤键 = 命令名（第一段），忽略后续参数
@@ -1808,18 +1952,40 @@ export class StreamUI {
 
     const scored: Array<{ item: OptionPickerItem; score: number }> = [];
     for (const it of all) {
+      if (it.section) continue;
       const id = it.id.toLowerCase();
       const label = it.label.toLowerCase();
       const desc = (it.description || "").toLowerCase();
-      const hay = `${id} ${label} ${desc}`;
+      const hint = (it.hint || "").toLowerCase();
+      const tag = (it.tag || "").toLowerCase();
+      const aliases = (it.aliases ?? []).map((alias) => alias.toLowerCase());
+      const hay = `${id} ${label} ${desc} ${hint} ${tag} ${aliases.join(" ")}`;
+      const aliasExact = aliases.some(
+        (alias) => alias === cmdHead || alias === `/${rest}` || alias === rest
+      );
+      const aliasPrefix = aliases.some(
+        (alias) => alias.startsWith(cmdHead) || alias.startsWith(`/${rest}`)
+      );
+      const aliasContains = aliases.some(
+        (alias) => alias.includes(cmdHead) || alias.includes(rest)
+      );
       let score = -1;
-      if (id === cmdHead || id === `/${rest}` || label === rest || label === cmdHead) {
+      if (aliasExact || id === cmdHead || id === `/${rest}` || label === rest || label === cmdHead) {
         score = 100;
-      } else if (id.startsWith(cmdHead) || id.startsWith(`/${rest}`)) {
+      } else if (aliasPrefix || id.startsWith(cmdHead) || id.startsWith(`/${rest}`)) {
         score = 90 - Math.min(20, id.length - Math.min(id.length, cmdHead.length));
-      } else if (id.includes(cmdHead) || label.startsWith(rest)) score = 70;
-      else if (label.includes(rest) || desc.includes(rest)) score = 40;
+      } else if (aliasContains || id.includes(cmdHead) || label.startsWith(rest)) score = 70;
+      else if (label.includes(rest) || desc.includes(rest) || hint.includes(rest) || tag.includes(rest)) score = 40;
       else if (
+        isSlashCmd &&
+        rest.length >= 3 &&
+        (aliases.some((alias) => this.isSubsequence(alias.replace(/^\/+/, ""), rest)) ||
+          this.isSubsequence(id.replace(/^\/+/, ""), rest) ||
+          this.isSubsequence(label.replace(/^\/+/, ""), rest))
+      ) {
+        // 子序列命中排在包含匹配之后，仍可发现 /thm → /theme
+        score = 30;
+      } else if (
         freeTokens.length > 1 &&
         freeTokens.every((t) => hay.includes(t))
       ) {
@@ -1832,7 +1998,17 @@ export class StreamUI {
       ) {
         score = 45;
       }
-      if (score >= 0) scored.push({ item: it, score });
+      if (score >= 0) {
+        const detail = Math.max(
+          this.fuzzyDetailScore(id.replace(/^\/+/, ""), rest),
+          this.fuzzyDetailScore(label.replace(/^\/+/, ""), rest),
+          ...aliases.map((alias) =>
+            this.fuzzyDetailScore(alias.replace(/^\/+/, ""), rest)
+          )
+        );
+        // 细节分只做档位内排序（最多 +10）
+        scored.push({ item: it, score: score + detail / 10 });
+      }
     }
     scored.sort(
       (a, b) =>
@@ -1845,13 +2021,31 @@ export class StreamUI {
   private refilterSlashPicker(): void {
     if (this.overlay?.kind !== "options" || !this.overlay.filterable) return;
     const all = this.overlay.allItems ?? this.overlay.items;
-    const filtered = this.filterSlashItems(all, this.input.value);
+    const query = this.input.value.trim();
+    const rawFiltered = this.filterSlashItems(all, this.input.value);
+    const filtered =
+      query && query !== "/"
+        ? rawFiltered
+        : this.applySlashCollapse(
+            rawFiltered,
+            this.overlay.collapsedSections
+          );
     // 无匹配时显示空列表提示项，不回退全量（避免「越打字越乱」）
     this.overlay.items =
       filtered.length > 0
         ? filtered
-        : [{ id: "", label: "(无匹配)", description: "继续输入或 Backspace" }];
-    this.overlay.selected = 0;
+        : [
+            {
+              id: "",
+              label: "(无匹配)",
+              description: "继续输入或 Backspace · Enter 直接执行当前草稿",
+              disabled: true,
+            },
+          ];
+    const firstSelectable = this.overlay.items.findIndex(
+      (item) => !item.disabled && !item.section
+    );
+    this.overlay.selected = firstSelectable >= 0 ? firstSelectable : 0;
     this.paintOverlay(true);
   }
 
@@ -1905,7 +2099,8 @@ export class StreamUI {
     // slash 缓冲先整块 Markdown 渲染再恢复输入框
     if (this.slashMdBuffer.length > 0) {
       if (this.fullscreen) {
-        const text = this.slashMdBuffer.join("\n");
+        const width = Math.max(40, Math.min(84, (process.stdout.columns || 100) - 6));
+        const text = formatFlatInfoPanels(this.slashMdBuffer.join("\n"), width);
         this.slashMdBuffer = [];
         this.fullscreen.setTransientOutput(null);
         this.fullscreen.appendAssistant(text);
@@ -2010,8 +2205,14 @@ export class StreamUI {
         const mouse = consumeMouseInput(mousePartial + chunk);
         mousePartial = mouse.pending;
         chunk = mouse.rest;
-        this.queueFullscreenWheel(mouse.lineDelta);
+        if (this.overlay && mouse.lineDelta !== 0) {
+          // 浮层打开时滚轮浏览选择器：每档 1 条，方向与 ↑/↓ 键、全屏正文一致
+          this.moveOverlaySelection(overlayWheelStep(mouse.lineDelta), false);
+        } else {
+          this.queueFullscreenWheel(mouse.lineDelta);
+        }
         for (const event of coalesceMouseEvents(mouse.events)) {
+          if (this.handleOverlayMouse(event)) continue;
           this.fullscreen.handleMouse(event);
         }
         if (!chunk) return;
@@ -2187,11 +2388,13 @@ export class StreamUI {
         } else if (seq === "\x1b[5~") {
           partial = "";
           if (this.fullscreen && !this.overlay) this.fullscreen.scrollPages(1);
+          else if (this.overlay?.kind === "options") this.moveOverlaySelection(-5);
           else if (this.overlay?.kind === "turns") this.navigateViewportPage(-1);
           else this.navigateTurns(-1);
         } else if (seq === "\x1b[6~") {
           partial = "";
           if (this.fullscreen && !this.overlay) this.fullscreen.scrollPages(-1);
+          else if (this.overlay?.kind === "options") this.moveOverlaySelection(5);
           else if (this.overlay?.kind === "turns") this.navigateViewportPage(1);
           else this.navigateTurns(1);
         } else if (seq === "\x1b[1;2A") {
@@ -2394,6 +2597,8 @@ export class StreamUI {
     if (this.overlay) {
       if (this.overlay.kind === "turns") {
         this.focusPromptFromScrollback();
+      } else if (this.overlay.kind === "options" && this.overlay.filterable) {
+        this.completeFilterableSelection();
       }
       return;
     }
@@ -2840,15 +3045,196 @@ export class StreamUI {
     this.openSessionPicker();
   }
 
-  private moveOverlaySelection(delta: number): void {
+  private moveOverlaySelection(delta: number, wrap = true): void {
     if (!this.overlay || this.overlay.items.length === 0) return;
     const n = this.overlay.items.length;
-    this.overlay.selected = (this.overlay.selected + delta + n) % n;
+    const selectable = (idx: number) => {
+      if (this.overlay!.kind !== "options") return true;
+      const item = (this.overlay!.items as OptionPickerItem[])[idx];
+      if (!item) return false;
+      if (item.section) return Boolean(item.collapsible);
+      return !item.disabled;
+    };
+    if (!wrap) {
+      let next = Math.max(0, Math.min(n - 1, this.overlay.selected + delta));
+      const step = delta >= 0 ? 1 : -1;
+      while (next >= 0 && next < n && !selectable(next)) next += step;
+      if (next < 0 || next >= n || !selectable(next)) return;
+      this.overlay.selected = next;
+      if (this.overlay.kind === "turns") {
+        this.turnSelected = next;
+        this.scrollbackViewport.selectTurn(next, "start");
+      }
+      this.paintOverlay(true);
+      return;
+    }
+    let next = this.overlay.selected;
+    for (let step = 0; step < n; step++) {
+      next = (next + delta + n) % n;
+      if (selectable(next)) break;
+    }
+    if (!selectable(next)) return;
+    this.overlay.selected = next;
     if (this.overlay.kind === "turns") {
       this.turnSelected = this.overlay.selected;
       this.scrollbackViewport.selectTurn(this.turnSelected, "start");
     }
     this.paintOverlay(true);
+  }
+
+  /** Tab：把当前切换器选中项补全进输入框，不直接执行（Grok palette completion）。 */
+  private completeFilterableSelection(): void {
+    if (this.overlay?.kind !== "options" || !this.overlay.filterable) return;
+    const draft = this.input.value.trim();
+    // 已带参数或空查询时不覆盖草稿
+    if (!draft || /\s/.test(draft)) return;
+    const item = this.overlay.items[this.overlay.selected] as
+      | OptionPickerItem
+      | undefined;
+    if (!item || !item.id || item.disabled || item.section) return;
+    this.input.value = `${item.id} `;
+    this.input.cursorPos = this.input.value.length;
+    this.draftDisplaySource = null;
+    this.closeOverlay(undefined, false);
+    this.focus = "prompt";
+  }
+
+  /** 切换命令分组折叠，并保持标题为当前选中项。 */
+  private toggleSlashSection(label: string): void {
+    if (this.overlay?.kind !== "options" || !this.overlay.filterable) return;
+    if (this.overlay.collapsedSections.has(label)) {
+      this.overlay.collapsedSections.delete(label);
+    } else {
+      this.overlay.collapsedSections.add(label);
+    }
+    this.refilterSlashPicker();
+    if (this.overlay?.kind !== "options") return;
+    const idx = this.overlay.items.findIndex(
+      (item) => item.section && item.label === label
+    );
+    if (idx >= 0) this.overlay.selected = idx;
+    this.paintOverlay(true);
+  }
+
+  /** 把浮层滚动条上的行映射为选中项，用于点击/拖动定位。 */
+  private scrollOverlayToPanelRow(
+    row: number,
+    meta: NonNullable<OptionPickerPanelRender["scrollbar"]>
+  ): void {
+    if (!this.overlay) return;
+    const span = Math.max(1, meta.bottomLine - meta.topLine);
+    const ratio = Math.max(0, Math.min(1, (row - meta.topLine) / span));
+    const maxStart = Math.max(0, meta.totalItems - meta.viewportItems);
+    const start = Math.round(maxStart * ratio);
+    const total = this.overlay.items.length;
+    let target = Math.max(
+      0,
+      Math.min(total - 1, start + Math.floor(meta.viewportItems / 2))
+    );
+    const selectable = (idx: number): boolean => {
+      if (idx < 0 || idx >= total) return false;
+      if (this.overlay!.kind !== "options") return true;
+      const item = (this.overlay!.items as OptionPickerItem[])[idx];
+      if (!item) return false;
+      if (item.section) return Boolean(item.collapsible);
+      return !item.disabled;
+    };
+    const direction = target > this.overlay.selected ? 1 : -1;
+    while (!selectable(target)) {
+      target += direction;
+      if (target < 0 || target >= total) return;
+    }
+    this.overlay.selected = target;
+    this.paintOverlay(true);
+  }
+
+  /**
+   * 浮层鼠标命中：move 更新悬停行，down 选中并确认；分组标题点击折叠。
+   * 对标 Grok picker `MouseEventKind::Moved` / 点击选区。
+   */
+  private handleOverlayMouse(event: FullscreenMouseEvent): boolean {
+    if (
+      !this.overlay ||
+      (this.overlay.kind !== "options" && this.overlay.kind !== "sessions") ||
+      !this.fullscreen
+    ) {
+      return false;
+    }
+    const row = this.fullscreen.overlayRowAt(event.row, event.column);
+    if (row === null) {
+      if (event.kind === "move" && this.overlay.hovered !== null) {
+        this.overlay.hovered = null;
+        this.paintOverlay(true);
+        return true;
+      }
+      return false;
+    }
+    const scrollbar = this.overlayScrollbar;
+    if (
+      scrollbar &&
+      event.column === this.fullscreen.overlayScrollbarColumn() &&
+      row >= scrollbar.topLine &&
+      row <= scrollbar.bottomLine
+    ) {
+      if (event.kind === "down") this.overlayScrollDragging = true;
+      if (event.kind === "down" || event.kind === "drag") {
+        this.scrollOverlayToPanelRow(row, scrollbar);
+        return true;
+      }
+      if (event.kind === "up") {
+        this.overlayScrollDragging = false;
+        return true;
+      }
+      return true;
+    }
+    if (event.kind === "up" || event.kind === "drag") {
+      this.overlayScrollDragging = false;
+      return true;
+    }
+    const index = this.overlay.rowMap[row] ?? null;
+    if (index === null) return true;
+    if (this.overlay.kind === "sessions") {
+      const session = this.overlay.items[index];
+      if (!session) return true;
+      if (event.kind === "move") {
+        if (this.overlay.hovered !== index) {
+          this.overlay.hovered = index;
+          this.paintOverlay(true);
+        }
+        return true;
+      }
+      if (event.kind === "down") {
+        this.overlay.hovered = index;
+        this.overlay.selected = index;
+        this.paintOverlay(true);
+        this.handleOverlayEnter();
+      }
+      return true;
+    }
+    const item = this.overlay.items[index] as OptionPickerItem | undefined;
+    if (!item) return true;
+    if (event.kind === "move") {
+      if (item.disabled && !item.section) return true;
+      if (this.overlay.hovered !== index) {
+        this.overlay.hovered = index;
+        this.paintOverlay(true);
+      }
+      return true;
+    }
+    if (event.kind === "down") {
+      this.overlay.hovered = index;
+      if (item.section) {
+        this.toggleSlashSection(item.label);
+        return true;
+      }
+      if (item.disabled || !item.id) return true;
+      this.overlay.selected = index;
+      this.paintOverlay(true);
+      this.handleOverlayEnter();
+      return true;
+    }
+    // up / drag 在浮层内消费，避免落到全屏文本选区
+    return true;
   }
 
   private handleOverlayEnter(): void {
@@ -2870,6 +3256,11 @@ export class StreamUI {
         return;
       }
       const item = this.overlay.items[this.overlay.selected];
+      if (item?.section) {
+        this.toggleSlashSection(item.label);
+        return;
+      }
+      if (item?.disabled) return;
       const onPick = this.overlay.onPick;
       this.closeOverlay(undefined, false);
       this.focus = "prompt";
@@ -2993,10 +3384,28 @@ export class StreamUI {
     let plain: string[];
     let painted: string;
     if (this.overlay.kind === "sessions") {
-      plain = formatSessionPickerPanel(this.overlay.items, this.overlay.selected, width);
-      painted = paintSessionPickerPanel(plain, this.overlay.selected);
+      const rendered = renderSessionPickerPanel(
+        this.overlay.items,
+        this.overlay.selected,
+        width
+      );
+      plain = rendered.lines;
+      this.overlay.rowMap = rendered.rowItems;
+      this.overlayScrollbar = rendered.scrollbar ?? null;
+      const hoverRows = new Set<number>();
+      const hoveredIndex = this.overlay.hovered;
+      if (hoveredIndex !== null) {
+        this.overlay.rowMap.forEach((itemIndex, row) => {
+          if (itemIndex === hoveredIndex) hoverRows.add(row);
+        });
+      }
+      painted = paintSessionPickerPanel(
+        plain,
+        this.overlay.selected,
+        hoverRows
+      );
     } else if (this.overlay.kind === "options") {
-      plain = formatOptionPickerPanel(
+      const rendered = renderOptionPickerPanel(
         this.overlay.title,
         this.overlay.items,
         this.overlay.selected,
@@ -3008,7 +3417,21 @@ export class StreamUI {
           statusRows: this.statusLineEnabled && this.statusLine ? 1 : 0,
         }
       );
-      painted = paintOptionPickerPanel(plain);
+      plain = rendered.lines;
+      this.overlay.rowMap = rendered.rowItems;
+      this.overlayScrollbar = rendered.scrollbar ?? null;
+      const hoverRows = new Set<number>();
+      const hoveredIndex = this.overlay.hovered;
+      if (hoveredIndex !== null) {
+        this.overlay.rowMap.forEach((itemIndex, row) => {
+          if (itemIndex === hoveredIndex) hoverRows.add(row);
+        });
+      }
+      painted = paintOptionPickerPanel(
+        plain,
+        this.overlay.filterable ? this.input.value : undefined,
+        hoverRows
+      );
     } else {
       const viewport = this.scrollbackViewport.snapshot(width, this.viewportBodyHeight());
       plain = formatScrollbackViewportPanel(viewport, width);
@@ -3022,7 +3445,7 @@ export class StreamUI {
         "输入任务，/help 查看命令",
         this.input.cursorPos
       );
-      this.fullscreen.setOverlay(plain);
+      this.fullscreen.setOverlay(painted.split("\n"));
       this.overlay.lineCount = lineCount;
       this.overlay.blockLines = lineCount;
       this.promptLive = true;
@@ -3120,9 +3543,23 @@ export class StreamUI {
     process.stdout.write("\n" + color(row));
   }
 
-  private printToolOutput(output: string, _status: "success" | "error"): void {
+  private printToolOutput(output: string, _status: "success" | "error", tool = "", command = ""): void {
     if (output.trim()) {
       this.lastToolOutputBlob = output;
+    }
+    const skillTarget = command.replace(/^skill\s+/i, "").trim();
+    if (
+      _status === "success" &&
+      tool.toLowerCase() === "skill" &&
+      skillTarget.length > 0 &&
+      skillTarget !== "list" &&
+      !skillTarget.startsWith("search")
+    ) {
+      const summary = summarizeSkillOutput(output, skillTarget);
+      const lines = formatSkillSummaryLines(summary);
+      if (lines[0]) process.stdout.write("  " + S.g(lines[0]) + "\n");
+      for (const line of lines.slice(1)) process.stdout.write("  " + DIM(line) + "\n");
+      return;
     }
     // 工具输出若像 Markdown（表格/标题/列表），走终端渲染
     if (looksLikeMarkdown(output) && output.split("\n").length <= 80) {
@@ -3177,7 +3614,8 @@ export class StreamUI {
 
   private flushSlashMarkdown(): void {
     if (this.slashMdBuffer.length === 0) return;
-    const text = this.slashMdBuffer.join("\n");
+    const width = Math.max(40, Math.min(84, (process.stdout.columns || 100) - 6));
+    const text = formatFlatInfoPanels(this.slashMdBuffer.join("\n"), width);
     this.slashMdBuffer = [];
     this.writeMarkdownBlock(text);
   }
@@ -3213,7 +3651,7 @@ export class StreamUI {
     this.printToolHeader(tool, command, "success", durationMs);
     process.stdout.write("\n");
     if (output.trim()) {
-      this.printToolOutput(output, "success");
+      this.printToolOutput(output, "success", tool, command);
     }
     this.scrollbackViewport.appendTool(
       tool,
@@ -3728,3 +4166,27 @@ function sanitizeStreamingText(text: string): string {
     .replace(/\x1b/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0d\x0e-\x1f\x7f]/g, "");
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

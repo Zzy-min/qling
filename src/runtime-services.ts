@@ -28,12 +28,18 @@ export class RuntimeServices {
   constructor(
     readonly provider: LlmHttpClient,
     readonly memory: MemoryStore,
-    config: RuntimeConfigSnapshot
+    config: RuntimeConfigSnapshot,
+    options: { signal?: () => AbortSignal | undefined } = {},
   ) {
     this.config = Object.freeze({ ...config });
     const dispatch = createToolDispatcher({
       mcpRegistry: () => this.registry,
       allowedNames: config.toolAllowlist ? new Set(config.toolAllowlist) : undefined,
+      computerUseConfig: {
+        enabled: /^(1|true|yes|on)$/i.test(process.env.QLING_FEATURES_COMPUTER_USE ?? ""),
+        driverPath: process.env.QLING_COMPUTER_USE_DRIVER_PATH ?? "", stateDir: config.stateDir,
+      },
+      signal: options.signal,
     });
     this.dispatchTool = (toolCall) => runWithRuntimeRoots({
       workspaceDir: config.workspaceDir,
@@ -44,6 +50,7 @@ export class RuntimeServices {
       const exec = () => dispatch(toolCall);
       return scope ? runWithSubagentParentScope(scope, exec) : exec();
     });
+    this.dispatchTool.close = dispatch.close;
   }
 
   setParentScope(provider: () => SubagentParentScope): void {
@@ -60,6 +67,7 @@ export class RuntimeServices {
   }
 
   async shutdown(): Promise<void> {
+    await this.dispatchTool.close?.();
     const registry = this.registry;
     const ownsRegistry = this.ownsRegistry;
     this.registry = null;

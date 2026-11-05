@@ -78,16 +78,16 @@ test("dashboard workbench renders tasks, filters and responsive detail", async (
     assert.equal(await page.locator(".task-row").count(), 1);
     await page.locator(".task-row").filter({ hasText: "验证发布包" }).click();
     await page.getByText("缺少 README", { exact: false }).waitFor();
-    await page.getByRole("button", { name: "关闭" }).click();
+    await page.getByRole("button", { name: "关闭", exact: true }).click();
 
     await page.setViewportSize({ width: 1024, height: 768 });
     assert.equal(await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth), true);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator(".task-row").filter({ hasText: "验证发布包" }).click();
-    await page.locator("#detail-pane.open").waitFor();
-    await page.getByRole("button", { name: "关闭" }).click();
-    await page.waitForFunction(() => !document.querySelector("#detail-pane")?.classList.contains("open"));
+    await page.getByRole("dialog", { name: "任务详情" }).waitFor();
+    await page.getByRole("button", { name: "关闭", exact: true }).click();
+    await page.getByRole("dialog", { name: "任务详情" }).waitFor({ state: "hidden" });
     assert.equal(await page.locator("body").evaluate((body) => body.scrollWidth <= body.clientWidth), true);
     assert.deepEqual(consoleErrors, []);
     assert.deepEqual(remoteRequests, []);

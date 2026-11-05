@@ -57,6 +57,17 @@ export interface TokenCounters {
   tokenUsageSource: TokenUsageSource;
 }
 
+/**
+ * 对照 grok-build `WireErrorType::EmptyResponse`：模型既没有文本、也没有工具调用，
+ * 属于可恢复的空响应，不能当成成功并继续空转。
+ */
+export function isEmptyAssistantTurn(
+  content: string | null | undefined,
+  toolCalls: RawToolCall[] | null | undefined
+): boolean {
+  return !String(content ?? "").trim() && (!toolCalls || toolCalls.length === 0);
+}
+
 export function applyProviderUsage(
   counters: TokenCounters,
   usage: ChatUsage | undefined,
@@ -560,9 +571,13 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     budget.modelTurns++;
     const { content, tool_calls, usage, reasoning_content } = response;
     host.counters = applyProviderUsage(host.counters, usage, host.usageLedger);
-    host.messages.push({ role: "assistant", content, tool_calls,
-      ...(reasoning_content !== undefined ? { reasoning_content } : {}),
-    });
+    // 空响应不写入 assistant 历史，避免回放时出现连续空白消息
+    const emptyAssistantTurn = isEmptyAssistantTurn(content, tool_calls);
+    if (!emptyAssistantTurn) {
+      host.messages.push({ role: "assistant", content, tool_calls,
+        ...(reasoning_content !== undefined ? { reasoning_content } : {}),
+      });
+    }
     // 有工具调用时：中间推理/说明走 thinking（Markdown 渲染）；无工具时只由 appendFinal 展示，避免双份
     if (!response.streamed && tool_calls && tool_calls.length > 0 && content?.trim()) {
       host.emit("thinking", content);
@@ -638,6 +653,16 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       if (stopGate.action === "force") {
         console.error(stopGate.notice);
         finalText = finalText ? `${finalText}\n\n${stopGate.notice}` : stopGate.notice;
+      }
+      if (emptyAssistantTurn) {
+        host.recoveryController.pauseActiveRun();
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        return {
+          status: "paused",
+          text:
+            "模型返回空响应：本轮既没有文本，也没有工具调用。已暂停以避免连续空转；" +
+            "检查模型/网络后可使用 /recover retry 继续。",
+        };
       }
       host.knowledgeAdapter.onAssistantMessage(finalText);
       await host.checkAutoDream();

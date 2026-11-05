@@ -162,6 +162,12 @@ export type HookName =
 export type PermissionDecision = "allow" | "deny" | "ask";
 
 export interface ToolHookContext {
+  /** 当前 tool_call id，用于绑定一次性审批凭据。 */
+  toolCallId?: string;
+  /** 仅本次调用有效的审批 id；匹配时跳过 ask，但仍继续 deny 与后续检查。 */
+  approvedToolCallId?: string;
+  /** 批准时的规范化参数指纹；与当前参数不一致时审批凭据失效。 */
+  approvedArgsHash?: string;
   toolName: string;
   arguments: Record<string, unknown>;
   inputSchema: Record<string, unknown>;

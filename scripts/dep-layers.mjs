@@ -24,6 +24,7 @@ export function layerOf(rel) {
   const p = rel.replace(/\\/g, "/");
   if (
     p === "types.ts" ||
+    p === "computer-use/schema.ts" ||
     p === "config.ts" ||
     p === "runtime-paths.ts" ||
     p === "token-usage.ts" ||
@@ -40,6 +41,8 @@ export function layerOf(rel) {
   ) {
     return "foundation";
   }
+  // Agent-owned desktop tools, analogous to tools/*; schema remains foundation.
+  if (p.startsWith("computer-use/")) return "agent-runtime";
   if (
     p.startsWith("pipeline/") ||
     p.startsWith("plan/") ||
@@ -99,7 +102,7 @@ export function layerOf(rel) {
   ) {
     return "adapters";
   }
-  if (p.startsWith("tui/")) return "presentation";
+  if (p.startsWith("tui/") || p.startsWith("dashboard-web/")) return "presentation";
   if (p === "index.ts" || p.startsWith("cli/") || p.startsWith("commands/")) {
     return "cli";
   }
@@ -139,7 +142,7 @@ async function walk(dir, acc = []) {
   for (const e of await readdir(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
     if (e.isDirectory()) await walk(p, acc);
-    else if (e.isFile() && extname(e.name) === ".ts") acc.push(p);
+    else if (e.isFile() && [".ts", ".tsx"].includes(extname(e.name))) acc.push(p);
   }
   return acc;
 }
@@ -147,10 +150,14 @@ async function walk(dir, acc = []) {
 function resolveImport(fromFile, spec) {
   let target = resolve(dirname(fromFile), spec);
   target = target.replace(/\\/g, "/");
-  if (target.endsWith(".js")) target = target.slice(0, -3) + ".ts";
-  else if (!target.endsWith(".ts")) {
+  if (target.endsWith(".js")) {
+    target = target.slice(0, -3) + ".ts";
+    if (!existsSync(target)) target = target.slice(0, -3) + ".tsx";
+  } else if (!target.endsWith(".ts") && !target.endsWith(".tsx")) {
+    if (existsSync(target + ".tsx")) target = target + ".tsx";
+    else if (existsSync(join(target, "index.tsx"))) target = join(target, "index.tsx");
     // bare directory index not common; try .ts
-    if (existsSync(target + ".ts")) target = target + ".ts";
+    else if (existsSync(target + ".ts")) target = target + ".ts";
     else if (existsSync(join(target, "index.ts"))) target = join(target, "index.ts");
     else target = target + ".ts";
   }

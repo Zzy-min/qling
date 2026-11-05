@@ -160,12 +160,15 @@ export function formatSandboxStatusLines(
   profile: SandboxProfile = resolveSandboxProfile(),
   roots: RuntimeRoots = getRuntimeRootsFromEnv()
 ): string[] {
+  const enforcement = resolveSandboxEnforcement(profile);
   return [
     "",
     "🛡️ 【Sandbox Profile】",
     "-----------------------------------------",
     `Profile   : ${profile}`,
     `Summary   : ${sandboxProfileSummary(profile)}`,
+    `Enforced  : ${enforcement.state} · ${enforcement.mechanism}`,
+    `Boundary  : ${enforcement.detail}`,
     `Workspace : ${resolveEffectiveWorkspace(roots)}`,
     `Env       : QLING_SANDBOX_PROFILE=${process.env.QLING_SANDBOX_PROFILE ?? "-"}`,
     `Compat    : QLING_WRITE_SANDBOX=${process.env.QLING_WRITE_SANDBOX ?? "-"}`,
@@ -173,4 +176,36 @@ export function formatSandboxStatusLines(
     "-----------------------------------------",
     "",
   ];
+}
+
+export type SandboxEnforcementState = "disabled" | "degraded" | "enforced" | "unsupported";
+
+export interface SandboxEnforcementStatus {
+  requested: SandboxProfile;
+  state: SandboxEnforcementState;
+  mechanism: string;
+  detail: string;
+}
+
+/**
+ * 对照 Grok sandbox：区分“请求的策略”和“实际生效的隔离”。
+ * Qling 当前只有应用层路径策略，不提供内核/进程级只读隔离，因此不能报 enforced。
+ */
+export function resolveSandboxEnforcement(
+  profile: SandboxProfile = resolveSandboxProfile()
+): SandboxEnforcementStatus {
+  if (profile === "off") {
+    return {
+      requested: profile,
+      state: "disabled",
+      mechanism: "none",
+      detail: "路径沙箱已关闭；工具仍受权限矩阵与 hooks 约束。",
+    };
+  }
+  return {
+    requested: profile,
+    state: "degraded",
+    mechanism: "application-path-policy",
+    detail: "仅限制工具路径与 bash cwd；子进程、网络与系统调用未做 OS 级隔离。",
+  };
 }

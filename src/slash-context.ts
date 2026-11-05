@@ -93,6 +93,8 @@ export interface SlashCommandContext {
   onRecoveryStateChanged?: (state: unknown | null) => void;
   onModelChanged?: (model: string) => void | Promise<void>;
   writeClipboard?: (text: string) => Promise<void>;
+  /** /quit 专用：请求宿主优雅退出（关闭 UI、scheduler 与 agent）。 */
+  requestExit?: () => void | Promise<void>;
   writeLine: (line?: string) => void;
   writeError: (line?: string) => void;
 }
@@ -123,6 +125,7 @@ export function withDefaultWriters(
     onRecoveryStateChanged: context.onRecoveryStateChanged,
     onModelChanged: context.onModelChanged,
     writeClipboard: context.writeClipboard,
+    requestExit: context.requestExit,
     writeLine: context.writeLine ?? ((line = "") => console.log(line)),
     writeError: context.writeError ?? ((line = "") => console.error(line)),
     agentLoop: context.agentLoop,

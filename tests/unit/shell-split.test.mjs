@@ -317,12 +317,38 @@ describe("guard config permission rule parsing", () => {
 });
 
 describe("PermissionGrantStore reuse boundary", () => {
-  it("reuses a bash grant only for single non-complex commands", () => {
+  it("does not reuse a scope-less bash grant for concrete commands", () => {
     const store = new PermissionGrantStore();
-    store.remember("bash", { reason: "test" });
-    assert.equal(store.hasAllow("bash", { command: "echo 1" }), true);
-    assert.equal(store.hasAllow("bash", { command: "echo 1 && echo 2" }), false);
-    assert.equal(store.hasAllow("bash", { command: 'bash -c "echo 1"' }), false);
+    store.remember("bash", { reason: "legacy broad" });
+    assert.equal(store.hasAllow("bash", { command: "echo 1" }), false);
+    assert.equal(store.hasAllow("bash"), true);
+  });
+
+  it("keeps different argv and cwd out of the same bash grant", () => {
+    const store = new PermissionGrantStore();
+    store.remember("bash", {
+      sessionId: "s1",
+      arguments: { command: 'echo "a  b"' },
+    });
+    assert.equal(store.hasAllow("bash", { command: 'echo "a  b"' }, "s1"), true);
+    assert.equal(store.hasAllow("bash", { command: 'echo "a b"' }, "s1"), false, "quoted whitespace must not collapse");
+
+    store.remember("bash", {
+      sessionId: "s1",
+      arguments: { command: "echo 1", cwd: "C:\\work\\a" },
+    });
+    assert.equal(store.hasAllow("bash", { command: "echo 1", cwd: "C:\\work\\a" }, "s1"), true);
+    assert.equal(store.hasAllow("bash", { command: "echo 1", cwd: "C:\\work\\b" }, "s1"), false);
+  });
+
+  it("resolves relative paths against the granted cwd", () => {
+    const store = new PermissionGrantStore();
+    store.remember("read", {
+      sessionId: "s1",
+      arguments: { path: "a.txt", cwd: "C:\\work\\a" },
+    });
+    assert.equal(store.hasAllow("read", { path: "C:\\work\\a\\a.txt", cwd: "C:\\work\\a" }, "s1"), true);
+    assert.equal(store.hasAllow("read", { path: "a.txt", cwd: "C:\\work\\b" }, "s1"), false);
   });
 
   it("keeps non-bash grants reusable", () => {

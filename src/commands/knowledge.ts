@@ -6,6 +6,7 @@ import {
   formatLocalMemorySearchReport,
 } from "../memory-report.js";
 import { homedir } from "os";
+import { formatInfoCard } from "../tui/info-card.js";
 
 function resolveStateDirForKnowledge(context: any): string | null {
   const agentLoop = context?.agentLoop as any;
@@ -88,20 +89,26 @@ export const knowledgeCommand: SlashCommand = {
     const queryParts = args.slice(1);
     const query = queryParts.join(" ").trim();
 
-    const t = (context as any).i18n || null; // 未来可接 i18n
-
-    context.writeLine("");
-    context.writeLine("📚 【轻灵知识库】本地优先 · 中文 RAG");
-    context.writeLine("-----------------------------------------");
+    const cardWidth = Math.max(36, Math.min(84, (process.stdout.columns || 100) - 4));
 
     if (!query && sub !== "index" && sub !== "索引") {
-      context.writeLine("用法: /knowledge <问题>   或  /knowledge index <目录>");
-      context.writeLine("默认模型推荐: DeepSeek / Qwen / GLM + 中文 embedding");
-      context.writeLine("边界: 仅本地索引，不上传，不默认联网。");
-      context.writeLine("-----------------------------------------");
+      const card = formatInfoCard({
+        title: "📚 轻灵知识库",
+        subtitle: "本地优先 · 中文 RAG",
+        rows: [
+          { label: "用法", value: "/knowledge <问题>   或   /knowledge index <目录>" },
+          { label: "推荐模型", value: "DeepSeek / Qwen / GLM + 中文 embedding" },
+          { label: "隐私边界", value: "仅本地索引 · 不上传 · 不默认联网" },
+        ],
+        footer: "提示: /knowledge index . 建立本地索引后可直接检索",
+        width: cardWidth,
+      });
+      for (const line of card) context.writeLine(line);
       context.writeLine("");
       return;
     }
+
+    context.writeLine("📚 【轻灵知识库】本地优先 · 中文 RAG");
 
     const agentLoop = (context as any).agentLoop as any;
     const memoryStore = agentLoop?.getMemoryStore?.();

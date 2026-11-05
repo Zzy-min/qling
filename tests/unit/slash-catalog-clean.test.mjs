@@ -46,4 +46,13 @@ test("picker list is non-empty and executable-only", () => {
   assert.ok(list.length > 5);
   assert.ok(list.every((i) => i.id.startsWith("/")));
   assert.ok(!list.some((i) => i.id === "/login"));
+  // Grok slash_dropdown 的 [tag]：切换器需要中文分类徽标
+  assert.ok(list.every((i) => i.category.length > 0));
+  assert.ok(list.every((i) => i.categoryLabel.length > 0));
+  assert.ok(list.some((i) => i.category === "local" && i.categoryLabel === "常用"));
+  const quit = list.find((i) => i.id === "/quit");
+  assert.ok(quit, "命令切换器必须列出 /quit");
+  assert.match(quit.description, /退出/);
+  assert.ok(quit.aliases.includes("/exit"));
+  assert.ok(quit.aliases.includes("/q"));
 });

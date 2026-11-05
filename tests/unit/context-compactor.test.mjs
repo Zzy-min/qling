@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ContextCompactor, skeletonizePython, skeletonizeBraceLanguage } from "../../dist/context-compactor.js";
+import { ContextCompactor, skeletonizePython, skeletonizeBraceLanguage, validateCompactionCandidate } from "../../dist/context-compactor.js";
 
 test("context-compactor: poison scan ignores trusted runtime summaries", () => {
   const compactor = new ContextCompactor(1, "deepseek-chat");
@@ -350,4 +350,25 @@ test("context-compactor: compacted output is passed through history repair", asy
     outcome.messages.some((message) => message.tool_call_id === "orphan"),
     false,
   );
+});
+
+test("compaction candidate validation preserves latest user and tool pairing", () => {
+  const original = [
+    { role: "user", content: "old" },
+    { role: "user", content: "latest constraint" },
+  ];
+  assert.equal(
+    validateCompactionCandidate(original, [{ role: "user", content: "latest constraint" }]).ok,
+    true
+  );
+  const dropped = validateCompactionCandidate(original, [{ role: "user", content: "old" }]);
+  assert.equal(dropped.ok, false);
+  assert.match(dropped.reason, /latest user/);
+
+  const orphan = validateCompactionCandidate(original, [
+    { role: "user", content: "latest constraint" },
+    { role: "tool", content: "x", tool_call_id: "missing" },
+  ]);
+  assert.equal(orphan.ok, false);
+  assert.match(orphan.reason, /orphan tool/);
 });

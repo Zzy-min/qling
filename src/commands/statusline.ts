@@ -1,5 +1,6 @@
 import { buildStatusLine } from "../statusline.js";
 import { SlashCommand } from "./types.js";
+import { formatInfoCard } from "../tui/info-card.js";
 
 export const statuslineCommand: SlashCommand = {
   name: "/statusline",
@@ -32,12 +33,19 @@ export const statuslineCommand: SlashCommand = {
     const line = context.statusLine?.getLine
       ? await context.statusLine.getLine()
       : await buildStatusLine(context);
+    const plain = String(line ?? "").replace(/\x1b\[[0-9;]*m/g, "");
+    const width = Math.max(36, Math.min(84, (process.stdout.columns || 100) - 4));
+    const card = formatInfoCard({
+      title: "◎ statusline",
+      rows: [
+        { label: "状态线", value: plain || "(空)" },
+        { label: "启用", value: String(context.statusLine?.enabled ?? true) },
+      ],
+      footer: "切换: /statusline on | off",
+      width,
+    });
     context.writeLine("");
-    context.writeLine("◎ statusline");
-    context.writeLine("-----------------------------------------");
-    context.writeLine(line);
-    context.writeLine(`enabled=${context.statusLine?.enabled ?? true}`);
-    context.writeLine("-----------------------------------------");
+    for (const cardLine of card) context.writeLine(cardLine);
     context.writeLine("");
   },
 };

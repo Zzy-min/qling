@@ -35,9 +35,13 @@ const S = {
 const DIM = (s: string): string => `\x1b[2m${s}\x1b[0m`;
 const BOLD = (s: string): string => `\x1b[1m${s}\x1b[0m`;
 
+export type TableAlignment = "left" | "right" | "center";
+
 export interface ParsedTable {
   headers: string[];
   rows: string[][];
+  /** Markdown 分隔行声明的列对齐；缺省按列内容推断。 */
+  alignments?: TableAlignment[];
 }
 
 export function parseMarkdownTable(lines: string[]): ParsedTable | null {
@@ -82,6 +86,15 @@ export function parseMarkdownTable(lines: string[]): ParsedTable | null {
   const headers = splitRow(lines[0] || "");
   const rows: string[][] = [];
 
+  const alignments: TableAlignment[] = headers.map((_header, index) => {
+    const marker = (sepCells[index] ?? "").trim();
+    const left = marker.startsWith(":");
+    const right = marker.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+
   for (let i = 2; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
@@ -101,27 +114,91 @@ export function parseMarkdownTable(lines: string[]): ParsedTable | null {
     rows.push(rowCells);
   }
 
-  return { headers, rows };
+  return { headers, rows, ...(alignments.some((_value, index) => /^:|:$/.test((sepCells[index] ?? "").trim())) ? { alignments } : {}) };
 }
 
-function formatCell(cell: string, width: number): string {
-  const w = sw(cell);
-  if (w === width) return cell;
-  if (w < width) {
-    return cell + " ".repeat(width - w);
+/** 表格单元格分词：CJK/宽字符逐字可断，拉丁词与数字整体保持。 */
+function tokenizeTableCell(text: string): string[] {
+  const tokens: string[] = [];
+  let word = "";
+  for (const char of text) {
+    if (/\s/.test(char)) {
+      if (word) {
+        tokens.push(word);
+        word = "";
+      }
+      tokens.push(" ");
+    } else if (sw(char) >= 2) {
+      if (word) {
+        tokens.push(word);
+        word = "";
+      }
+      tokens.push(char);
+    } else {
+      word += char;
+    }
   }
+  if (word) tokens.push(word);
+  return tokens;
+}
 
-  let col = 0;
-  let index = 0;
-  for (const char of cell) {
-    const nextWidth = sw(char);
-    if (col + nextWidth > width - 1) break;
-    col += nextWidth;
-    index += char.length;
+/** 按显示宽度换行，保留单词完整性；超长单词按字符硬切。 */
+function wrapTableCell(text: string, width: number): string[] {
+  if (!text) return [""];
+  const safeWidth = Math.max(1, width);
+  const lines: string[] = [];
+  let current = "";
+  let currentWidth = 0;
+
+  const flush = (): void => {
+    if (current.trimEnd()) lines.push(current.trimEnd());
+    current = "";
+    currentWidth = 0;
+  };
+
+  for (const token of tokenizeTableCell(text)) {
+    const tokenWidth = sw(token);
+    if (token === " " && currentWidth === 0) continue;
+    if (currentWidth + tokenWidth <= safeWidth) {
+      current += token;
+      currentWidth += tokenWidth;
+      continue;
+    }
+    flush();
+    if (token === " ") continue;
+    if (tokenWidth <= safeWidth) {
+      current = token;
+      currentWidth = tokenWidth;
+      continue;
+    }
+    for (const char of token) {
+      const charWidth = Math.max(1, sw(char));
+      if (currentWidth + charWidth > safeWidth && currentWidth > 0) flush();
+      current += char;
+      currentWidth += charWidth;
+    }
   }
-  const truncated = cell.slice(0, index) + "…";
-  const tw = sw(truncated);
-  return truncated + " ".repeat(Math.max(0, width - tw));
+  flush();
+  return lines.length > 0 ? lines : [""];
+}
+
+function padTableCell(text: string, width: number, alignment: TableAlignment): string {
+  const textWidth = sw(text);
+  const padding = Math.max(0, width - textWidth);
+  if (alignment === "right") return " ".repeat(padding) + text;
+  if (alignment === "center") {
+    const left = Math.floor(padding / 2);
+    return " ".repeat(left) + text + " ".repeat(padding - left);
+  }
+  return text + " ".repeat(padding);
+}
+
+/** 无显式对齐时，纯数值列默认右对齐，符合金融/统计表格阅读习惯。 */
+function inferTableAlignment(cells: string[]): TableAlignment {
+  const values = cells.filter((cell) => cell.trim().length > 0);
+  if (values.length < 2) return "left";
+  const numeric = /^[¥￥$€£]?[-+±]?[\d,]+(?:\.\d+)?(?:%|‰|亿|万|元|股)?$/;
+  return values.every((cell) => numeric.test(cell.trim())) ? "right" : "left";
 }
 
 function normalizeTableCell(cell: string): string {
@@ -183,58 +260,90 @@ export function renderTable(table: ParsedTable, width: number): string[] {
 
   const headers = table.headers.map(normalizeTableCell);
   const rows = table.rows.map((row) => row.map(normalizeTableCell));
+  const allRows = [headers, ...rows];
 
-  // 计算最大列宽
-  const maxColWidths: number[] = new Array(colCount).fill(0);
+  // 每列自然宽度与不可断词的最小宽度
+  const naturalWidths: number[] = new Array(colCount).fill(1);
+  const minWidths: number[] = new Array(colCount).fill(1);
   for (let c = 0; c < colCount; c++) {
-    maxColWidths[c] = Math.max(maxColWidths[c], sw(headers[c] || ""));
-    for (const row of rows) {
-      maxColWidths[c] = Math.max(maxColWidths[c], sw(row[c] ?? ""));
+    for (const row of allRows) {
+      const cell = row[c] ?? "";
+      naturalWidths[c] = Math.max(naturalWidths[c], sw(cell));
+      for (const token of tokenizeTableCell(cell)) {
+        minWidths[c] = Math.max(minWidths[c], sw(token));
+      }
     }
+    // 表头尽量保持单行，避免“主力净流入”被压成“主力净流 / 入”
+    minWidths[c] = Math.max(
+      1,
+      Math.min(naturalWidths[c], Math.max(minWidths[c], sw(headers[c] ?? "")))
+    );
   }
 
-  // 框线和内边距占的字符宽度 = 3 * colCount + 1
+  // 框线和左右内边距占宽：每列 3 列宽 + 1 个收尾边框
   const borderPadding = 3 * colCount + 1;
-  const availWidth = Math.max(colCount * 4, width - borderPadding);
+  const budget = Math.max(colCount, Math.floor(width) - borderPadding);
+  const totalNatural = naturalWidths.reduce((sum, w) => sum + w, 0);
 
-  let colWidths: number[] = [];
-  const totalMax = maxColWidths.reduce((a, b) => a + b, 0);
-  if (totalMax <= availWidth) {
-    colWidths = [...maxColWidths];
+  let colWidths: number[];
+  if (totalNatural <= budget) {
+    colWidths = [...naturalWidths];
   } else {
-    // 按比例分配，最低限制每列 4 字符宽
-    colWidths = maxColWidths.map((w) => {
-      const allocated = Math.floor((w / totalMax) * availWidth);
-      return Math.max(4, allocated);
-    });
-
-    let currentSum = colWidths.reduce((a, b) => a + b, 0);
-    while (currentSum > availWidth) {
-      let maxIdx = -1;
-      let maxVal = 3;
-      for (let i = 0; i < colCount; i++) {
-        if (colWidths[i] > maxVal) {
-          maxVal = colWidths[i];
-          maxIdx = i;
+    // 先保证不可断词的最小宽度；仍超预算时按比例压缩，再按剩余空间回填
+    let widths = [...minWidths];
+    let totalMin = widths.reduce((sum, w) => sum + w, 0);
+    if (totalMin > budget) {
+      widths = widths.map((w) => Math.max(1, Math.floor((w * budget) / totalMin)));
+      let sum = widths.reduce((a, b) => a + b, 0);
+      while (sum > budget) {
+        let idx = 0;
+        for (let i = 1; i < colCount; i++) {
+          if (widths[i] > widths[idx] && widths[i] > 1) idx = i;
         }
+        if (widths[idx] <= 1) break;
+        widths[idx] -= 1;
+        sum -= 1;
       }
-      if (maxIdx === -1) break;
-      colWidths[maxIdx]--;
-      currentSum--;
-    }
-    while (currentSum < availWidth) {
-      let minIdx = -1;
-      let minVal = Infinity;
-      for (let i = 0; i < colCount; i++) {
-        if (colWidths[i] < minVal) {
-          minVal = colWidths[i];
-          minIdx = i;
+      while (sum < budget) {
+        widths[sum % colCount] += 1;
+        sum += 1;
+      }
+    } else {
+      let remaining = budget - totalMin;
+      const wants = naturalWidths.map((natural, i) => Math.max(0, natural - widths[i]));
+      const totalWant = wants.reduce((sum, want) => sum + want, 0);
+      if (totalWant > 0 && remaining > 0) {
+        // 按未满足宽度比例分配，避免长文本列独吞空间把短列压成逐字换行
+        for (let i = 0; i < colCount; i++) {
+          const share = Math.floor((wants[i] * remaining) / totalWant);
+          widths[i] += Math.min(share, wants[i]);
         }
+        let used = widths.reduce((sum, w) => sum + w, 0);
+        remaining = budget - used;
       }
-      colWidths[minIdx]++;
-      currentSum++;
+      while (remaining > 0) {
+        let idx = -1;
+        let best = 0;
+        for (let i = 0; i < colCount; i++) {
+          const unmet = naturalWidths[i] - widths[i];
+          if (unmet > best) {
+            best = unmet;
+            idx = i;
+          }
+        }
+        if (idx < 0) break;
+        widths[idx] += 1;
+        remaining -= 1;
+      }
     }
+    colWidths = widths;
   }
+
+  const alignments: TableAlignment[] = Array.from({ length: colCount }, (_, c) => {
+    const explicit = table.alignments?.[c];
+    if (explicit) return explicit;
+    return inferTableAlignment(rows.map((row) => row[c] ?? ""));
+  });
 
   const lines: string[] = [];
 
@@ -247,28 +356,37 @@ export function renderTable(table: ParsedTable, width: number): string[] {
     return S.d(line);
   };
 
-  const contentLine = (cells: string[], header = false): string => {
-    let line = S.d("│");
-    for (let c = 0; c < colCount; c++) {
-      const cell = formatCell(cells[c] || "", colWidths[c]);
-      const styled = header ? BOLD(S.b(cell)) : S.b(cell);
-      line += " " + styled + " " + S.d("│");
+  const contentLines = (cells: string[], header = false): string[] => {
+    const wrapped = cells.map((cell, c) => wrapTableCell(cell || "", colWidths[c]));
+    const height = Math.max(1, ...wrapped.map((cellLines) => cellLines.length));
+    const output: string[] = [];
+    for (let line = 0; line < height; line++) {
+      let row = S.d("│");
+      for (let c = 0; c < colCount; c++) {
+        const text = padTableCell(
+          wrapped[c]?.[line] ?? "",
+          colWidths[c],
+          alignments[c]
+        );
+        row += " " + (header ? BOLD(S.b(text)) : S.b(text)) + " " + S.d("│");
+      }
+      output.push(row);
     }
-    return line;
+    return output;
   };
 
   // top border
   lines.push(borderLine("┌", "┬", "┐"));
 
   // header
-  lines.push(contentLine(headers, true));
+  lines.push(...contentLines(headers, true));
 
   // separator
   lines.push(borderLine("├", "┼", "┤"));
 
   // rows
   for (let r = 0; r < rows.length; r++) {
-    lines.push(contentLine(rows[r] ?? [], false));
+    lines.push(...contentLines(rows[r] ?? [], false));
     if (r < rows.length - 1) {
       lines.push(borderLine("├", "┼", "┤"));
     }
@@ -282,18 +400,25 @@ export function renderTable(table: ParsedTable, width: number): string[] {
 
 function renderInline(text: string): string {
   let res = text;
+  // 先保护内联代码：`open_binary` 里的下划线不能再被斜体规则吃掉
+  const codeSpans: string[] = [];
+  res = res.replace(/`([^`]+)`/g, (_match, p1: string) => {
+    const index = codeSpans.length;
+    codeSpans.push(S.s(p1));
+    return `\u0000${index}\u0000`;
+  });
   // 加粗 **bold** / __bold__
   res = res.replace(/\*\*(.+?)\*\*/g, (_, p1) => BOLD(p1));
   res = res.replace(/__(.+?)__/g, (_, p1) => BOLD(p1));
   // 删除线 ~~strike~~
   res = res.replace(/~~(.+?)~~/g, (_, p1) => DIM(p1));
-  // 斜体 *italic* / _italic_（避开已处理的 ** / __）
+  // 斜体 *italic* / _italic_（避开已处理的 ** / __，并要求下划线边界）
   res = res.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, (_, p1) => `\x1b[3m${p1}\x1b[0m`);
-  res = res.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, (_, p1) => `\x1b[3m${p1}\x1b[0m`);
-  // 内联代码 `code`
-  res = res.replace(/`([^`]+)`/g, (_, p1) => S.s(p1));
+  res = res.replace(/(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)/g, (_, p1) => `\x1b[3m${p1}\x1b[0m`);
   // 链接 [text](url)
   res = res.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, p1, p2) => `${p1} ${S.d("(" + p2 + ")")}`);
+  // 还原内联代码
+  res = res.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => codeSpans[Number(index)] ?? "");
   return res;
 }
 

@@ -1,4 +1,5 @@
 import { SlashCommand } from "./types.js";
+import { getRuntimeCapabilityMatrix } from "../runtime/capability-matrix.js";
 
 export const statusCommand: SlashCommand = {
   name: "/status",
@@ -28,6 +29,16 @@ export const statusCommand: SlashCommand = {
     context.writeLine(`活跃工作流 : ${(context.agentLoop as any).getWorkflowRuntime().getCheckpoint()?.runId || "无"}`);
     context.writeLine(`Loop 任务  : ${taskCount}`);
     context.writeLine(`Goal 状态  : ${goalStatus ? goalStatus.status : "无"}`);
+    const capabilities = getRuntimeCapabilityMatrix();
+    const runtime = capabilities.find((item) => item.id === "runtime");
+    const activeGuards = capabilities
+      .filter((item) => item.enabled && item.id !== "runtime")
+      .map((item) => item.label);
+    const { resolveSandboxEnforcement } = await import("../runtime/sandbox-profile.js");
+    const sandbox = resolveSandboxEnforcement();
+    context.writeLine(`运行内核   : ${runtime?.label ?? "runtime=legacy"}`);
+    context.writeLine(`已启用保护 : ${activeGuards.join(" · ") || "仅基础 legacy 路径"}`);
+    context.writeLine(`沙箱生效   : ${sandbox.state} · ${sandbox.mechanism}`);
     context.writeLine("-----------------------------------------");
     context.writeLine("");
   },

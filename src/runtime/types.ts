@@ -34,6 +34,7 @@ export interface SessionEventEnvelope<T extends JsonValue = JsonValue> {
   timestamp: number;
   payload: T;
   checksum: string;
+  durability?: "buffered" | "durable";
 }
 
 export interface SessionBudgetSnapshot {

@@ -21,7 +21,24 @@ interface PendingEvent {
   runId?: string;
   turnId?: string;
   causationId?: string;
+  /** buffered=普通事件；durable=需要同步屏障与 checkpoint 确认的关键事件。 */
+  durability?: "buffered" | "durable";
 }
+
+export type DurableCheckpointResult = "ok" | "busy" | "failed" | "not-required";
+
+export type DurableAppendOutcome =
+  | {
+      status: "committed";
+      event: SessionEventEnvelope;
+      /** 行已提交后的 checkpoint 结果；busy/failed 可稍后重试，但不可重复追加。 */
+      checkpoint: DurableCheckpointResult;
+    }
+  | {
+      status: "not_committed";
+      durable: boolean;
+      error: string;
+    };
 
 function checksum(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -74,6 +91,7 @@ export class RuntimeEventJournal {
         timestamp INTEGER NOT NULL,
         payload TEXT NOT NULL,
         checksum TEXT NOT NULL,
+        durability TEXT NOT NULL DEFAULT 'buffered',
         PRIMARY KEY (session_id, sequence),
         UNIQUE (event_id)
       );
@@ -106,13 +124,17 @@ export class RuntimeEventJournal {
         PRIMARY KEY (session_id, sequence)
       );
     `);
+    const eventColumns = this.db.prepare("PRAGMA table_info(runtime_events)").all() as Array<{ name: string }>;
+    if (!eventColumns.some((column) => column.name === "durability")) {
+      this.db.exec("ALTER TABLE runtime_events ADD COLUMN durability TEXT NOT NULL DEFAULT 'buffered'");
+    }
     const row = this.db
       .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM runtime_events WHERE session_id = ?")
       .get(this.sessionId) as { sequence: number };
     this.sequence = Number(row.sequence ?? 0);
   }
 
-  async append(event: PendingEvent): Promise<SessionEventEnvelope> {
+  async appendWithOutcome(event: PendingEvent): Promise<DurableAppendOutcome> {
     const db = this.requireDb();
     const timestamp = this.now();
     const payload = event.payload ?? {};
@@ -132,13 +154,14 @@ export class RuntimeEventJournal {
         type: event.type,
         timestamp,
         payload,
+        durability: event.durability ?? "buffered",
       };
       const eventChecksum = checksum(base);
       db.prepare(`
       INSERT INTO runtime_events (
         session_id, sequence, event_id, run_id, turn_id, causation_id,
-        type, timestamp, payload, checksum
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        type, timestamp, payload, checksum, durability
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         this.sessionId,
         sequence,
@@ -149,13 +172,52 @@ export class RuntimeEventJournal {
         base.type,
         timestamp,
         serializedPayload,
-        eventChecksum
+        eventChecksum,
+        base.durability
       );
       return { ...base, checksum: eventChecksum };
     });
-    const inserted = insert();
+    const durable = event.durability === "durable";
+    const previousSync = durable ? Number(db.pragma("synchronous", { simple: true })) : null;
+    let inserted: SessionEventEnvelope;
+    try {
+      if (durable) db.pragma("synchronous = FULL");
+      inserted = insert();
+    } catch (error) {
+      // 插入事务未提交：调用方可以安全重试，不会产生「已写入却报未写入」。
+      return {
+        status: "not_committed",
+        durable,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      if (durable && previousSync !== null) db.pragma(`synchronous = ${previousSync}`);
+    }
+
+    let checkpoint: DurableCheckpointResult = "not-required";
+    if (durable) {
+      try {
+        const result = db.pragma("wal_checkpoint(FULL)") as
+          | Array<{ busy?: number; log?: number; checkpointed?: number }>
+          | { busy?: number; log?: number; checkpointed?: number }
+          | undefined;
+        const first = Array.isArray(result) ? result[0] : result;
+        checkpoint = Number(first?.busy ?? 0) > 0 ? "busy" : "ok";
+      } catch {
+        // 行已提交；checkpoint 失败只影响 WAL 收敛，不能让调用方误以为事件未写入。
+        checkpoint = "failed";
+      }
+    }
     this.sequence = Math.max(this.sequence, inserted.sequence);
-    return inserted;
+    return { status: "committed", event: inserted, checkpoint };
+  }
+
+  async append(event: PendingEvent): Promise<SessionEventEnvelope> {
+    const outcome = await this.appendWithOutcome(event);
+    if (outcome.status !== "committed") {
+      throw new Error(`runtime event append failed: ${outcome.error}`);
+    }
+    return outcome.event;
   }
 
   async saveSnapshot(snapshot: SessionSnapshot): Promise<void> {
@@ -358,9 +420,16 @@ export class RuntimeEventJournal {
         type: String(row.type),
         timestamp: Number(row.timestamp),
         payload: JSON.parse(String(row.payload)),
+        durability: String(row.durability ?? "buffered") as "buffered" | "durable",
       };
       const storedChecksum = String(row.checksum);
-      return checksum(base) === storedChecksum ? { ...base, checksum: storedChecksum } : null;
+      if (checksum(base) === storedChecksum) return { ...base, checksum: storedChecksum };
+      // Pre-durability journals hashed the same envelope without this field.
+      // Only buffered rows may use that format: never downgrade a durable event.
+      const { durability, ...legacyBase } = base;
+      return durability === "buffered" && checksum(legacyBase) === storedChecksum
+        ? { ...base, checksum: storedChecksum }
+        : null;
     } catch {
       return null;
     }

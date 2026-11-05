@@ -7,7 +7,7 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { createHash } from "node:crypto";
-import { ALL_TOOLS } from "./tools/index.js";
+import { buildToolRegistry } from "./tools/index.js";
 import { HookManager, ToolPipeline } from "./pipeline/hooks.js";
 import { buildDefaultRegistry } from "./pipeline/sections.js";
 import { MemoryStore } from "./memory.js";
@@ -204,7 +204,7 @@ export class AgentLoop extends AgentEventEmitter {
   // v2 新组件
   private hookManager: HookManager;
   private pipeline: ToolPipeline;
-  private sectionRegistry = buildDefaultRegistry(ALL_TOOLS);
+  private sectionRegistry = buildDefaultRegistry(buildToolRegistry());
   private memoryStore: MemoryStore;
   private verifier: VerificationAgent;
   private compactor: ContextCompactor;
@@ -353,6 +353,7 @@ export class AgentLoop extends AgentEventEmitter {
     outputUsdPerMillion: process.env.QLING_COST_OUTPUT_USD_PER_MILLION,
   });
   private initPromise: Promise<void>;
+  private shutdownPromise: Promise<void> | null = null;
 
   // 轻量观测指标
   private compactionCount = 0;
@@ -434,7 +435,7 @@ export class AgentLoop extends AgentEventEmitter {
       maxIterations: config.maxIterations ?? 50,
       iterationPolicy: config.iterationPolicy ?? "fixed",
       maxModelTurns: config.maxModelTurns ?? 0,
-      tools: (config.tools ?? ALL_TOOLS).map((tool) => ({ ...tool })),
+      tools: (config.tools ?? buildToolRegistry()).map((tool) => ({ ...tool })),
       runtime: {
         workspaceDir: config.runtime?.workspaceDir ?? process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
         fileCacheDir:
@@ -530,7 +531,7 @@ export class AgentLoop extends AgentEventEmitter {
       stateDir: this.runtimeRootDir,
       fileCacheDir: this.config.runtime?.fileCacheDir ?? this.runtimeRootDir,
       toolAllowlist: this.config.runtime?.toolAllowlist ?? null,
-    });
+    }, { signal: () => this.runAbortController?.signal });
     this.runtimeServices.setParentScope(() => ({
       sessionId: this.sessionId,
       hookRunner: this.jsonHookRunner,
@@ -1567,6 +1568,11 @@ export class AgentLoop extends AgentEventEmitter {
   }
 
   async shutdown(): Promise<void> {
+    this.shutdownPromise ??= this.performShutdown();
+    return this.shutdownPromise;
+  }
+
+  private async performShutdown(): Promise<void> {
     this.cancelActiveRun();
     await this.waitForBackgroundTerminations();
     try {

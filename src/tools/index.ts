@@ -58,8 +58,13 @@ import {
   runPatchAnchored,
   runReadAnchored,
 } from "./anchored-edit.js";
-import { ToolCapabilityRegistry } from "../harness/tool-capability.js";
+import { ToolCapabilityRegistry, classifyToolInvocation } from "../harness/tool-capability.js";
+import { runBoundedToolBatch } from "./scheduler.js";
 import { runVerify, verifyTool } from "./verify.js";
+import { computerUseTool } from "../computer-use/schema.js";
+import { ComputerUseController } from "../computer-use/controller.js";
+import { CuaMcpDriver } from "../computer-use/driver.js";
+import { getRuntimeExecutionIdentity, getRuntimeRootsFromEnv } from "../runtime-paths.js";
 
 export const toolSearchTool: ToolDefinition = {
   name: "tool_search",
@@ -109,9 +114,11 @@ export {
   repoQueryTool,
   impactAnalysisTool,
   verifyTool,
+  computerUseTool,
 };
 
 export const ALL_TOOLS: ToolDefinition[] = [
+  computerUseTool,
   bashTool,
   readTool,
   writeTool,
@@ -151,7 +158,8 @@ export function buildToolRegistry(options: ToolRegistryBuildOptions = {}): ToolD
   const staticEnabled = options.staticEnabled ?? {};
   const allowedNames = options.allowedNames;
   const isAllowed = (name: string) => !allowedNames || allowedNames.has(name);
-  const staticLayer = ALL_TOOLS.filter((t) => staticEnabled[t.name] !== false && isAllowed(t.name));
+  const staticLayer = ALL_TOOLS.filter((t) => staticEnabled[t.name] !== false && isAllowed(t.name) &&
+    (t.name !== "computer_use" || /^(1|true|yes|on)$/i.test(process.env.QLING_FEATURES_COMPUTER_USE ?? "")));
   const merged = [...staticLayer, ...(options.runtimeInjected ?? []), ...(options.channelContextual ?? [])];
 
   const byName = new Map<string, ToolDefinition>();
@@ -195,18 +203,31 @@ const handlers: Record<string, ToolHandler> = {
   verify: runVerify as unknown as ToolHandler,
 };
 
-export type ToolDispatcher = (toolCall: ToolCall) => Promise<ToolResult>;
+export type ToolDispatcher = ((toolCall: ToolCall) => Promise<ToolResult>) & { close?: () => Promise<void> };
 
 export interface ToolDispatcherOptions {
   mcpRegistry?: MCPRegistry | null | (() => MCPRegistry | null);
   allowedNames?: ReadonlySet<string>;
+  computerUse?: Pick<ComputerUseController, "execute" | "close">;
+  computerUseConfig?: { enabled: boolean; driverPath: string; stateDir: string };
+  signal?: () => AbortSignal | undefined;
 }
 
 export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolDispatcher {
+  const config = options.computerUseConfig ?? {
+    enabled: /^(1|true|yes|on)$/i.test(process.env.QLING_FEATURES_COMPUTER_USE ?? ""),
+    driverPath: process.env.QLING_COMPUTER_USE_DRIVER_PATH ?? "",
+    stateDir: getRuntimeRootsFromEnv().fileStateDir,
+  };
+  const computerUse = options.computerUse ?? new ComputerUseController({
+    enabled: config.enabled, stateDir: config.stateDir,
+    driver: new CuaMcpDriver({ command: config.driverPath }),
+    identity: () => { const owner = getRuntimeExecutionIdentity(); return `${owner.sessionId ?? "local"}:${owner.runId ?? "local"}`; },
+  });
   const resolveRegistry = () => typeof options.mcpRegistry === "function"
     ? options.mcpRegistry()
     : options.mcpRegistry ?? null;
-  return async (toolCall: ToolCall): Promise<ToolResult> => {
+  const dispatch: ToolDispatcher = async (toolCall: ToolCall): Promise<ToolResult> => {
     if (options.allowedNames && !options.allowedNames.has(toolCall.name)) {
       return {
         ...toolError("TOOL_NOT_ALLOWED", `tool '${toolCall.name}' is not allowed in this session`, {
@@ -216,20 +237,35 @@ export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolD
         tool_call_id: toolCall.id,
       };
     }
+    if (toolCall.name === "computer_use") {
+      return { ...await computerUse.execute(toolCall.arguments, options.signal?.()), tool_call_id: toolCall.id };
+    }
     const registry = resolveRegistry();
     // MCP tool routing is bound to this dispatcher instance.
     if (isMCPTool(toolCall.name) && registry) {
       const parsed = parseMCPToolName(toolCall.name);
       if (parsed) {
-        const result = await registry.callTool(parsed.serverName, parsed.toolName, toolCall.arguments);
-        return { ...result, tool_call_id: toolCall.id };
+        try {
+          const result = await registry.callTool(parsed.serverName, parsed.toolName, toolCall.arguments, options.signal?.());
+          return { ...result, tool_call_id: toolCall.id };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          const canceled = /aborted|cancell?ed/i.test(message);
+          return {
+            ...toolError(canceled ? "TOOL_CANCELED" : "TOOL_DISPATCH_FAILED", message, {
+              retriable: false,
+              category: "runtime",
+            }),
+            tool_call_id: toolCall.id,
+          };
+        }
       }
     }
     if (toolCall.name === "tool_search") {
       const query = String(toolCall.arguments.query ?? "").trim();
       if (!query) return { ...toolError("TOOL_SEARCH_INVALID", "query is required"), tool_call_id: toolCall.id };
       const limit = Math.max(1, Math.min(20, Number(toolCall.arguments.limit ?? 8)));
-      const matches = new ToolCapabilityRegistry(ALL_TOOLS).search(query, limit);
+      const matches = new ToolCapabilityRegistry(buildToolRegistry()).search(query, limit);
       return {
         tool_call_id: toolCall.id,
         output: matches.map((tool) => `${tool.name}: ${tool.description}\nschema: ${JSON.stringify(tool.parameters)}`).join("\n\n") || "(no matching tools)",
@@ -257,8 +293,10 @@ export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolD
         tool_call_id: toolCall.id,
       };
     } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const canceled = /aborted|cancell?ed/i.test(message);
       return {
-        ...toolError("TOOL_DISPATCH_FAILED", err instanceof Error ? err.message : String(err), {
+        ...toolError(canceled ? "TOOL_CANCELED" : "TOOL_DISPATCH_FAILED", message, {
           retriable: false,
           category: "runtime",
         }),
@@ -266,6 +304,8 @@ export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolD
       };
     }
   };
+  dispatch.close = () => computerUse.close();
+  return dispatch;
 }
 
 const defaultDispatcher = createToolDispatcher();
@@ -275,5 +315,17 @@ export async function dispatch(toolCall: ToolCall): Promise<ToolResult> {
 }
 
 export async function dispatchAll(toolCalls: ToolCall[]): Promise<ToolResult[]> {
-  return Promise.all(toolCalls.map(dispatch));
+  const items = toolCalls.map((call) => {
+    const capability = classifyToolInvocation({
+      name: call.name,
+      arguments: call.arguments,
+    });
+    return {
+      value: call,
+      readOnly: Boolean(capability.readOnly),
+      concurrencySafe: capability.concurrencyPolicy === "parallel",
+      sideEffect: capability.sideEffect,
+    };
+  });
+  return runBoundedToolBatch(items, (call) => dispatch(call));
 }

@@ -28,7 +28,7 @@ export class HttpTransport {
     this.timeout = timeout ?? 30_000;
   }
 
-  async send(msg: MCPMessage): Promise<void> {
+  async send(msg: MCPMessage, signal?: AbortSignal): Promise<void> {
     const reqHeaders: Record<string, string> = {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
@@ -41,6 +41,13 @@ export class HttpTransport {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
+    let externalAborted = false;
+    const onExternalAbort = () => {
+      externalAborted = true;
+      controller.abort();
+    };
+    if (signal?.aborted) onExternalAbort();
+    else signal?.addEventListener("abort", onExternalAbort, { once: true });
 
     try {
       const res = await fetch(this.url, {
@@ -74,11 +81,13 @@ export class HttpTransport {
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
+        if (externalAborted) throw new Error("MCP request aborted");
         throw new Error("MCP HTTP request timeout");
       }
       throw err;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onExternalAbort);
     }
   }
 

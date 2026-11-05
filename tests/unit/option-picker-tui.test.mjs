@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { StreamUI } from "../../dist/tui/streaming-tui.js";
+import { StreamUI, overlayWheelStep } from "../../dist/tui/streaming-tui.js";
 import { openOptionPickerOrFallback } from "../../dist/tui/option-picker-helpers.js";
 import { withDefaultWriters } from "../../dist/slash-context.js";
 import { modelCommand } from "../../dist/commands/claude-style.js";
@@ -469,3 +469,429 @@ test("openOptionPickerOrFallback uses text when no TUI", () => {
   assert.equal(opened, false);
   assert.equal(fallback, true);
 });
+
+test("option picker PageDown jumps five rows for long command lists", async () => {
+  await withCapturedStdout(async () => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+    });
+    ui.start();
+    try {
+      let picked = null;
+      ui.showOptionPicker({
+        title: "命令切换 · Slash",
+        items: Array.from({ length: 20 }, (_, i) => ({
+          id: `cmd-${i}`,
+          label: `/cmd-${i}`,
+        })),
+        onPick: (item) => {
+          picked = item.id;
+        },
+      });
+      ui.dispatchKey("\x1b[6~"); // PageDown
+      ui.confirmOverlay();
+      assert.equal(picked, "cmd-5");
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+test("slash picker groups by category, then switches to flat tagged search results", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: {
+        findSlashCompletion: () => [],
+        resolveSlashCompletion: () => null,
+        listExecutableSlashCommands: () => [
+          {
+            id: "/help",
+            label: "/help",
+            description: "显示可用指令列表",
+            argumentHint: "",
+            category: "local",
+            categoryLabel: "常用",
+          },
+          {
+            id: "/diff",
+            label: "/diff",
+            description: "查看改动",
+            argumentHint: "",
+            category: "git",
+            categoryLabel: "Git",
+          },
+        ],
+      },
+    });
+    ui.start();
+    try {
+      ui.openSlashCommandPicker();
+      const browse = stripAnsi(getOutput());
+      assert.match(browse, /▼ 常用/);
+      assert.match(browse, /▼ Git/);
+      assert.doesNotMatch(browse, /\[常用\]|\[Git\]/);
+      clear();
+      for (const ch of "he") ui.dispatchKey(ch);
+      const filtered = stripAnsi(getOutput());
+      assert.match(filtered, /\/help/);
+      assert.doesNotMatch(filtered, /▼ 常用/);
+      assert.match(filtered, /\[常用\]/);
+      ui.dismissOverlay();
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+test("slash picker matches subsequences and Tab completes the selected command", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: {
+        findSlashCompletion: () => [],
+        resolveSlashCompletion: () => null,
+        listExecutableSlashCommands: () => [
+          {
+            id: "/theme",
+            label: "/theme",
+            description: "切换主题",
+            argumentHint: "",
+            category: "local",
+            categoryLabel: "常用",
+          },
+          {
+            id: "/help",
+            label: "/help",
+            description: "帮助",
+            argumentHint: "",
+            category: "local",
+            categoryLabel: "常用",
+          },
+        ],
+      },
+    });
+    ui.start();
+    try {
+      ui.openSlashCommandPicker();
+      clear();
+      for (const ch of "thm") ui.dispatchKey(ch);
+      const filtered = stripAnsi(getOutput());
+      assert.match(filtered, /\/theme/);
+      assert.equal(ui.getInputDraft(), "/thm");
+      ui.dispatchKey("\t");
+      assert.equal(ui.isOverlayOpen(), false);
+      assert.equal(ui.getInputDraft(), "/theme ");
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+test("session picker supports mouse hover and click selection", () => {
+  const ui = new StreamUI("m", 0, {
+    slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+  });
+  let picked = null;
+  const fakeFullscreen = {
+    overlayRowAt: () => 1,
+    setOverlay: () => {},
+    setInput: () => {},
+    appendNotice: () => {},
+    setProgress: () => {},
+    stop: () => {},
+  };
+  ui.running = true;
+  ui.paintOverlay = () => {};
+  ui.fullscreen = fakeFullscreen;
+  ui.onSessionPick = (id) => {
+    picked = id;
+  };
+  ui.overlay = {
+    kind: "sessions",
+    items: [
+      {
+        sessionId: "s1",
+        name: "one",
+        updatedAt: new Date(0).toISOString(),
+        turnCount: 1,
+        messageCount: 1,
+      },
+    ],
+    selected: 0,
+    rowMap: [null, 0, 0, null, null, null],
+    hovered: null,
+    lineCount: 6,
+    blockLines: 6,
+  };
+  ui.handleOverlayMouse({ kind: "move", column: 4, row: 2 });
+  assert.equal(ui.overlay.hovered, 0);
+  ui.handleOverlayMouse({ kind: "down", column: 4, row: 2 });
+  assert.equal(ui.overlay, null);
+  assert.equal(picked, "s1");
+  ui.stop();
+});
+
+test("overlay scrollbar click and drag move the selection", () => {
+  const ui = new StreamUI("m", 0, {
+    slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+  });
+  const fakeFullscreen = {
+    overlayRowAt: () => 5,
+    overlayScrollbarColumn: () => 58,
+    setOverlay: () => {},
+    setInput: () => {},
+    appendNotice: () => {},
+    setProgress: () => {},
+    stop: () => {},
+  };
+  ui.running = true;
+  ui.paintOverlay = () => {};
+  ui.fullscreen = fakeFullscreen;
+  ui.showOptionPicker({
+    title: "命令",
+    items: Array.from({ length: 20 }, (_, i) => ({ id: `i${i}`, label: `I${i}` })),
+    onPick: () => {},
+  });
+  ui.overlayScrollbar = {
+    totalItems: 20,
+    viewportItems: 5,
+    topLine: 1,
+    bottomLine: 10,
+  };
+  ui.handleOverlayMouse({ kind: "down", column: 58, row: 2 });
+  const first = ui.overlay.selected;
+  assert.ok(first > 0);
+  fakeFullscreen.overlayRowAt = () => 9;
+  ui.handleOverlayMouse({ kind: "drag", column: 58, row: 2 });
+  assert.ok(ui.overlay.selected > first);
+  ui.handleOverlayMouse({ kind: "up", column: 58, row: 2 });
+  assert.equal(ui.overlayScrollDragging, false);
+  ui.stop();
+});
+
+test("overlay wheel navigation clamps instead of wrapping", () => {
+  const ui = new StreamUI("m", 0, {
+    slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+  });
+  ui.running = true;
+  ui.paintOverlay = () => {};
+  ui.showOptionPicker({
+    title: "命令",
+    items: Array.from({ length: 5 }, (_, i) => ({ id: `i${i}`, label: `I${i}` })),
+    onPick: () => {},
+  });
+  const move = (delta) => ui.moveOverlaySelection(delta, false);
+  move(-5);
+  assert.equal(ui.overlay.selected, 0);
+  move(10);
+  assert.equal(ui.overlay.selected, 4);
+  move(10);
+  assert.equal(ui.overlay.selected, 4);
+  ui.stop();
+});
+
+test("overlay wheel direction matches vertical selection semantics", () => {
+  // SGR 64 = 滚轮向上，65 = 滚轮向下；与 ↑/↓ 键同向。
+  assert.equal(overlayWheelStep(3), -1);
+  assert.equal(overlayWheelStep(6), -2);
+  assert.equal(overlayWheelStep(-3), 1);
+  assert.equal(overlayWheelStep(-6), 2);
+  assert.equal(overlayWheelStep(0), 0);
+
+  const ui = new StreamUI("m", 0, {
+    slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+  });
+  ui.running = true;
+  ui.paintOverlay = () => {};
+  ui.showOptionPicker({
+    title: "命令",
+    items: Array.from({ length: 5 }, (_, i) => ({ id: `i${i}`, label: `I${i}` })),
+    onPick: () => {},
+  });
+  ui.overlay.selected = 2;
+
+  ui.moveOverlaySelection(overlayWheelStep(3), false);
+  assert.equal(ui.overlay.selected, 1, "wheel up should move selection up");
+  ui.moveOverlaySelection(overlayWheelStep(-6), false);
+  assert.equal(ui.overlay.selected, 3, "wheel down should move selection down");
+  ui.stop();
+});
+
+test("overlay mouse move highlights a row and click selects it", () => {
+  const ui = new StreamUI("m", 0, {
+    slashUi: { findSlashCompletion: () => [], resolveSlashCompletion: () => null },
+  });
+  let picked = null;
+  const fakeFullscreen = {
+    overlayRowAt: () => 1,
+    setOverlay: () => {},
+    setInput: () => {},
+    appendNotice: () => {},
+    setProgress: () => {},
+    stop: () => {},
+  };
+  ui.fullscreen = fakeFullscreen;
+  ui.paintOverlay = () => {};
+  ui.running = true;
+  ui.showOptionPicker({
+    title: "命令",
+    items: [{ id: "a", label: "A" }],
+    onPick: (item) => {
+      picked = item.id;
+    },
+  });
+  ui.overlay.rowMap = [null, 0, null];
+  assert.equal(
+    ui.handleOverlayMouse({ kind: "move", column: 4, row: 2 }),
+    true
+  );
+  assert.equal(ui.overlay.hovered, 0);
+  assert.equal(picked, null);
+  assert.equal(
+    ui.handleOverlayMouse({ kind: "down", column: 4, row: 2 }),
+    true
+  );
+  assert.equal(ui.overlay, null);
+  assert.equal(picked, "a");
+  ui.stop();
+});
+
+test("slash picker ranks earlier continuous hits above later ones", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: {
+        findSlashCompletion: () => [],
+        resolveSlashCompletion: () => null,
+        listExecutableSlashCommands: () => [
+          {
+            id: "/abcdefoo",
+            label: "/abcdefoo",
+            description: "later",
+            argumentHint: "",
+            category: "local",
+            categoryLabel: "常用",
+          },
+          {
+            id: "/abfoo",
+            label: "/abfoo",
+            description: "earlier",
+            argumentHint: "",
+            category: "local",
+            categoryLabel: "常用",
+          },
+        ],
+      },
+    });
+    ui.start();
+    try {
+      ui.openSlashCommandPicker();
+      clear();
+      for (const ch of "foo") ui.dispatchKey(ch);
+      const text = stripAnsi(getOutput());
+      assert.ok(
+        text.indexOf("/abfoo") < text.indexOf("/abcdefoo"),
+        "earlier match should rank first"
+      );
+      ui.dismissOverlay();
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+test("slash picker collapses 高级 by default and toggles sections from the keyboard", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: {
+        findSlashCompletion: () => [],
+        resolveSlashCompletion: () => null,
+        listExecutableSlashCommands: () => [
+          {
+            id: "/help",
+            label: "/help",
+            description: "帮助",
+            argumentHint: "",
+            category: "local",
+            categoryLabel: "常用",
+          },
+          {
+            id: "/skill-hidden",
+            label: "/skill-hidden",
+            description: "高级技能",
+            argumentHint: "",
+            category: "skill",
+            categoryLabel: "高级",
+          },
+        ],
+      },
+    });
+    ui.start();
+    try {
+      ui.openSlashCommandPicker();
+      const browse = stripAnsi(getOutput());
+      assert.match(browse, /▶ 高级 \(1\)/);
+      assert.doesNotMatch(browse, /\/skill-hidden/);
+      clear();
+      ui.dispatchKey("\x1b[A"); // 第一条命令 → 上方「常用」分组头
+      clear();
+      ui.confirmOverlay(); // 收起常用
+      const collapsed = stripAnsi(getOutput());
+      assert.match(collapsed, /» 常用 \(1\)/);
+      assert.doesNotMatch(collapsed, /\/help/);
+      clear();
+      ui.confirmOverlay(); // 再展开
+      const expanded = stripAnsi(getOutput());
+      assert.match(expanded, /▼ 常用 \(1\)/);
+      assert.match(expanded, /\/help/);
+      ui.dismissOverlay();
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+test("slash picker finds /quit by its /exit alias", async () => {
+  await withCapturedStdout(async (getOutput, clear) => {
+    const ui = new StreamUI("m", 0, {
+      slashUi: {
+        findSlashCompletion: () => [],
+        resolveSlashCompletion: () => null,
+        listExecutableSlashCommands: () => [
+          {
+            id: "/quit",
+            label: "/quit",
+            description: "退出 qling 交互会话",
+            argumentHint: "",
+            aliases: ["/exit", "/q"],
+            category: "local",
+            categoryLabel: "常用",
+          },
+        ],
+      },
+    });
+    ui.start();
+    try {
+      ui.openSlashCommandPicker();
+      clear();
+      for (const ch of "exit") ui.dispatchKey(ch);
+      const filtered = stripAnsi(getOutput());
+      assert.match(filtered, /\/quit/);
+      assert.match(filtered, /\/exit/);
+      assert.equal(ui.getInputDraft(), "/exit");
+      ui.dismissOverlay();
+    } finally {
+      ui.stop();
+    }
+  });
+});
+
+
+
+
+
+
+
+
+
+
+
+

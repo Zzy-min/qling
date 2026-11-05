@@ -51,9 +51,8 @@ test("fullscreen right rail draws a thumb and click-jumps to the top", () => {
   const following = ui.snapshot();
   assert.equal(following.length, 24);
   assert.ok(following.every((line) => stringWidth(line) <= 80));
-  assert.ok(!following[2].endsWith("┃"));
-  assert.ok(following[following.length - 5].endsWith("┃"));
-  assert.doesNotMatch(following.join("\n"), /█/);
+  assert.ok(!following[2].endsWith("█"));
+assert.ok(following[following.length - 5].endsWith("█"));
   assert.doesNotMatch(following.join("\n"), /已离开底部/);
 
   ui.handleMouse({ kind: "down", column: 80, row: 3 });
@@ -61,8 +60,7 @@ test("fullscreen right rail draws a thumb and click-jumps to the top", () => {
   const jumped = ui.snapshot();
   assert.match(jumped.join("\n"), /历史 0/);
   assert.match(jumped.join("\n"), /已离开底部/);
-  assert.ok(jumped[2].endsWith("┃"));
-  assert.doesNotMatch(jumped.join("\n"), /█/);
+assert.ok(jumped[2].endsWith("█"));
   ui.stop();
 });
 
@@ -73,7 +71,7 @@ test("reading history stays put while a new task appends output", () => {
   ui.scrollLines(999);
   const parked = ui.snapshot();
   assert.match(parked.join("\n"), /历史 0/);
-  assert.ok(parked[2].endsWith("┃"));
+  assert.ok(parked[2].endsWith("█"));
 
   ui.appendNotice("新任务输出");
   ui.setProgress("模型响应", 400);
@@ -83,7 +81,7 @@ test("reading history stays put while a new task appends output", () => {
   assert.match(during.join("\n"), /已离开底部/);
   assert.doesNotMatch(during.join("\n"), /新任务输出/);
   assert.doesNotMatch(during.join("\n"), /正在生成/);
-  assert.ok(during[2].endsWith("┃"));
+  assert.ok(during[2].endsWith("█"));
 
   ui.scrollEnd();
   ui.appendNotice("回到底部");
@@ -161,3 +159,7 @@ test("classic thinking output keeps the decision and drops filler", async () => 
     process.stdout.write = originalWrite;
   }
 });
+
+
+
+

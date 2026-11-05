@@ -272,12 +272,18 @@ export class PersistedMemory {
     const idx = this.entries.findIndex((e) => e.id === id);
     if (idx === -1) return false;
     this.entries.splice(idx, 1);
+    // 主存储删除后必须同步删除派生投影，避免语义检索召回已遗忘事实。
+    this.cognitiveIndex?.removeVector(id);
     return true;
   }
 
   update(id: string, updates: Partial<Pick<PersistedEntry, "content" | "importance">>): boolean {
     const entry = this.entries.find((e) => e.id === id);
     if (!entry) return false;
+    if (updates.content !== undefined && updates.content !== entry.content) {
+      // 旧向量不再代表当前事实；删除投影，避免纠错后仍按旧内容召回。
+      this.cognitiveIndex?.removeVector(id);
+    }
     if (updates.content !== undefined) entry.content = updates.content;
     if (updates.importance !== undefined) entry.importance = updates.importance;
     this.entries.sort((a, b) => b.importance - a.importance);
@@ -297,6 +303,7 @@ export class PersistedMemory {
       case "remove": {
         const data = entry.data as { id: string };
         this.entries = this.entries.filter((e) => e.id !== data.id);
+        this.cognitiveIndex?.removeVector(data.id);
         break;
       }
       case "update": {
@@ -352,11 +359,15 @@ export class PersistedMemory {
       try {
         const queryVector = await this.embeddingClient.getEmbedding(query);
         const searchHits = this.cognitiveIndex.searchVector(queryVector, limit * 2);
-        semanticResults = searchHits.map(h => ({
-          entry: h.entry,
-          score: h.score * 0.8,
-          source: "vector" as const
-        }));
+        // 以主存储为权威：已删除的 id 不再返回，内容以当前 entry 为准。
+        const liveEntries = new Map(this.entries.map((entry) => [entry.id, entry]));
+        semanticResults = searchHits
+          .filter((hit) => liveEntries.has(hit.entry.id))
+          .map((hit) => ({
+            entry: liveEntries.get(hit.entry.id)!,
+            score: hit.score * 0.8,
+            source: "vector" as const
+          }));
       } catch (err: any) {
         // 专项修复：处理 404 (Endpoint 不支持)
         if (err.message.includes("404")) {

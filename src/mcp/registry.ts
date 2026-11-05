@@ -96,7 +96,7 @@ export class MCPRegistry {
     return this.catalog.get(fullName);
   }
 
-  async callTool(serverName: string, toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async callTool(serverName: string, toolName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const client = this.clients.get(serverName);
     if (!client || !client.isConnected()) {
       return {
@@ -105,7 +105,7 @@ export class MCPRegistry {
         is_error: true,
       };
     }
-    const result = await client.callTool(toolName, args);
+    const result = await client.callTool(toolName, args, signal);
     const maxBytes = this.perServerMaxBytes.get(serverName) ?? this.maxOutputBytes;
     const identity = getRuntimeExecutionIdentity();
     const roots = getRuntimeRootsFromEnv();

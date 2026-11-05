@@ -133,6 +133,7 @@ export interface QlingConfig {
     all_workspaces: boolean;
   };
   features: {
+    computer_use: boolean;
     semantic_memory: boolean;
     workflow_runtime: boolean;
     vision_tool: boolean;
@@ -156,6 +157,7 @@ export interface QlingConfig {
     inspect_dump_dir: string;
   };
   tools: Record<string, { enabled: boolean }>;
+  computer_use: { driver_path: string };
   memory: {
     wal_enabled: boolean;
     projection_interval_ms: number;
@@ -320,6 +322,7 @@ export function buildDefaultConfig(): QlingConfig {
       all_workspaces: false,
     },
     features: {
+      computer_use: false,
       semantic_memory: false,
       workflow_runtime: false,
       vision_tool: false,
@@ -342,6 +345,7 @@ export function buildDefaultConfig(): QlingConfig {
       inspect_request: false,
       inspect_dump_dir: path.join(DEFAULT_STATE_DIR, "dump"),
     },
+    computer_use: { driver_path: "" },
     tools: {
       bash: { enabled: true },
       read: { enabled: true },
@@ -674,6 +678,8 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
 
   // Features
   process.env.QLING_FEATURES_SEMANTIC_MEMORY = String(config.features.semantic_memory);
+  process.env.QLING_FEATURES_COMPUTER_USE = String(config.features.computer_use ?? false);
+  process.env.QLING_COMPUTER_USE_DRIVER_PATH = config.computer_use?.driver_path ?? "";
   process.env.QLING_FEATURES_WORKFLOW_RUNTIME = String(config.features.workflow_runtime);
   process.env.QLING_FEATURES_VISION_TOOL = String(config.features.vision_tool);
   process.env.QLING_FEATURES_DASHBOARD = String(config.features.dashboard);

@@ -95,6 +95,7 @@ export class ScrollbackViewport {
   private readonly maxTurns: number;
   private readonly maxBlockBytes: number;
   private nextId = 1;
+  private lineCache: { turnId: number; width: number; lines: string[] } | null = null;
 
   constructor(options: { maxTurns?: number; maxBlockBytes?: number } = {}) {
     this.maxTurns = Math.max(1, Math.floor(options.maxTurns ?? DEFAULT_MAX_TURNS));
@@ -106,6 +107,7 @@ export class ScrollbackViewport {
     this.selectedIndex = -1;
     this.lineOffset = 0;
     this.nextId = 1;
+    this.lineCache = null;
   }
 
   startUserTurn(text: string): void {
@@ -117,6 +119,7 @@ export class ScrollbackViewport {
       blocks: [{ kind: "user", text: safe }],
     });
     if (this.turns.length > this.maxTurns) this.turns.shift();
+    this.lineCache = null;
     this.selectedIndex = this.turns.length - 1;
     this.lineOffset = Number.MAX_SAFE_INTEGER;
   }
@@ -135,6 +138,7 @@ export class ScrollbackViewport {
     const safe = limitUtf8(block.text, this.maxBlockBytes);
     if (!safe.trim()) return false;
     turn.blocks.push({ ...block, text: safe });
+    this.lineCache = null;
     if (this.selectedIndex === this.turns.length - 1) {
       this.lineOffset = Number.MAX_SAFE_INTEGER;
     }

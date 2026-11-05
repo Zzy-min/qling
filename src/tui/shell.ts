@@ -205,6 +205,9 @@ function toolAction(tool: string, command: string): string {
   if (normalized.includes("write") || normalized.includes("edit")) {
     return tl.writeFile || "写入文件";
   }
+  if (normalized === "skill" || normalized.includes("skill")) {
+    return "加载技能";
+  }
   return tl.toolCall || tool || "工具调用";
 }
 

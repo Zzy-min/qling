@@ -37,6 +37,13 @@ export interface MCPConnectResult {
   error?: string;
 }
 
+/** Raw MCP tool envelope for adapters that must retain structured observations/images. */
+export interface MCPToolCallResult {
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+  content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+}
+
 export interface MCPMessage {
   jsonrpc: "2.0";
   id?: number | string;

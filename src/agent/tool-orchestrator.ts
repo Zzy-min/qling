@@ -8,6 +8,7 @@ import type { ToolDispatcher } from "../tools/index.js";
 import type { ToolPipeline } from "../pipeline/hooks.js";
 import { checkToolConsistency } from "../pipeline/consistency-checker.js";
 import { ApprovalGate, ApprovalRequiredError } from "../guard/approval.js";
+import { fingerprintToolArguments } from "../guard/approval-fingerprint.js";
 import { applyContentFilter } from "../guard/content-filter.js";
 import { appendGuardAudit } from "../guard.js";
 import type { GuardConfig } from "../config.js";
@@ -610,16 +611,42 @@ export async function executePreparedTools(
             );
             if (approvalResponse.decision === "allow") {
               try {
-                if (tc.name !== "bg_reconcile") {
+                // 批准后重入完整 pipeline：继续 rate limit / classifier / custom pre hooks，
+                // 并正常执行 post/failure hooks，而不是直接 dispatch 绕过收口。
+                result = await runWithRuntimeExecutionIdentity(
+                  { sessionId: context.sessionId, runId, leaseToken: context.sessionLeaseToken },
+                  () => deps.pipeline.execute(tc, (t) => dispatchTool(t), {
+                    approvedToolCallId: tc.id,
+                    approvedArgsHash: fingerprintToolArguments(tc.arguments as Record<string, unknown>),
+                  })
+                );
+              } catch (reentryError) {
+                result = {
+                  tool_call_id: tc.id,
+                  output:
+                    reentryError instanceof ApprovalRequiredError
+                      ? `[Approval Reentry Blocked] ${reentryError.reasons.join("; ")}`
+                      : (reentryError as Error).message,
+                  is_error: true,
+                  error: {
+                    code: reentryError instanceof ApprovalRequiredError ? "APPROVAL_REENTRY_BLOCKED" : "TOOL_ERROR",
+                    message: (reentryError as Error).message,
+                    category: reentryError instanceof ApprovalRequiredError ? "permission" : "runtime",
+                  },
+                };
+              }
+              if (!result.is_error && tc.name !== "bg_reconcile") {
+                try {
                   const { getPermissionGrantStore } = await import("../guard/permission-grants.js");
                   getPermissionGrantStore().remember(tc.name, {
                     reason: "user approval",
+                    sessionId: context.sessionId,
+                    arguments: tc.arguments as Record<string, unknown>,
                   });
+                } catch {
+                  // grant 失败不阻断执行
                 }
-              } catch {
-                // grant 失败不阻断执行
               }
-              result = await runWithRuntimeExecutionIdentity({ sessionId: context.sessionId, runId, leaseToken: context.sessionLeaseToken }, () => dispatchTool(tc));
             } else {
               result = {
                 tool_call_id: tc.id,

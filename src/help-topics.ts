@@ -25,6 +25,17 @@ interface HelpTopicSuggestion {
 
 const TOPICS: HelpTopic[] = [
   {
+    id: "quit",
+    title: "退出 qling 交互会话",
+    summary: "结束当前 TUI/REPL 会话，先停止 UI 与调度器，再等待 agent 清理。",
+    aliases: ["quit", "/quit", "exit", "/exit", "q", "/q", "退出", "/退出"],
+    slashUsage: "/quit",
+    cliUsage: "仅 slash：在交互会话中使用 /quit 或 /exit",
+    slashExamples: ["/quit", "/exit", "/q"],
+    cliExamples: [],
+    boundary: "退出不可撤销；未完成任务按当前中断路径处理。",
+  },
+  {
     id: "model",
     title: "当前会话模型 / Provider",
     summary: "查看 provider/endpoint/model，列出当前服务商的模型，或切换会话 LLM 配置。",

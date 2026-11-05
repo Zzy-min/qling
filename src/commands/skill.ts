@@ -3,15 +3,34 @@ import { runSkill, getSkillDirs } from "../tools/skill.js";
 import { listSkills, searchSkills } from "../skills/registry.js";
 import { curateSkillCatalog } from "../skills/skill-catalog.js";
 import { openOptionPickerOrFallback } from "../tui/option-picker-helpers.js";
+import { formatSkillSummaryLines, summarizeSkillOutput } from "../tui/skill-summary.js";
 
 export const skillCommand: SlashCommand = {
   name: "/skill",
   aliases: ["/技能"],
   description: "技能切换器：选择可执行/可读的本地 skill",
-  usage: "/skill [list|search <query>|name|archived]",
+  usage: "/skill [list|search <query>|name [--full]|archived]",
   execute: async (args, context) => {
     const [subcommand, ...rest] = args;
     const normalized = String(subcommand ?? "").trim().toLowerCase();
+
+    const writeSkillResult = (name: string, output: string, full = false): void => {
+      if (full) {
+        for (const line of String(output ?? "").split("\n")) context.writeLine(line);
+        return;
+      }
+      const summary = summarizeSkillOutput(output, name);
+      context.writeLine(`✦  Skill: ${summary.name}  ·  技能摘要`);
+      if (summary.description) context.writeLine(`  ${summary.description}`);
+      context.writeLine(`  ${summary.lineCount} 行 · 已注入模型上下文`);
+      if (summary.headings.length > 0) {
+        context.writeLine(`  章节: ${summary.headings.slice(0, 4).join(" / ")}`);
+      }
+      if (summary.warnings.length > 0) {
+        context.writeLine(`  安全警告: ${summary.warnings.length} 条`);
+      }
+      context.writeLine(`  完整正文: /skill ${name} --full`);
+    };
 
     const loadCatalog = async (query?: string) => {
       let dirs: string[] = [];
@@ -60,14 +79,7 @@ export const skillCommand: SlashCommand = {
               context.writeError(result.output);
               return;
             }
-            const lines = String(result.output || "").split("\n");
-            const head = lines.slice(0, 40);
-            for (const line of head) context.writeLine(line);
-            if (lines.length > 40) {
-              context.writeLine(
-                `… 另有 ${lines.length - 40} 行 · /skill ${item.id}`
-              );
-            }
+            writeSkillResult(item.id, result.output);
           },
         },
         () => {
@@ -135,11 +147,16 @@ export const skillCommand: SlashCommand = {
       return;
     }
 
-    const result = await runSkill({ name: args.join(" ").trim() });
+    const full = args.some((arg) => arg === "--full" || arg === "-f");
+    const skillName = args
+      .filter((arg) => arg !== "--full" && arg !== "-f")
+      .join(" ")
+      .trim();
+    const result = await runSkill({ name: skillName });
     if (result.is_error) {
       context.writeError(result.output);
       return;
     }
-    context.writeLine(result.output);
+    writeSkillResult(skillName, result.output, full);
   },
 };

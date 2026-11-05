@@ -3,6 +3,8 @@
 // bamboo（默认）· night · mono
 // ============================================================
 
+import { UI_SEMANTIC_COLORS } from "../ui-semantics.js";
+
 export type TuiBorderStyle = "rounded" | "square";
 
 export type ThemeId = "bamboo" | "night" | "mono";
@@ -19,38 +21,45 @@ export type TuiColorPalette = {
   thinking: string;
   tool: string;
   recovery: string;
+  /** Grok 风格滚动条：深色轨道背景 + 实心 thumb 背景 */
+  scrollbarTrack: string;
+  scrollbarThumb: string;
 };
 
 export type TuiColorKey = keyof TuiColorPalette;
 
 const THEME_PALETTES: Record<ThemeId, TuiColorPalette> = {
-  /** 竹青绿 · 本地禅意工具台（默认） */
+  /** 竹青绿 · 本地禅意工具台（默认，与 Dashboard 同一语义色） */
   bamboo: {
-    primary: "#4ADE80",
-    secondary: "#99EFB4",
-    dim: "#718478",
-    bright: "#E8EFE9",
-    success: "#4ADE80",
-    error: "#EF8090",
-    warn: "#E7B65F",
+    primary: UI_SEMANTIC_COLORS.primary,
+    secondary: UI_SEMANTIC_COLORS.secondary,
+    dim: UI_SEMANTIC_COLORS.dim,
+    bright: UI_SEMANTIC_COLORS.ink,
+    success: UI_SEMANTIC_COLORS.primary,
+    error: UI_SEMANTIC_COLORS.error,
+    warn: UI_SEMANTIC_COLORS.warning,
     magenta: "#D8A3C1",
     thinking: "#A7CDB4",
     tool: "#8FBCA3",
-    recovery: "#E7B65F",
+    recovery: UI_SEMANTIC_COLORS.warning,
+    scrollbarTrack: "#22322A",
+    scrollbarThumb: UI_SEMANTIC_COLORS.primary,
   },
   /** 夜间：深蓝紫调 */
   night: {
-    primary: "#8FBCA3",
-    secondary: "#B6CDBD",
-    dim: "#6F8075",
-    bright: "#E4EBE6",
-    success: "#62C889",
-    error: "#E28A95",
-    warn: "#DAB66A",
-    magenta: "#C9A8B8",
-    thinking: "#AABDB1",
-    tool: "#91B0A0",
-    recovery: "#DAB66A",
+    primary: "#8FB8FF",
+    secondary: "#C4B5FD",
+    dim: "#6F7A8C",
+    bright: "#E4EBF5",
+    success: "#6EE7B7",
+    error: "#FCA5A5",
+    warn: "#FCD34D",
+    magenta: "#F0ABFC",
+    thinking: "#A5B4FC",
+    tool: "#93C5FD",
+    recovery: "#FDBA74",
+    scrollbarTrack: "#1C2335",
+    scrollbarThumb: "#8FB8FF",
   },
   /**
    * 单色：正文/工具灰阶；
@@ -68,6 +77,8 @@ const THEME_PALETTES: Record<ThemeId, TuiColorPalette> = {
     thinking: "#9CA3AF",
     tool: "#D1D5DB",
     recovery: "#FDBA74",
+    scrollbarTrack: "#262626",
+    scrollbarThumb: "#D1D5DB",
   },
 };
 
@@ -146,6 +157,20 @@ export function reloadThemeFromEnv(
   return activeThemeId;
 }
 
+export function formatThemePalettePreview(palette: TuiColorPalette = TUI_COLORS): string {
+  const entries: Array<[label: string, key: TuiColorKey]> = [
+    ["主", "primary"],
+    ["辅", "secondary"],
+    ["工具", "tool"],
+    ["强调", "magenta"],
+    ["警告", "warn"],
+    ["错误", "error"],
+  ];
+  return entries
+    .map(([label, key]) => `${paint.dim(label)} ${fg(palette[key], "██")}`)
+    .join("  ");
+}
+
 export function formatThemeStatusLines(): string[] {
   const lines = [
     "",
@@ -155,6 +180,9 @@ export function formatThemeStatusLines(): string[] {
     `Env       : QLING_TUI_THEME=${process.env.QLING_TUI_THEME ?? "-"}`,
     "Primary   : " + TUI_COLORS.primary,
   ];
+  if (process.stdout.isTTY && !Object.prototype.hasOwnProperty.call(process.env, "NO_COLOR")) {
+    lines.push("Palette   : " + formatThemePalettePreview());
+  }
   for (const t of listThemes()) {
     lines.push(`  ${t.active ? "●" : "○"} ${t.id.padEnd(8)} ${t.summary}`);
   }
@@ -220,6 +248,21 @@ export function fg(hex: string, text: string): string {
 
 export function fgKey(key: TuiColorKey, text: string): string {
   return fg(TUI_COLORS[key], text);
+}
+
+/** True-color background; empty string returns empty. */
+export function bg(hex: string, text: string): string {
+  if (!text) return "";
+  return `\x1b[48;2;${hexToRgbChannels(hex)}m${text}\x1b[0m`;
+}
+
+export function bgKey(key: TuiColorKey, text: string): string {
+  return bg(TUI_COLORS[key], text);
+}
+
+export function inverseFgKey(key: TuiColorKey, text: string): string {
+  if (!text) return "";
+  return `\x1b[7;38;2;${hexToRgbChannels(TUI_COLORS[key])}m${text}\x1b[0m`;
 }
 
 export const paint = {
@@ -298,3 +341,4 @@ export function timelineStatusColor(status: "running" | "success" | "error"): st
   if (status === "success") return TUI_COLORS.success;
   return TUI_COLORS.tool;
 }
+

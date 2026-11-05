@@ -2,7 +2,7 @@
 // Grok 三态 Mode 的 UI 与能力描述（Normal / Plan / Always-approve）
 // ============================================================
 
-import { fg, TUI_COLORS } from "./theme.js";
+import { fg, getActiveThemeId, TUI_COLORS } from "./theme.js";
 
 export type GrokUiMode = "normal" | "plan" | "auto";
 
@@ -41,9 +41,7 @@ export function modeAccentHex(mode: GrokUiMode): string {
       return "#FBBF24";
     default:
       // normal：主题主色；mono 用亮白描边与灰阶底区分
-      return TUI_COLORS.primary === "#E5E7EB" || TUI_COLORS.primary === "#F9FAFB"
-        ? "#F9FAFB"
-        : TUI_COLORS.primary;
+      return getActiveThemeId() === "mono" ? "#F9FAFB" : TUI_COLORS.primary;
   }
 }
 

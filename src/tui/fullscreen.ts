@@ -1,31 +1,35 @@
 import stringWidth from "string-width";
 import { getPackageVersion } from "../package-version.js";
 import { formatMarkdownForTerminal } from "./markdown.js";
+import { formatSkillSummaryLines, summarizeSkillOutput } from "./skill-summary.js";
 import {
   modeAccentHex,
   modeInputTopLabel,
   modePromptPrefix,
   resolveGrokUiMode,
+  type GrokUiMode,
 } from "./mode-chrome.js";
 import {
   contentOffsetToScrollOffset,
   scrollbarClickToOffset,
   scrollbarThumb,
-  scrollOffsetToContentOffset,
   type ScrollbarThumb,
 } from "./scrollbar.js";
 import { extractImportantSteps } from "./thinking-fold.js";
-import { fg, paint } from "./theme.js";
+import { computeFullscreenLayout, type FullscreenLayout } from "./fullscreen-layout.js";
+import { bgKey, fg, getActiveThemeId, paint, TUI_COLORS, type ThemeId, type TuiColorKey } from "./theme.js";
 
 export type TuiMode = "auto" | "fullscreen" | "classic";
 export type TuiIconMode = "unicode" | "nerd";
+
+export type TuiColorMode = "truecolor" | "ansi256" | "ansi16" | "none";
 
 export interface TerminalCapabilities {
   stdinTTY: boolean;
   stdoutTTY: boolean;
   columns: number;
   rows: number;
-  colorMode?: "truecolor" | "ansi256" | "none";
+  colorMode?: TuiColorMode;
 }
 
 export interface FullscreenChrome {
@@ -54,7 +58,7 @@ interface ScrollbarHit {
 }
 
 export interface FullscreenMouseEvent {
-  kind: "down" | "drag" | "up";
+  kind: "down" | "drag" | "up" | "move";
   column: number;
   row: number;
 }
@@ -71,9 +75,9 @@ export function coalesceMouseEvents(
   const coalesced: FullscreenMouseEvent[] = [];
   for (const event of events) {
     if (
-      event.kind === "drag" &&
+      (event.kind === "drag" || event.kind === "move") &&
       coalesced.length > 0 &&
-      coalesced[coalesced.length - 1]?.kind === "drag"
+      coalesced[coalesced.length - 1]?.kind === event.kind
     ) {
       coalesced[coalesced.length - 1] = event;
     } else {
@@ -168,7 +172,16 @@ export function consumeMouseInput(
         }
         return "";
       }
-      if ((code & 3) !== 0) return "";
+      const button = code & 3;
+      // 1003 任意移动：无按键移动 = move；带按键移动 = drag
+      if ((code & 32) !== 0 && button === 3) {
+        events.push({ kind: "move", column, row });
+        return "";
+      }
+      if (button !== 0) {
+        if (phase === "m") events.push({ kind: "up", column, row });
+        return "";
+      }
       if (phase === "m") {
         events.push({ kind: "up", column, row });
       } else if ((code & 32) !== 0) {
@@ -183,7 +196,18 @@ export function consumeMouseInput(
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(/\x1b\[[0-9;]*m/g, "");
+  // 同时剥离 SGR 与光标定位等 CSI，保证滚动条绝对列定位不影响宽度计算
+  return value.replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, "");
+}
+
+/** 终端行内不允许出现 Tab/CR 等控制字符，否则实际列宽会与 string-width 不一致。 */
+function sanitizeLine(value: string): string {
+  return value
+    .replace(/\r/g, "")
+    .replace(/\t/g, "    ")
+    // 保留 SGR 颜色，剔除光标移动/清屏等会破坏行宽计算的 CSI
+    .replace(/\x1b\[(?![\d;]*[mG])[0-?]*[ -\/]*[@-~]/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]/g, "");
 }
 
 function compareSelectionPoint(left: SelectionPoint, right: SelectionPoint): number {
@@ -239,25 +263,193 @@ function highlightVisibleCells(value: string, startCell: number, endCell: number
   return output;
 }
 
-function toAnsi256(value: string): string {
+const XTERM_CUBE_LEVELS = [0, 95, 135, 175, 215, 255] as const;
+
+/** Nearest xterm-256 color across both the 6×6×6 cube and grayscale ramp. */
+export function rgbToAnsi256(red: number, green: number, blue: number): number {
+  const clamp = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  const r = clamp(red);
+  const g = clamp(green);
+  const b = clamp(blue);
+  let bestIndex = 16;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (let ri = 0; ri < 6; ri++) {
+    for (let gi = 0; gi < 6; gi++) {
+      for (let bi = 0; bi < 6; bi++) {
+        const cr = XTERM_CUBE_LEVELS[ri];
+        const cg = XTERM_CUBE_LEVELS[gi];
+        const cb = XTERM_CUBE_LEVELS[bi];
+        const distance = (cr - r) ** 2 + (cg - g) ** 2 + (cb - b) ** 2;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = 16 + 36 * ri + 6 * gi + bi;
+        }
+      }
+    }
+  }
+  for (let step = 0; step < 24; step++) {
+    const level = 8 + 10 * step;
+    const distance = (level - r) ** 2 + (level - g) ** 2 + (level - b) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = 232 + step;
+    }
+  }
+  return bestIndex;
+}
+
+const TRUECOLOR_FG = /\x1b\[38;2;(\d+);(\d+);(\d+)m/g;
+const ANSI256_CACHE = new Map<string, number>();
+const ANSI16_CACHE = new Map<string, number>();
+const ANSI16_STANDARD: ReadonlyArray<readonly [number, number, number, number]> = [
+  [0, 0, 0, 30],
+  [128, 0, 0, 31],
+  [0, 128, 0, 32],
+  [128, 128, 0, 33],
+  [0, 0, 128, 34],
+  [128, 0, 128, 35],
+  [0, 128, 128, 36],
+  [192, 192, 192, 37],
+  [128, 128, 128, 90],
+  [255, 0, 0, 91],
+  [0, 255, 0, 92],
+  [255, 255, 0, 93],
+  [0, 0, 255, 94],
+  [255, 0, 255, 95],
+  [0, 255, 255, 96],
+  [255, 255, 255, 97],
+];
+const ANSI16_ROLE_CODES: Record<ThemeId, Record<TuiColorKey, number>> = {
+  bamboo: {
+    primary: 92,
+    secondary: 96,
+    dim: 90,
+    bright: 97,
+    success: 92,
+    error: 91,
+    warn: 93,
+    magenta: 95,
+    thinking: 94,
+    tool: 36,
+    recovery: 93,
+    scrollbarTrack: 90,
+    scrollbarThumb: 92,
+  },
+  night: {
+    primary: 96,
+    secondary: 95,
+    dim: 90,
+    bright: 97,
+    success: 96,
+    error: 91,
+    warn: 93,
+    magenta: 95,
+    thinking: 94,
+    tool: 36,
+    recovery: 93,
+    scrollbarTrack: 90,
+    scrollbarThumb: 96,
+  },
+  mono: {
+    primary: 97,
+    secondary: 96,
+    dim: 90,
+    bright: 97,
+    success: 37,
+    error: 91,
+    warn: 93,
+    magenta: 37,
+    thinking: 90,
+    tool: 37,
+    recovery: 93,
+    scrollbarTrack: 90,
+    scrollbarThumb: 97,
+  },
+};
+
+function clampRgb(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+/** Nearest ANSI-16 foreground code for colors not owned by the active theme. */
+export function rgbToAnsi16Code(red: number, green: number, blue: number): number {
+  const r = clampRgb(red);
+  const g = clampRgb(green);
+  const b = clampRgb(blue);
+  let bestCode = 37;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const [cr, cg, cb, code] of ANSI16_STANDARD) {
+    const distance = (cr - r) ** 2 + (cg - g) ** 2 + (cb - b) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestCode = code;
+    }
+  }
+  return bestCode;
+}
+
+function ansi16RoleCode(hex: string): number | null {
+  const normalized = hex.toLowerCase();
+  const roleCodes = ANSI16_ROLE_CODES[getActiveThemeId()];
+  for (const [key, value] of Object.entries(TUI_COLORS) as Array<[TuiColorKey, string]>) {
+    if (value.toLowerCase() === normalized) return roleCodes[key];
+  }
+  return null;
+}
+
+function toAnsi16(value: string): string {
+  if (!value.includes("\x1b[38;2;")) return value;
   return value.replace(
-    /\x1b\[38;2;(\d+);(\d+);(\d+)m/g,
+    TRUECOLOR_FG,
     (_match, red, green, blue) => {
-      const r = Math.round((Number(red) / 255) * 5);
-      const g = Math.round((Number(green) / 255) * 5);
-      const b = Math.round((Number(blue) / 255) * 5);
-      return `\x1b[38;5;${16 + 36 * r + 6 * g + b}m`;
+      const key = `${getActiveThemeId()}:${red};${green};${blue}`;
+      let code = ANSI16_CACHE.get(key);
+      if (code === undefined) {
+        const r = clampRgb(Number(red));
+        const g = clampRgb(Number(green));
+        const b = clampRgb(Number(blue));
+        const hex = `#${[r, g, b]
+          .map((channel) => channel.toString(16).padStart(2, "0"))
+          .join("")}`;
+        code = ansi16RoleCode(hex) ?? rgbToAnsi16Code(r, g, b);
+        if (ANSI16_CACHE.size >= 512) ANSI16_CACHE.clear();
+        ANSI16_CACHE.set(key, code);
+      }
+      return `\x1b[${code}m`;
+    }
+  );
+}
+
+function toAnsi256(value: string): string {
+  if (!value.includes("\x1b[38;2;")) return value;
+  return value.replace(
+    TRUECOLOR_FG,
+    (_match, red, green, blue) => {
+      const key = `${red};${green};${blue}`;
+      let index = ANSI256_CACHE.get(key);
+      if (index === undefined) {
+        index = rgbToAnsi256(Number(red), Number(green), Number(blue));
+        if (ANSI256_CACHE.size >= 512) ANSI256_CACHE.clear();
+        ANSI256_CACHE.set(key, index);
+      }
+      return `\x1b[38;5;${index}m`;
     }
   );
 }
 
 export function resolveColorMode(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
-): "truecolor" | "ansi256" | "none" {
+): TuiColorMode {
   if (Object.prototype.hasOwnProperty.call(env, "NO_COLOR")) return "none";
   const colorTerm = String(env.COLORTERM ?? "").toLowerCase();
   if (colorTerm.includes("truecolor") || colorTerm.includes("24bit")) return "truecolor";
-  return "ansi256";
+  const term = String(env.TERM ?? "").toLowerCase();
+  if (!term) return "ansi256";
+  if (term === "dumb") return "none";
+  if (term.includes("256color")) return "ansi256";
+  if (/(kitty|wezterm|alacritty|ghostty|iterm|vscode|truecolor|direct)/.test(term)) return "truecolor";
+  return "ansi16";
 }
 
 /** 把输入按显示宽度折行，并记下光标落在哪一行。显式换行单独成行。 */
@@ -299,6 +491,7 @@ export function wrapFullscreenInput(
 
 function fit(value: string, width: number): string {
   if (width <= 0) return "";
+  value = sanitizeLine(value);
   const plain = stripAnsi(value);
   if (stringWidth(plain) <= width) return value + " ".repeat(width - stringWidth(plain));
   let out = "";
@@ -310,11 +503,6 @@ function fit(value: string, width: number): string {
     used += next;
   }
   return out + "…" + " ".repeat(Math.max(0, width - used - 1));
-}
-
-function basename(value: string): string {
-  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalized.split("/").filter(Boolean).at(-1) ?? value;
 }
 
 function tokenCount(value: number): string {
@@ -329,10 +517,38 @@ function duration(value?: number): string {
   return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}s`;
 }
 
+function truncatePlain(value: string, width: number): string {
+  if (width <= 0) return "";
+  if (stringWidth(value) <= width) return value;
+  let out = "";
+  let used = 0;
+  for (const char of value) {
+    const next = stringWidth(char);
+    if (used + next > width - 1) break;
+    out += char;
+    used += next;
+  }
+  return `${out}…`;
+}
+
+function workspaceLabel(value: string, includeParent = false): string {
+  const normalized = String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length === 0) return "-";
+  return includeParent && parts.length > 1
+    ? parts.slice(-2).join("/")
+    : parts.at(-1) ?? "-";
+}
+
+function packHeaderLine(segments: string[], width: number): string {
+  if (segments.length === 0) return " ".repeat(width);
+  const contentWidth = segments.reduce((sum, item) => sum + stringWidth(item), 0);
+  const gap = Math.max(2, Math.floor((width - contentWidth) / Math.max(1, segments.length - 1)));
+  return fit(segments.join(" ".repeat(gap)), width);
+}
+
 export function formatFullscreenHeader(chrome: FullscreenChrome, width: number): string[] {
   const left = width >= 100 ? `◈ 轻灵 Qling  v${getPackageVersion()}` : "◈ 轻灵 Qling";
-  const workspace = `Workspace: ${basename(chrome.workspace)}`;
-  const model = `Model: ${chrome.model}`;
   const mode =
     chrome.sessionMode === "plan"
       ? "Plan"
@@ -342,24 +558,138 @@ export function formatFullscreenHeader(chrome: FullscreenChrome, width: number):
         ? "Auto"
         : "Normal";
   const ready = `${chrome.ready ? "● Ready" : "○ Busy"} · ${mode}`;
-  const tokens = width >= 100 ? `Tokens: ${tokenCount(chrome.tokens)}` : "";
-  const branch = `⌘ Git: ${chrome.branch || "-"}`;
+  const tokens = `Tokens: ${tokenCount(chrome.tokens)}`;
+  const branch = `⌘ Git: ${truncatePlain(chrome.branch || "-", 18)}`;
+  const gaps = width >= 120 ? 10 : width >= 100 ? 8 : 6;
+  const rightWidth = stringWidth(ready) + (width >= 120 ? stringWidth(tokens) + stringWidth(branch) : width >= 100 ? stringWidth(branch) : 0);
+  const contextBudget = Math.max(10, width - stringWidth(left) - rightWidth - gaps);
+  const model = truncatePlain(
+    `Model: ${String(chrome.model || "unknown").trim() || "unknown"}`,
+    width >= 120 ? 36 : 24
+  );
+  const workspace = truncatePlain(
+    `Workspace: ${workspaceLabel(chrome.workspace, width >= 120)}`,
+    Math.min(width >= 120 ? 28 : 18, Math.max(10, contextBudget - stringWidth(model) - 2))
+  );
   const segments = width >= 120
     ? [left, workspace, model, ready, tokens, branch]
     : width >= 100
       ? [left, workspace, model, ready, branch]
-      : [left, workspace, ready, branch];
-  const gap = Math.max(2, Math.floor((width - segments.reduce((sum, item) => sum + stringWidth(item), 0)) / Math.max(1, segments.length - 1)));
-  return [fit(segments.join(" ".repeat(gap)), width), "─".repeat(width)];
+      : width >= 72
+        ? [left, workspace, model, ready]
+        : [left, ready];
+  return [packHeaderLine(segments, width), "─".repeat(width)];
+}
+
+export function paintFullscreenHeader(
+  line: string,
+  uiMode: GrokUiMode,
+  accent = modeAccentHex(uiMode)
+): string {
+  return line
+    .replace(/(◈ [^ ]+ [^ ]+)(\s+v\S+)?/, (_match, brand, version) =>
+      paint.primary(brand) + (version ? paint.dim(version) : ""))
+    .replace(/(Workspace: )(\S+)/, (_match, label, value) =>
+      paint.dim(label) + paint.secondary(value))
+    .replace(/(Model: )(\S+)/, (_match, label, value) =>
+      paint.dim(label) + paint.tool(value))
+    .replace(/(Tokens: )(\S+)/, (_match, label, value) =>
+      paint.dim(label) + paint.bright(value))
+    .replace(/(⌘ Git: )(\S+)/, (_match, label, value) =>
+      paint.dim(label) + paint.magenta(value))
+    .replace(/(● Ready)/, paint.success("$1"))
+    .replace(/(○ Busy)/, paint.warn("$1"))
+    .replace(/( · )(Plan|Auto|Normal)\b/, (_match, separator, label) =>
+      separator + fg(accent, label));
+}
+
+export function paintFullscreenFooter(
+  line: string,
+  overlayOpen = false
+): string {
+  const parts = line.split("│");
+  if (parts.length !== 3) return paint.dim(line);
+  const third = parts[2];
+  const clockIndex = third.search(/\d{2}:\d{2}:\d{2}/);
+  const commands = clockIndex >= 0 ? third.slice(0, clockIndex) : third;
+  const clock = clockIndex >= 0 ? third.slice(clockIndex) : "";
+  const actionPaint = overlayOpen ? paint.warn : paint.secondary;
+  return [
+    actionPaint(parts[0]),
+    paint.primary("│"),
+    paint.magenta(parts[1]),
+    paint.primary("│"),
+    paint.tool(commands),
+    paint.dim(clock),
+  ].join("");
 }
 
 export function formatFullscreenFooterHints(
-  _selectionActive: boolean,
-  width: number
+  selectionActive: boolean,
+  width: number,
+  clock = "00:00:00",
+  overlayOpen = false
 ): string {
-  return width >= 120
-    ? "拖选复制   Alt+C 重复制   Enter 发送   Ctrl+C 中断   Shift+Tab 模式   /help 帮助   /clear 清空   /model 模型   /exit 退出"
-    : "拖选复制 Alt+C重复制 Enter发送 Ctrl+C中断 Shift+Tab模式 / 命令";
+  const safeWidth = Math.max(40, width);
+  const actions = overlayOpen
+    ? safeWidth >= 96
+      ? "↑/↓ 选择  Enter 确认"
+      : safeWidth >= 80
+        ? "↑/↓  Enter  Esc"
+        : safeWidth >= 48
+          ? "↑↓  Enter 确认"
+          : "↑↓ Enter"
+    : safeWidth >= 120
+      ? "Enter 发送  Shift+Tab 模式  Ctrl+C 中断"
+      : safeWidth >= 96
+        ? "Enter 发送  Shift+Tab 模式"
+        : safeWidth >= 80
+          ? selectionActive
+            ? "Enter 发送  Shift+Tab  Ctrl+C"
+            : "Enter 发送  Shift+Tab 模式  Ctrl+C 中断"
+          : safeWidth >= 48
+            ? "Enter 发送"
+            : "Enter";
+  const center = overlayOpen
+    ? safeWidth >= 96
+      ? "浮层导航 · Esc"
+      : safeWidth >= 80
+        ? "浮层"
+        : "Esc"
+    : selectionActive
+      ? safeWidth >= 96
+        ? "已选文本  Alt+C 重复制"
+        : safeWidth >= 80
+          ? "已选文本  Alt+C 复制"
+          : "Alt+C"
+      : safeWidth >= 96
+        ? "拖选复制  Alt+C 重复制"
+        : safeWidth >= 80
+          ? "Alt+C 复制"
+          : "Alt+C";
+  const commands = overlayOpen
+    ? safeWidth >= 96
+      ? "PgUp/PgDn 浏览"
+      : safeWidth >= 48
+        ? "PgUp/PgDn"
+        : "Pg"
+    : safeWidth >= 96
+      ? "/help  /clear  /model  /exit"
+      : "/ 命令";
+  const clockText = String(clock || "00:00:00");
+  const groups = [actions, center, commands];
+  const fixedWidth =
+    groups.reduce((sum, item) => sum + stringWidth(item), 0) +
+    10 +
+    2 +
+    stringWidth(clockText);
+  const spare = Math.max(0, safeWidth - fixedWidth);
+  const firstGap = 5 + Math.floor(spare / 2);
+  const secondGap = 5 + spare - Math.floor(spare / 2);
+  const gap = (size: number) =>
+    `${" ".repeat(Math.max(0, Math.floor((size - 1) / 2)))}│${" ".repeat(Math.max(0, Math.ceil((size - 1) / 2)))}`;
+  const line = `${actions}${gap(firstGap)}${center}${gap(secondGap)}${commands}  ${clockText}`;
+  return fit(line, safeWidth);
 }
 
 export class FullscreenRenderer {
@@ -371,9 +701,13 @@ export class FullscreenRenderer {
   private cursorRow = 1;
   private placeholder = "输入任务，/help 查看命令";
   private overlay: string[] | null = null;
+  private overlayBodyStart = 0;
+  private lastBodyLength = 0;
   private expandToolOutput = false;
   private expandThinking = false;
   private scrollbarDragging = false;
+  private scrollbarDragTimer: NodeJS.Timeout | null = null;
+  private pendingScrollbarRow: number | null = null;
   private scrollbarHit: ScrollbarHit | null = null;
   private progress: { label: string; elapsedMs: number } | null = null;
   private transientOutput: string | null = null;
@@ -385,6 +719,7 @@ export class FullscreenRenderer {
   /** Body line kept at the top of the viewport while the user is reading history. */
   private anchoredTop: number | null = null;
   private active = false;
+  private frame: FullscreenLayout | null = null;
   private selectionAnchor: SelectionPoint | null = null;
   private selectionHead: SelectionPoint | null = null;
   private selectionDragging = false;
@@ -401,15 +736,21 @@ export class FullscreenRenderer {
   private lastDragScrollAt = 0;
   private dragScrollSteps = 0;
   private readonly iconMode: TuiIconMode;
-  private readonly writeRaw: (value: string) => void;
+  private readonly writeRaw: (value: string) => void | boolean;
   private readonly writeClipboard: (value: string) => void | Promise<void>;
   private readonly now: () => Date;
+  /** Presenter 水位：阻塞时只保留最新一帧，避免终端停止消费时堆积整段历史。 */
+  private writeBlocked = false;
+  private pendingWrite: string | null = null;
+  private drainHandler: (() => void) | null = null;
+  private queuedFrames = 0;
+  private writtenFrames = 0;
 
   constructor(
     chrome: FullscreenChrome,
     private capabilities: TerminalCapabilities,
     options: {
-      write?: (value: string) => void;
+      write?: (value: string) => void | boolean;
       now?: () => Date;
       iconMode?: TuiIconMode;
       writeClipboard?: (value: string) => void | Promise<void>;
@@ -422,12 +763,61 @@ export class FullscreenRenderer {
     this.writeClipboard = options.writeClipboard ?? (() => {});
   }
 
+  private attachDrain(): void {
+    if (this.drainHandler) return;
+    this.drainHandler = () => {
+      this.drainHandler = null;
+      this.writeBlocked = false;
+      this.pendingWrite = null;
+      // 不能只补写上一帧的差分：被覆盖的帧可能修改了不同行。
+      // drain 后按当前状态强制重绘完整帧，保证屏幕与模型一致。
+      if (this.active) this.render(true);
+    };
+    process.stdout.once("drain", this.drainHandler);
+  }
+
+  private queueWrite(value: string): void {
+    if (!value) return;
+    if (this.writeBlocked) {
+      // 合并期间丢弃差分帧；drain 时按当前模型重绘完整帧，避免依赖前帧的增量丢失。
+      this.pendingWrite = value;
+      this.queuedFrames++;
+      return;
+    }
+    const accepted = this.writeRaw(value);
+    this.writtenFrames++;
+    if (accepted === false) {
+      this.writeBlocked = true;
+      this.attachDrain();
+    }
+  }
+
+  /** 测试/退出前：立即冲刷被背压合并的最新帧。 */
+  flushWriteQueue(): void {
+    if (this.drainHandler) {
+      process.stdout.removeListener("drain", this.drainHandler);
+      this.drainHandler = null;
+    }
+    this.writeBlocked = false;
+    this.pendingWrite = null;
+    // 与 drain 相同：完整重绘，而不是补写可能失真的差分帧。
+    if (this.active) this.render(true);
+  }
+
+  getWriteWatermark(): { blocked: boolean; queuedFrames: number; writtenFrames: number } {
+    return {
+      blocked: this.writeBlocked,
+      queuedFrames: this.queuedFrames,
+      writtenFrames: this.writtenFrames,
+    };
+  }
+
   start(): void {
     if (this.active) return;
     this.active = true;
     this.writeRaw(
       "\x1b[?1049h" +
-        "\x1b[?1000h\x1b[?1002h\x1b[?1006h" +
+        "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h" +
         "\x1b[?25l\x1b[2J\x1b[H"
     );
     this.render(true);
@@ -436,7 +826,18 @@ export class FullscreenRenderer {
   stop(): void {
     if (!this.active) return;
     this.active = false;
-    this.writeRaw("\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l");
+    if (this.scrollbarDragTimer) {
+      clearTimeout(this.scrollbarDragTimer);
+      this.scrollbarDragTimer = null;
+    }
+    this.pendingScrollbarRow = null;
+    if (this.drainHandler) {
+      process.stdout.removeListener("drain", this.drainHandler);
+      this.drainHandler = null;
+    }
+    this.pendingWrite = null;
+    this.writeBlocked = false;
+    this.writeRaw("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?25h\x1b[?1049l");
     this.previous = [];
   }
 
@@ -486,6 +887,25 @@ export class FullscreenRenderer {
   setOverlay(lines: string[] | null): void {
     this.overlay = lines;
     this.render();
+  }
+
+  /** 浮层滚动条所在终端列（内容右侧 2 列：gap + track）。 */
+  overlayScrollbarColumn(): number {
+    const line = this.overlay?.find((value) => value.trim().length > 0);
+    const width = line ? stringWidth(stripAnsi(line)) : this.capabilities.columns;
+    return Math.max(1, width - 2);
+  }
+
+  /** 鼠标命中的浮层面板行（0 = 顶边框）；不在浮层内返回 null。 */
+  overlayRowAt(row: number, column: number): number | null {
+    if (!this.overlay) return null;
+    if (column < 1 || column > Math.max(1, this.capabilities.columns)) {
+      return null;
+    }
+    const bodyIndex = this.screenBodyRows.get(row);
+    if (bodyIndex === undefined) return null;
+    const line = bodyIndex - this.overlayBodyStart;
+    return line >= 0 && line < this.overlay.length ? line : null;
   }
 
   setExpandToolOutput(expanded: boolean): void {
@@ -621,11 +1041,27 @@ export class FullscreenRenderer {
     this.render();
   }
 
-  handleMouse(event: FullscreenMouseEvent): boolean {
-    if (this.scrollbarDragging || this.hitScrollbar(event.column, event.row)) {
+handleMouse(event: FullscreenMouseEvent): boolean {
+    const onScrollbar = this.hitScrollbar(event.column, event.row);
+    // 只有按下/拖动（或已进入拖动）才接管滚动条；纯悬停 move 绝不改变滚动位置。
+    const scrollbarIntent =
+      this.scrollbarDragging ||
+      ((event.kind === "down" || event.kind === "drag") && onScrollbar);
+    if (scrollbarIntent) {
+      if (event.kind === "move") {
+        // 1003 的纯移动不代表按键仍按下：取消拖动状态，避免“悬停继续滚动”。
+        this.scrollbarDragging = false;
+        return true;
+      }
       if (event.kind === "up") {
         this.scrollbarDragging = false;
-        this.applyScrollbar(event.row);
+        if (this.scrollbarDragTimer) {
+          clearTimeout(this.scrollbarDragTimer);
+          this.scrollbarDragTimer = null;
+        }
+        const row = this.pendingScrollbarRow ?? event.row;
+        this.pendingScrollbarRow = null;
+        this.applyScrollbar(row);
         return true;
       }
       this.scrollbarDragging = true;
@@ -633,6 +1069,23 @@ export class FullscreenRenderer {
       this.selectionAnchor = null;
       this.selectionHead = null;
       this.selectionMoved = false;
+      if (event.kind === "drag") {
+        // 拖动时合并到下一帧，避免每个 mousemove 全量 render
+        this.pendingScrollbarRow = event.row;
+        if (!this.scrollbarDragTimer) {
+          this.scrollbarDragTimer = setTimeout(() => {
+            this.scrollbarDragTimer = null;
+            const pending = this.pendingScrollbarRow;
+            this.pendingScrollbarRow = null;
+            if (pending !== null && this.scrollbarDragging) {
+              this.applyScrollbar(pending);
+            }
+          }, 16);
+          this.scrollbarDragTimer.unref?.();
+        }
+        return true;
+      }
+      this.pendingScrollbarRow = null;
       this.applyScrollbar(event.row);
       return true;
     }
@@ -844,9 +1297,9 @@ export class FullscreenRenderer {
 
   private entryLines(entry: Entry, width: number): string[] {
     const bodyWidth = Math.max(20, width - 6);
-    const userIcon = this.iconMode === "nerd" ? "" : "♟";
+    const userIcon = this.iconMode === "nerd" ? "" : "❯";
     const assistantIcon = this.iconMode === "nerd" ? "󰚩" : "✦";
-    if (entry.kind === "user") return [fg("#60A5FA", `${userIcon}  You`), ...entry.text.split("\n").map((line) => `    ${line}`), ""];
+    if (entry.kind === "user") return [fg(TUI_COLORS.secondary, `${userIcon}  You`), ...entry.text.split("\n").map((line) => `    ${line}`), ""];
     if (entry.kind === "assistant") {
       const label = entry.streaming ? `${assistantIcon}  轻灵  ·  流式` : `${assistantIcon}  轻灵`;
       return [paint.primary(label), ...formatMarkdownForTerminal(entry.text, { width: bodyWidth }).map((line) => `    ${line}`), ""];
@@ -891,30 +1344,70 @@ export class FullscreenRenderer {
       ];
     }
     if (entry.kind === "tool") {
-      const icon = entry.status === "error" ? "×" : entry.status === "success" ? "✓" : "·";
-      const action = /read|file/i.test(entry.tool) ? "读取文件" : /search|list/i.test(entry.tool) ? "读取目录" : /bash|exec|shell/i.test(entry.tool) ? "执行命令" : "工具调用";
-      const right = duration(entry.durationMs);
-      const base = `│ ${icon}  ${action}    ${entry.command}`;
-      const line = right ? fit(base, width - stringWidth(right) - 1) + right : fit(base, width);
-      const lines = [entry.status === "running" ? paint.magenta("◯ 正在执行…") : line];
+      const icon = entry.status === "error" ? "×" : entry.status === "success" ? "✓" : "◌";
+      const isSkill = entry.tool.toLowerCase() === "skill";
+      const skillTarget = entry.command.replace(/^skill\s+/i, "").trim();
+      const action = isSkill
+        ? skillTarget === "list"
+          ? "技能列表"
+          : skillTarget.startsWith("search")
+            ? "检索技能"
+            : "加载技能"
+        : /read|file/i.test(entry.tool)
+          ? "读取文件"
+          : /search|list/i.test(entry.tool)
+            ? "读取目录"
+            : /bash|exec|shell/i.test(entry.tool)
+              ? "执行命令"
+              : "工具调用";
+      const right = entry.status === "running" ? "进行中…" : duration(entry.durationMs);
+      const plainBase = `  ${icon}  ${action}    ${entry.command}`;
+      const styledBase = `  ${entry.status === "error" ? paint.error(icon) : entry.status === "success" ? paint.success(icon) : paint.magenta(icon)}  ${paint.bright(action)}    ${paint.dim(entry.command)}`;
+      const room = width - stringWidth(plainBase) - stringWidth(right) - 1;
+      const line = right && room > 1
+        ? `${styledBase}${" ".repeat(room)}${paint.dim(right)}`
+        : fit(plainBase, width);
+      const lines = [line];
       if (entry.output?.trim()) {
-        const outputLines = entry.output.split("\n");
-        const visible = this.expandToolOutput
-          ? outputLines
-          : entry.status === "error"
-            ? outputLines.slice(0, 4)
-            : [];
-        lines.push(...visible.map((value) => `│    ${value}`));
-        if (entry.status === "error" && !this.expandToolOutput && outputLines.length > visible.length) {
-          lines.push(`│    … ${outputLines.length - visible.length} 行已折叠 · Ctrl+O 展开`);
+        const skillLoad =
+          isSkill &&
+          entry.status === "success" &&
+          skillTarget.length > 0 &&
+          skillTarget !== "list" &&
+          !skillTarget.startsWith("search");
+        if (skillLoad) {
+          // Grok 对齐：skill 正文吸收进上下文，界面只展示可传播的摘要
+          const summary = summarizeSkillOutput(entry.output, skillTarget);
+          const summaryLines = formatSkillSummaryLines(summary, { indent: "     " });
+          lines.push(paint.success(summaryLines[0] ?? ""));
+          lines.push(...summaryLines.slice(1).map((value) => paint.dim(value)));
+        } else {
+          const outputLines = entry.output.split("\n");
+          const visible = this.expandToolOutput
+            ? outputLines
+            : entry.status === "error"
+              ? outputLines.slice(0, 4)
+              : [];
+          lines.push(...visible.map((value) => `     ${value}`));
+          if (entry.status === "error" && !this.expandToolOutput && outputLines.length > visible.length) {
+            lines.push(`     … ${outputLines.length - visible.length} 行已折叠 · Ctrl+O 展开`);
+          }
         }
       }
       return lines;
     }
     const markdown = formatMarkdownForTerminal(entry.text, { width: bodyWidth });
-    const top = `╭${"─".repeat(Math.max(1, width - 2))}╮`;
-    const bottom = `╰${"─".repeat(Math.max(1, width - 2))}╯`;
-    return [paint.success("☑ 分析完成"), fit(top, width), ...markdown.map((line) => `│ ${fit(line, width - 4)} │`), fit(bottom, width), ""];
+    const title = " ☑ 分析完成 ";
+    const dashAfter = Math.max(1, width - 3 - stringWidth(title));
+    const top = `${paint.success("╭─")}${paint.success(title)}${paint.dim("─".repeat(dashAfter))}${paint.success("╮")}`;
+    const bottom = paint.dim(`╰${"─".repeat(Math.max(1, width - 2))}╯`);
+    const side = paint.dim("│");
+    return [
+      fit(top, width),
+      ...markdown.map((line) => `${side} ${fit(line, width - 4)} ${side}`),
+      fit(bottom, width),
+      "",
+    ];
   }
 
   private cachedEntryLines(entry: Entry, width: number): EntryCacheRecord {
@@ -1009,17 +1502,23 @@ export class FullscreenRenderer {
     return this.buildBodyWithPlain(width).styledLines;
   }
 
-  private decorateScrollbar(
+private decorateScrollbar(
     line: string,
     rowIndex: number,
     thumb: ScrollbarThumb | null,
     following: boolean,
+    contentWidth: number,
   ): string {
     const inThumb = thumb !== null && rowIndex >= thumb.start && rowIndex < thumb.start + thumb.length;
-    if (!inThumb) return `${line}  `;
-    // A hairline handle. The full block read as a second border.
-    const mark = following ? paint.dim("┃") : paint.secondary("┃");
-    return `${line} ${mark}`;
+    // Grok render_scrollbar_styled：深色轨道背景 + 实心 thumb 背景
+    const mark = inThumb
+      ? following
+        ? paint.dim("█")
+        : bgKey("scrollbarThumb", "█")
+      : bgKey("scrollbarTrack", " ");
+    // 绝对列定位：即使该行含歧义宽度字符，轨道也不会左右漂移
+    const railColumn = Math.max(1, contentWidth + 1);
+    return `${line}\x1b[${railColumn}G ${mark}`;
   }
 
   private hitScrollbar(column: number, row: number): boolean {
@@ -1062,35 +1561,69 @@ export class FullscreenRenderer {
     this.anchoredTop = null;
   }
 
+  private composeDegraded(layout: FullscreenLayout): string[] {
+    this.frame = layout;
+    this.maxScrollOffset = 0;
+    this.scrollOffset = 0;
+    this.followTail = true;
+    this.anchoredTop = null;
+    this.logicalBodyPlain = [];
+    this.screenBodyRows.clear();
+    this.visibleBodyFirstRow = 0;
+    this.visibleBodyLastRow = 0;
+    this.scrollbarHit = null;
+    this.cursorRow = 1;
+    this.cursorColumn = 1;
+    if (layout.width <= 0 || layout.height <= 0) return [];
+    const blank = " ".repeat(layout.width);
+    const lines = Array.from({ length: layout.height }, () => blank);
+    const overflowMessage = `轻灵 · 终端 ${layout.width}×${layout.height} 过小，请扩大窗口`;
+    const compactMessage = `终端 ${layout.width}×${layout.height} 过小`;
+    lines[0] = fit(layout.width >= 34 ? overflowMessage : compactMessage, layout.width);
+    if (layout.height >= 2) {
+      lines[layout.height - 1] = fit("Ctrl+C 退出", layout.width);
+    }
+    return lines;
+  }
+
   private compose(): string[] {
-    const width = Math.max(40, this.capabilities.columns);
-    const rows = Math.max(12, this.capabilities.rows);
+    const requestedWidth = Number.isFinite(this.capabilities.columns)
+      ? Math.max(0, Math.floor(this.capabilities.columns))
+      : 0;
+    const requestedHeight = Number.isFinite(this.capabilities.rows)
+      ? Math.max(0, Math.floor(this.capabilities.rows))
+      : 0;
+    const initial = computeFullscreenLayout(requestedWidth, requestedHeight, 1);
+    if (initial.degraded) return this.composeDegraded(initial);
+
+    const width = initial.width;
+    const rows = initial.height;
     const header = formatFullscreenHeader(this.chrome, width);
     const uiMode = resolveGrokUiMode(
       this.chrome.sessionMode,
       this.chrome.permissionMode
     );
     const accent = modeAccentHex(uiMode);
-    header[0] = header[0]
-      .replace(/(Workspace: )(\S+)/, (_match, label, value) => label + paint.primary(value))
-      .replace(/(● Ready)/, paint.success("$1"))
-      .replace(/(○ Busy)/, paint.warn("$1"));
+    header[0] = paintFullscreenHeader(header[0], uiMode, accent);
     header[1] = paint.dim(header[1]);
-    const hintText = formatFullscreenFooterHints(
-      this.selectionAnchor !== null && this.selectionMoved,
-      width
-    );
-    const hints = fit(hintText, width - 10);
     const clock = this.now().toLocaleTimeString("zh-CN", { hour12: false });
-    const footer = fit(hints, width - stringWidth(clock) - 1) + clock;
-    const inputWidth = width - 4;
+    const footer = formatFullscreenFooterHints(
+      this.selectionAnchor !== null && this.selectionMoved,
+      width,
+      clock,
+      this.overlay !== null
+    );
+    const inputWidth = Math.max(1, width - 4);
     const promptPrefix = modePromptPrefix(uiMode);
     const prefixWidth = stringWidth(promptPrefix);
     const textWidth = Math.max(1, inputWidth - prefixWidth);
     const wrapped = this.input
       ? wrapFullscreenInput(this.input, textWidth, this.inputCursor)
       : { lines: [this.placeholder], cursorRow: 0, cursorCol: 0 };
-    const maxInputLines = Math.max(1, Math.min(8, rows - header.length - 4));
+
+    const frame = computeFullscreenLayout(width, rows, wrapped.lines.length);
+    this.frame = frame;
+    const maxInputLines = frame.inputContentRows;
     let windowStart = 0;
     if (wrapped.cursorRow >= maxInputLines) windowStart = wrapped.cursorRow - maxInputLines + 1;
     windowStart = Math.max(0, Math.min(windowStart, Math.max(0, wrapped.lines.length - maxInputLines)));
@@ -1099,11 +1632,19 @@ export class FullscreenRenderer {
     const continuation = " ".repeat(prefixWidth);
     const inputBody = visibleWrapped.map((line, index) => {
       const prefix = !this.input || windowStart + index === 0 ? promptPrefix : continuation;
-      return fg(accent, "│ ") + fit(prefix + line, inputWidth) + fg(accent, " │");
+      const fitted = fit(prefix + line, inputWidth);
+      const content = fitted.startsWith(prefix) ? fitted.slice(prefix.length) : fitted;
+      return fg(accent, "│ ")
+        + fg(accent, prefix)
+        + (this.input ? content : paint.dim(content))
+        + fg(accent, " │");
     });
-    this.cursorColumn = Math.min(
-      this.capabilities.columns - 1,
-      3 + prefixWidth + (this.input ? wrapped.cursorCol : 0)
+    this.cursorColumn = Math.max(
+      1,
+      Math.min(
+        width - 1,
+        3 + prefixWidth + (this.input ? wrapped.cursorCol : 0)
+      )
     );
     const hidden = wrapped.lines.length > visibleWrapped.length;
     const inputLabel = hidden
@@ -1116,13 +1657,14 @@ export class FullscreenRenderer {
     const topPrefix = `╭─ ${topLabel} `;
     const topDash = Math.max(1, width - stringWidth(topPrefix) - 1);
     const topBorder = topPrefix + "─".repeat(topDash) + "╮";
-    const input = [
-      fg(accent, stringWidth(topBorder) > width ? fit(topBorder, width) : topBorder),
+    const inputBlock = [
+      fg(accent, fit(topBorder, width)),
       ...inputBody,
       fg(accent, `╰${"─".repeat(width - 2)}╯`),
-      paint.dim(footer),
     ];
-    const contentHeight = Math.max(0, rows - header.length - input.length);
+    const footerLine = paintFullscreenFooter(footer, this.overlay !== null);
+
+    const contentHeight = frame.body.height;
     const feedbackLineCount = this.selectionFeedback ? 1 : 0;
     const bottomContentHeight = Math.max(1, contentHeight - feedbackLineCount);
     const narrowedWidth = width - 2;
@@ -1150,6 +1692,8 @@ export class FullscreenRenderer {
     }
     const contentWidth = showScrollbar ? narrowedWidth : width;
     const body = bodyRecord.styledLines;
+    this.lastBodyLength = body.length;
+    this.overlayBodyStart = this.overlay ? body.length - this.overlay.length : 0;
     this.logicalBodyPlain = bodyRecord.plainLines;
     const maxOffset =
       body.length > bottomContentHeight
@@ -1207,17 +1751,17 @@ export class FullscreenRenderer {
       ? scrollbarThumb(
           padded.length,
           body.length,
-          bottomContentHeight,
-          scrollOffsetToContentOffset(offset, maxOffset, body.length, bottomContentHeight),
+          Math.max(1, visibleHeight),
+          visibleStart,
         )
       : null;
     const railed = showScrollbar
-      ? padded.map((line, index) => this.decorateScrollbar(line, index, thumb, offset === 0))
+      ? padded.map((line, index) => this.decorateScrollbar(line, index, thumb, offset === 0, contentWidth))
       : padded;
     this.scrollbarHit = showScrollbar
       ? {
           column: width,
-          firstRow: header.length + 1,
+          firstRow: frame.body.y + 1,
           trackCells: padded.length,
           totalLines: body.length,
           viewportLines: bottomContentHeight,
@@ -1225,15 +1769,31 @@ export class FullscreenRenderer {
         }
       : null;
     this.screenBodyRows.clear();
-    const firstBodyRow = header.length + scrollStatus.length + 1;
+    const firstBodyRow = frame.body.y + scrollStatus.length + 1;
     for (let index = 0; index < visible.length; index++) {
       this.screenBodyRows.set(firstBodyRow + index, visibleStart + index);
     }
     this.visibleBodyFirstRow = firstBodyRow;
     this.visibleBodyLastRow = Math.max(firstBodyRow, firstBodyRow + visible.length - 1);
-    const lines = [...header, ...railed, ...input].slice(0, rows);
-    this.cursorRow = Math.max(1, lines.length - input.length + 2 + cursorVisibleRow);
+
+    const lines = Array.from({ length: rows }, () => " ".repeat(width));
+    const place = (start: number, source: string[], limit: number) => {
+      for (let index = 0; index < Math.min(source.length, limit); index++) {
+        const row = start + index;
+        if (row >= 0 && row < rows) lines[row] = fit(source[index] ?? "", width);
+      }
+    };
+    place(frame.header.y, header, frame.header.height);
+    place(frame.body.y, railed, frame.body.height);
+    place(frame.input.y, inputBlock, frame.input.height);
+    place(frame.footer.y, [footerLine], frame.footer.height);
+
+    this.cursorRow = Math.max(
+      1,
+      Math.min(rows, frame.input.y + 2 + cursorVisibleRow)
+    );
     if (this.capabilities.colorMode === "none") return lines.map(stripAnsi);
+    if (this.capabilities.colorMode === "ansi16") return lines.map(toAnsi16);
     if (this.capabilities.colorMode === "ansi256") return lines.map(toAnsi256);
     return lines;
   }
@@ -1241,14 +1801,13 @@ export class FullscreenRenderer {
   private render(force = false, refreshChrome = false): void {
     if (!this.active) return;
     const lines = this.compose();
-    const fixedRows = new Set([
-      0,
-      1,
-      Math.max(0, lines.length - 4),
-      Math.max(0, lines.length - 3),
-      Math.max(0, lines.length - 2),
-      Math.max(0, lines.length - 1),
-    ]);
+    const fixedRows = new Set<number>();
+    if (this.frame?.degraded) {
+      for (let row = 0; row < lines.length; row++) fixedRows.add(row);
+    } else if (this.frame) {
+      for (let row = 0; row < this.frame.header.height; row++) fixedRows.add(row);
+      for (let row = this.frame.input.y; row < this.frame.height; row++) fixedRows.add(row);
+    }
     let frameBuffer = "";
     for (let index = 0; index < lines.length; index++) {
       if (
@@ -1259,7 +1818,25 @@ export class FullscreenRenderer {
       frameBuffer += `\x1b[${index + 1};1H\x1b[2K${lines[index]}`;
     }
     this.previous = lines;
-    frameBuffer += `\x1b[${Math.max(1, this.cursorRow)};${Math.max(3, this.cursorColumn)}H\x1b[?25h`;
-    this.writeRaw(frameBuffer);
+    const cursorRow = Math.max(1, Math.min(Math.max(1, lines.length), this.cursorRow));
+    const cursorColumn = Math.max(
+      1,
+      Math.min(Math.max(1, this.capabilities.columns), this.cursorColumn)
+    );
+    frameBuffer += `\x1b[${cursorRow};${cursorColumn}H\x1b[?25h`;
+    this.queueWrite(frameBuffer);
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

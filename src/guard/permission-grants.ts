@@ -2,6 +2,7 @@
 // G3.3 — 会话级 Remembered Grant（用户批准后本会话免再问）
 // ============================================================
 
+import path from "node:path";
 import { splitShell } from "./shell-split.js";
 
 export type GrantScope = "session";
@@ -12,6 +13,10 @@ export interface PermissionGrant {
   key: string;
   decision: "allow";
   scope: GrantScope;
+  /** 绑定会话；旧数据缺失时按进程内兼容处理。 */
+  sessionId?: string;
+  /** 动作/资源级作用域；缺失时表示旧式工具级 grant。 */
+  scopeKey?: string;
   grantedAt: number;
   reason?: string;
 }
@@ -31,6 +36,7 @@ function isGrantReusableFor(
   toolName: string,
   args?: Record<string, unknown> | null
 ): boolean {
+  if (normalizeTool(toolName) === "computer_use") return false;
   if (normalizeTool(toolName) === "url_fetch") {
     return ["GET", "HEAD"].includes(String(args?.method ?? "GET").trim().toUpperCase());
   }
@@ -47,12 +53,54 @@ function isGrantReusableFor(
   return true;
 }
 
+/**
+ * 生成动作/资源作用域；无法安全表达时返回 undefined（不允许复用）。
+ * - bash：规范化单段命令（复杂脚本不复用）
+ * - read/write/patch：目标路径
+ * - url_fetch：METHOD + URL
+ */
+export function grantActionKey(
+  toolName: string,
+  args?: Record<string, unknown> | null
+): string | undefined {
+  const tool = normalizeTool(toolName);
+  const record = args && typeof args === "object" ? args : null;
+  if (!record || tool === "computer_use") return undefined;
+  if (tool === "bash") {
+    const raw = record.command ?? record.cmd;
+    if (typeof raw !== "string" || !raw.trim()) return undefined;
+    const { segments, complex } = splitShell(raw);
+    if (complex || segments.length !== 1) return undefined;
+    // 用 argv 结构而不是拼接字符串：引号内多空格、空参数等不能被折叠成同一动作。
+    const argv = segments[0] ?? [];
+    const cwd = typeof record.cwd === "string" && record.cwd.trim()
+      ? path.resolve(record.cwd)
+      : process.cwd();
+    return `bash:${cwd.replace(/\\/g, "/")}:${JSON.stringify(argv)}`;
+  }
+  if (["read", "read_anchored", "write", "patch", "patch_anchored"].includes(tool)) {
+    const target = record.path ?? record.file;
+    if (typeof target !== "string" || !target.trim()) return undefined;
+    const base = typeof record.cwd === "string" && record.cwd.trim()
+      ? record.cwd
+      : process.cwd();
+    return `${tool}:${path.resolve(base, target.trim()).replace(/\\/g, "/")}`;
+  }
+  if (tool === "url_fetch") {
+    const url = record.url;
+    if (typeof url !== "string" || !url.trim()) return undefined;
+    const method = String(record.method ?? "GET").trim().toUpperCase();
+    return `url_fetch:${method}:${url.trim()}`;
+  }
+  return undefined;
+}
+
 export class PermissionGrantStore {
   private readonly grants = new Map<string, PermissionGrant>();
 
   remember(
     toolName: string,
-    options: { reason?: string; scope?: GrantScope } = {}
+    options: { reason?: string; scope?: GrantScope; sessionId?: string; arguments?: Record<string, unknown> | null } = {}
   ): PermissionGrant {
     const key = normalizeTool(toolName);
     if (!key) {
@@ -63,6 +111,8 @@ export class PermissionGrantStore {
       key,
       decision: "allow",
       scope: options.scope ?? "session",
+      sessionId: options.sessionId,
+      scopeKey: grantActionKey(toolName, options.arguments),
       grantedAt: Date.now(),
       reason: options.reason,
     };
@@ -70,8 +120,27 @@ export class PermissionGrantStore {
     return { ...grant };
   }
 
-  hasAllow(toolName: string, args?: Record<string, unknown> | null): boolean {
-    if (!this.grants.has(normalizeTool(toolName))) return false;
+  hasAllow(
+    toolName: string,
+    args?: Record<string, unknown> | null,
+    sessionId?: string
+  ): boolean {
+    const grant = this.grants.get(normalizeTool(toolName));
+    if (!grant) return false;
+    // 新 grant 绑定会话；缺失会话的旧 grant 不得进入已标识会话。
+    if (grant.sessionId) {
+      if (!sessionId || grant.sessionId !== sessionId) return false;
+    } else if (sessionId) {
+      return false;
+    }
+    // 动作/资源级 grant：命令、路径或 URL 变化必须重新审批。
+    if (grant.scopeKey) {
+      const current = grantActionKey(toolName, args);
+      if (current !== grant.scopeKey) return false;
+    } else if (args && Object.keys(args).length > 0) {
+      // 无作用域键的旧 grant 只能覆盖无参数调用，不能放行任意具体动作。
+      return false;
+    }
     return isGrantReusableFor(toolName, args);
   }
 

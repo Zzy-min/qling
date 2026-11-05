@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { RuntimeEventJournal } from "./event-journal.js";
+import { TurnClaimRegistry } from "./turn-claim.js";
 import type {
   JsonValue,
   PromptExecutionResult,
@@ -48,6 +49,7 @@ export class SessionActor {
   private activeItem: PromptQueueItem | null = null;
   private reservedHeadId: string | null = null;
   private eventsSinceSnapshot = 0;
+  private readonly turnClaims = new TurnClaimRegistry();
 
   constructor(options: SessionActorOptions) {
     this.sessionId = options.sessionId;
@@ -200,6 +202,7 @@ export class SessionActor {
         this.syncQueueSnapshot();
         const runId = `run_${randomUUID()}`;
         const turnId = `turn_${randomUUID()}`;
+        const turnClaim = this.turnClaims.begin(runId, turnId);
         this.activeAbort = new AbortController();
         this.snapshot.activeRun = {
           runId,
@@ -219,6 +222,11 @@ export class SessionActor {
             turnId,
             signal: this.activeAbort.signal,
           });
+          if (!this.turnClaims.commit(turnClaim)) {
+            // 旧 turn 的迟到结果只能被丢弃，不能推进当前快照或重复终结。
+            item.resolve(result);
+            continue;
+          }
           this.snapshot.activeRun = null;
           this.snapshot.state = result.status === "paused"
             ? "paused"
@@ -227,7 +235,7 @@ export class SessionActor {
               : result.status === "canceled"
                 ? "canceled"
                 : this.queue.length > 0 ? "queued" : "idle";
-          await this.record("prompt_completed", { status: result.status }, runId, turnId);
+          await this.record("prompt_completed", { status: result.status }, runId, turnId, "durable");
           item.resolve(result);
           if (result.status === "paused") {
             await this.transition("paused", "session_paused", { reason: result.text }, runId, turnId);
@@ -242,11 +250,15 @@ export class SessionActor {
             status: canceled ? "canceled" : "failed",
             text: error instanceof Error ? error.message : String(error),
           };
-          this.snapshot.activeRun = null;
-          this.snapshot.state = canceled ? "canceled" : "failed";
-          await this.record(canceled ? "prompt_canceled" : "prompt_failed", { message: result.text }, runId, turnId);
+          // 与成功路径一致：旧 turn / 已被接管的槽位不得再推进快照或写终结事件。
+          if (this.turnClaims.commit(turnClaim)) {
+            this.snapshot.activeRun = null;
+            this.snapshot.state = canceled ? "canceled" : "failed";
+            await this.record(canceled ? "prompt_canceled" : "prompt_failed", { message: result.text }, runId, turnId, "durable");
+          }
           item.resolve(result);
         } finally {
+          this.turnClaims.release(turnClaim);
           this.activeItem = null;
           this.activeAbort = null;
           this.snapshot.activeRun = null;
@@ -282,7 +294,7 @@ export class SessionActor {
         if (this.snapshot.pendingApproval?.requestId === command.requestId) {
           this.snapshot.pendingApproval = null;
         }
-        await this.record("approval_decided", command);
+        await this.record("approval_decided", command, undefined, undefined, "durable");
         return;
       case "resize_ui":
         this.snapshot.viewport = { columns: command.columns, rows: command.rows };
@@ -304,8 +316,14 @@ export class SessionActor {
     await this.record(eventType, { state, payload }, runId, turnId);
   }
 
-  private async record(type: string, payload: JsonValue, runId?: string, turnId?: string): Promise<void> {
-    const event = await this.journal.append({ type, payload, runId, turnId });
+  private async record(
+    type: string,
+    payload: JsonValue,
+    runId?: string,
+    turnId?: string,
+    durability: "buffered" | "durable" = "buffered"
+  ): Promise<void> {
+    const event = await this.journal.append({ type, payload, runId, turnId, durability });
     this.snapshot.sequence = event.sequence;
     this.snapshot.updatedAt = event.timestamp;
     this.eventsSinceSnapshot++;

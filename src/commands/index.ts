@@ -1,6 +1,7 @@
 import { SlashCommand } from "./types.js";
 import { helpCommand } from "./help.js";
 import { clearCommand } from "./clear.js";
+import { quitCommand } from "./quit.js";
 import { statusCommand } from "./status.js";
 import { skillCommand } from "./skill.js";
 import { dashboardCommand } from "./dashboard.js";
@@ -76,6 +77,7 @@ export const COMMANDS: SlashCommand[] = [
   forkCommand,
   checkpointCommand,
   clearCommand,
+  quitCommand,
   statusCommand,
   usageCommand,
   modelCommand,
@@ -477,12 +479,19 @@ export function listExecutableSlashCommandsForPicker(): Array<{
   label: string;
   description: string;
   argumentHint: string;
+  aliases: string[];
+  category: string;
+  categoryLabel: string;
 }> {
+  const t = getLocalizedText();
   return getSlashCommandCatalog({ includeUnsupported: false }).map((item) => ({
     id: item.name,
     label: item.name,
     description: item.description,
     argumentHint: item.argumentHint || "",
+    aliases: [...item.aliases],
+    category: item.category || "local",
+    categoryLabel: getChineseCategory(item.category || "local", t),
   }));
 }
 

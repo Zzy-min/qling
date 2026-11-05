@@ -74,6 +74,16 @@ test("markdown table parser handles tables without side borders", () => {
   assert.equal(table.rows[0][0], "Row 1");
 });
 
+test("markdown table parser preserves explicit column alignment markers", () => {
+  const parsed = parseMarkdownTable([
+    "| 左 | 中 | 右 |",
+    "|:---|:---:|---:|",
+    "| a | b | c |"
+  ]);
+  assert.ok(parsed);
+  assert.deepEqual(parsed.alignments, ["left", "center", "right"]);
+});
+
 test("markdown renderer formats headers, lists, codeblocks, and tables", () => {
   const md = `
 # title-header
@@ -136,6 +146,43 @@ test("markdown table rendering aligns Chinese wide characters without layout dri
   const firstWidth = widths[0];
   for (const w of widths) {
     assert.equal(w, firstWidth);
+  }
+});
+
+test("markdown table numeric columns right-align and keep headers on one line", () => {
+  const rendered = formatMarkdownForTerminal([
+    "| 个股 | 近5日 | 近10日 | 主力净流入 |",
+    "|---|---:|---:|---:|",
+    "| 三利谱 | -14.18% | -10.07% | -0.89亿 |",
+    "| 京东方A | -11.91% | -15.22% | -11.16亿 |",
+    "| TCL科技 | -2.24% | -2.67% | +0.27亿 |",
+  ].join("\n"), { width: 100 });
+  const plain = rendered.map(stripAnsi);
+  const text = plain.join("\n");
+
+  // 表头不换行，数值列按右对齐补齐
+  assert.match(text, /主力净流入\s*│/);
+  assert.match(text, /│\s+-2\.24%\s*│\s+-2\.67%\s*│\s+\+0\.27亿\s*│/);
+  assert.match(text, /│\s+-14\.18%\s*│/);
+});
+
+test("markdown table wraps long cells without losing content or overflowing width", () => {
+  for (const width of [28, 40, 56]) {
+    const rendered = formatMarkdownForTerminal([
+      "| 公司 | 说明 | 主力净流入 |",
+      "|---|---|---:|",
+      "| 京东方A | 龙头下跌，面板价格承压，资金持续流出 | -11.16亿 |",
+      "| TCL科技 | 子公司股权结构变动，计提资产减值准备 | +0.27亿 |",
+    ].join("\n"), { width });
+    const plain = rendered.map(stripAnsi);
+    const tableLines = plain.filter((line) => /^[┌├│└]/.test(line));
+    const widths = tableLines.map((line) => stringWidth(line));
+
+    assert.equal(new Set(widths).size, 1, `row widths drifted at ${width}:\n${plain.join("\n")}`);
+    assert.ok(widths.every((value) => value <= width), `table overflows ${width} columns:\n${plain.join("\n")}`);
+    assert.match(plain.join("\n"), /主力净流入|主力净/);
+    assert.match(plain.join("\n"), /资产|减值|准备/);
+    assert.doesNotMatch(plain.join("\n"), /…/, "long cells should wrap instead of being truncated");
   }
 });
 

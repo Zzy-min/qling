@@ -1,5 +1,9 @@
 # 轻灵 Qling 安装指南
 
+<!-- release-1.4.0-status -->
+当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+
+
 面向本机开发者与 Windows 用户。产品定位见 [README.md](../README.md)，英文说明见 [README.en.md](../README.en.md)。
 
 ## 先选择渠道

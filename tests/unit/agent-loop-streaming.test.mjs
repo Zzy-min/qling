@@ -75,3 +75,13 @@ test("AgentLoop keeps complete responses as the compatibility default", async ()
     assert.equal(await agent.run(), "complete");
   });
 });
+
+import { isEmptyAssistantTurn } from "../../dist/agent/main-loop.js";
+
+test("empty assistant turn is classified as recoverable instead of success", () => {
+  assert.equal(isEmptyAssistantTurn("", null), true);
+  assert.equal(isEmptyAssistantTurn("   ", []), true);
+  assert.equal(isEmptyAssistantTurn("done", []), false);
+  assert.equal(isEmptyAssistantTurn("", [{ id: "1", type: "function", function: { name: "read", arguments: "{}" } }]), false);
+});
+
