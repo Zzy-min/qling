@@ -100,7 +100,7 @@ test("filtered empty state resets all filters and keyboard navigation follows vi
   expect(await screen.findByText("没有匹配的任务")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "清除搜索" }));
   expect(search).toHaveValue("");
-  expect(search).toHaveFocus();
+  await waitFor(() => expect(search).toHaveFocus());
   await user.type(search, "再次筛选");
   expect(await screen.findByText("没有匹配的任务")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "清除筛选" }));
