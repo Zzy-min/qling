@@ -1,22 +1,22 @@
 # 轻灵 Qling 安装指南
 
-<!-- release-1.4.0-status -->
-当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+<!-- release-1.4.1-status -->
+当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 面向本机开发者与 Windows 用户。产品定位见 [README.md](../README.md)，英文说明见 [README.en.md](../README.en.md)。
 
 ## 先选择渠道
 
-以下状态核验于 **2026-07-29**；此后应以链接页面显示的版本为准。
+以下状态核验于 **2026-11-05**；此后应以链接页面显示的版本为准。
 
 | 渠道 | 已核验版本/状态 | 建议 |
 |---|---|---|
-| [GitHub Release](https://github.com/Zzy-min/qling/releases/latest) | `v1.3.1`，已发布 Windows 便携 ZIP | 无需系统 Node 的最短路径之一 |
-| **[WinGet](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling)** | **`Zzy-min.qling` `1.3.1` 已进官方源**（[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并） | Windows 推荐：`winget install --id Zzy-min.qling -e` |
-| 源码 | `main` / `1.3.1` | 开发、贡献或需要完整测试工具链 |
-| [npm](https://www.npmjs.com/package/@qlingzzy/qling) | **`1.3.1` 已发布** | 跨平台全局安装 |
-| [公共 Scoop bucket](https://github.com/Zzy-min/scoop-qling) | **`1.3.1`** | Windows：`scoop bucket add qling https://github.com/Zzy-min/scoop-qling && scoop install qling` |
+| [GitHub Release](https://github.com/Zzy-min/qling/releases/latest) | `v1.4.1`，已发布 Windows 便携 ZIP | 无需系统 Node 的最短路径之一 |
+| **[WinGet](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling)** | **`Zzy-min.qling` `1.3.1` 已进官方源**（[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并） | Windows 推荐：`winget install --id Zzy-min.qling -e`；[1.4.1 更新待审核](https://github.com/microsoft/winget-pkgs/pull/471445) |
+| 源码 | `main` / `1.4.1` | 开发、贡献或需要完整测试工具链 |
+| [npm](https://www.npmjs.com/package/@qlingzzy/qling) | **`1.4.1` 已发布** | 跨平台全局安装 |
+| [公共 Scoop bucket](https://github.com/Zzy-min/scoop-qling) | **`1.4.1`** | Windows：`scoop bucket add qling https://github.com/Zzy-min/scoop-qling && scoop install qling` |
 | [Scoop Extras PR #18307](https://github.com/ScoopInstaller/Extras/pull/18307) | 已关闭、未合并 | 尚未进入官方 Extras |
 
 GitHub Release、WinGet、npm 与 Scoop 是独立发布面，不应假定它们版本相同。
@@ -36,7 +36,7 @@ Windows 便携 ZIP 内嵌 Node.js，不要求系统预装 Node。
 
 ## 方式 A：Windows 便携包（当前 Release）
 
-1. 从 [v1.3.1 Release](https://github.com/Zzy-min/qling/releases/tag/v1.3.1) 下载 `qling-win-x64.zip`。
+1. 从 [v1.4.1 Release](https://github.com/Zzy-min/qling/releases/tag/v1.4.1) 下载 `qling-win-x64.zip`。
 2. 解压后运行：
 
 ```powershell
@@ -49,8 +49,8 @@ Windows 便携 ZIP 内嵌 Node.js，不要求系统预装 Node。
 已发布资产：
 
 ```text
-URL: https://github.com/Zzy-min/qling/releases/download/v1.3.1/qling-win-x64.zip
-SHA256: 28cd2b71c935f49a2193b76486272559d48c111e8df052159f9b3dc8687f4d91
+URL: https://github.com/Zzy-min/qling/releases/download/v1.4.1/qling-win-x64.zip
+SHA256: db2fd9e43f2d1595aa8e83cc7c3468b302fde701c3883d1e6b5d9dc0c9060654
 ```
 
 便携启动器已覆盖 WinGet 风格符号链接路径；缺少 API key 时会返回 `QLING_API_KEY_MISSING` 配置提示，而不是输出 JavaScript 堆栈。
@@ -107,7 +107,7 @@ scoop bucket add qling https://github.com/Zzy-min/scoop-qling
 scoop info qling
 ```
 
-公共 bucket 已同步到 **`1.3.1`**（与 GitHub Release 便携 ZIP 一致）：
+公共 bucket 已同步到 **`1.4.1`**（与 GitHub Release 便携 ZIP 一致）：
 
 ```powershell
 scoop bucket add qling https://github.com/Zzy-min/scoop-qling
@@ -127,7 +127,7 @@ scoop install .\packaging\scoop\qling.json
 qling --version
 ```
 
-本仓库的 `packaging/scoop/qling.json` 与 `packaging/scoop-bucket/qling.json` 均为 `1.3.1`。同步到公共 bucket 前先在本仓校验：
+本仓库的 `packaging/scoop/qling.json` 与 `packaging/scoop-bucket/qling.json` 均为 `1.4.1`。同步到公共 bucket 前先在本仓校验：
 
 ```powershell
 npm run validate:packaging
@@ -172,15 +172,15 @@ winget uninstall --id Zzy-min.qling
 ### 本仓库镜像清单（维护 / 离线试装）
 
 ```text
-packaging/winget/manifests/Zzy-min/qling/1.3.1/
+packaging/winget/manifests/Zzy-min/qling/1.4.1/
   Zzy-min.qling.yaml
   Zzy-min.qling.locale.en-US.yaml
   Zzy-min.qling.installer.yaml
 ```
 
 ```powershell
-winget validate --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
-winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
+winget validate --manifest packaging\winget\manifests\Zzy-min\qling\1.4.1
+winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.4.1
 ```
 
 ## 配置与密钥

@@ -1,7 +1,7 @@
 # 轻灵 Qling
 
-<!-- release-1.4.0-status -->
-当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+<!-- release-1.4.1-status -->
+当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=node.js&logoColor=white)](#安装)
@@ -439,14 +439,14 @@ npm run dep:layers -- --strict
 
 ## 分发状态
 
-以下状态核验于 **2026-07-29**，此后以各渠道页面为准：
+以下状态核验于 **2026-11-05**，此后以各渠道页面为准：
 
 | 渠道 | 已核验状态 |
 |---|---|
-| 源码 / GitHub Release | `v1.3.1`，Windows 便携 ZIP 已发布 |
-| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并**；包 ID `Zzy-min.qling`，manifest `1.3.1` 在 [winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1) |
-| npm `@qlingzzy/qling` | **`1.3.1` 已发布**（`npm view @qlingzzy/qling version`） |
-| 公共 `Zzy-min/scoop-qling` bucket | **`1.3.1`**（便携 ZIP + hash 与 GitHub Release 对齐） |
+| 源码 / GitHub Release | `v1.4.1`，Windows 便携 ZIP 已发布 |
+| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并**；包 ID `Zzy-min.qling`，manifest `1.3.1` 在 [winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1)；[1.4.1 更新待审核](https://github.com/microsoft/winget-pkgs/pull/471445) |
+| npm `@qlingzzy/qling` | **`1.4.1` 已发布**（`npm view @qlingzzy/qling version`） |
+| 公共 `Zzy-min/scoop-qling` bucket | **`1.4.1`**（便携 ZIP + hash 与 GitHub Release 对齐） |
 | Scoop Extras | PR #18307 已关闭且未合并；官方目录尚未收录 |
 
 不要从源码版本推断 npm 或 Scoop 公共 bucket 已同步。安装与校验命令见 [安装指南](docs/install.md)。

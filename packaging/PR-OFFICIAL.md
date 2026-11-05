@@ -1,20 +1,20 @@
 # Qling 分发与官方目录提交指南
 
-<!-- release-1.4.0-status -->
-当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+<!-- release-1.4.1-status -->
+当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 ## 当前状态
 
-核验时间：**2026-07-29**。后续状态以各链接页面为准。
+核验时间：**2026-11-05**。后续状态以各链接页面为准。
 
 | 渠道 | 已核验状态 |
 |---|---|
-| GitHub Release | [`v1.3.1`](https://github.com/Zzy-min/qling/releases/tag/v1.3.1)，便携 ZIP 已上传 |
-| 便携 ZIP | `qling-win-x64.zip`，SHA256 `28cd2b71c935f49a2193b76486272559d48c111e8df052159f9b3dc8687f4d91` |
-| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并**；官方包 ID `Zzy-min.qling` `1.3.1` 位于 [winget-pkgs tree](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1) |
-| npm | **`@qlingzzy/qling@1.3.1` 已发布** |
-| 公共 Scoop bucket | [`Zzy-min/scoop-qling`](https://github.com/Zzy-min/scoop-qling) **已同步 `1.3.1`** |
+| GitHub Release | [`v1.4.1`](https://github.com/Zzy-min/qling/releases/tag/v1.4.1)，便携 ZIP 已上传 |
+| 便携 ZIP | `qling-win-x64.zip`，SHA256 `db2fd9e43f2d1595aa8e83cc7c3468b302fde701c3883d1e6b5d9dc0c9060654` |
+| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) 已合并**；官方包 ID `Zzy-min.qling` `1.3.1` 位于 [winget-pkgs tree](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1)；[1.4.1 更新待审核](https://github.com/microsoft/winget-pkgs/pull/471445) |
+| npm | **`@qlingzzy/qling@1.4.1` 已发布** |
+| 公共 Scoop bucket | [`Zzy-min/scoop-qling`](https://github.com/Zzy-min/scoop-qling) **已同步 `1.4.1`** |
 | Scoop Extras | [PR #18307](https://github.com/ScoopInstaller/Extras/pull/18307) 已关闭、未合并；维护者建议自建 bucket |
 
 Windows 用户推荐安装：
@@ -31,9 +31,9 @@ winget install --id Zzy-min.qling -e
 | Scoop | `packaging/scoop/qling.json` |
 | Scoop bucket 镜像 | `packaging/scoop-bucket/qling.json` |
 | WinGet singleton 校验面 | `packaging/winget/Zzy-min.qling.yaml` |
-| WinGet 多文件清单 | `packaging/winget/manifests/Zzy-min/qling/1.3.1/` |
+| WinGet 多文件清单 | `packaging/winget/manifests/Zzy-min/qling/1.4.1/` |
 
-当前四个本地声明面均使用 `1.3.1`、同一 Release URL 和同一 SHA256。公共 `scoop-qling` 是另一个 Git 仓库，只有提交并推送后才算完成同步。
+当前四个本地声明面均使用 `1.4.1`、同一 Release URL 和同一 SHA256。公共 `scoop-qling` 是另一个 Git 仓库，只有提交并推送后才算完成同步。
 
 ## 发布顺序
 
@@ -82,7 +82,7 @@ npm run validate:packaging
 当前多文件清单：
 
 ```text
-packaging/winget/manifests/Zzy-min/qling/1.3.1/
+packaging/winget/manifests/Zzy-min/qling/1.4.1/
   Zzy-min.qling.yaml
   Zzy-min.qling.locale.en-US.yaml
   Zzy-min.qling.installer.yaml
@@ -91,13 +91,13 @@ packaging/winget/manifests/Zzy-min/qling/1.3.1/
 本地校验：
 
 ```powershell
-winget validate --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
+winget validate --manifest packaging\winget\manifests\Zzy-min\qling\1.4.1
 ```
 
 可选本地试装：
 
 ```powershell
-winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.3.1
+winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.4.1
 qling --version
 qling doctor
 ```

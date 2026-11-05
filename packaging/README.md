@@ -1,7 +1,7 @@
 # Packaging
 
-<!-- release-1.4.0-status -->
-当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+<!-- release-1.4.1-status -->
+当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 | Path | Purpose |
@@ -13,7 +13,7 @@
 
 ## Recommended path today
 
-1. **Windows**: `winget install --id Zzy-min.qling -e` (official source; package `1.3.1`)
+1. **Windows**: `winget install --id Zzy-min.qling -e` (official source; package `1.4.1`)
 2. Or GitHub Release portable ZIP (`qling-win-x64.zip`)
 3. Or `npm install -g @qlingzzy/qling --registry https://registry.npmjs.org/`
 4. Or `git clone` + `npm run bootstrap` + `npm link`
@@ -25,13 +25,13 @@ See [docs/install.md](../docs/install.md).
 
 | Artifact | Status |
 |----------|--------|
-| npm `@qlingzzy/qling` | **`1.3.1` on npmjs.org** |
-| Scoop hash | Filled for in-repo `1.3.1` manifests |
+| npm `@qlingzzy/qling` | **`1.4.1` on npmjs.org** |
+| Scoop hash | Filled for in-repo `1.4.1` manifests |
 | Scoop self-bucket | `packaging/scoop-bucket` usable locally |
-| Scoop public bucket `Zzy-min/scoop-qling` | **`1.3.1` synced** |
+| Scoop public bucket `Zzy-min/scoop-qling` | **`1.4.1` synced** |
 | Scoop official Extras | Not merged |
-| winget portable zip | On GitHub Release `v1.3.1` |
-| **winget-pkgs** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged** — ID `Zzy-min.qling` `1.3.1` |
+| winget portable zip | On GitHub Release `v1.4.1` |
+| **winget-pkgs** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged** — ID `Zzy-min.qling` `1.3.1`；[1.4.1 更新待审核](https://github.com/microsoft/winget-pkgs/pull/471445) |
 
 ## Scripts
 

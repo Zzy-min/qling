@@ -17,6 +17,6 @@ ReleaseDate: 2026-11-05
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/Zzy-min/qling/releases/download/v1.4.0/qling-win-x64.zip
-    InstallerSha256: 7850e9b19b2e312a4d7f93e16d80e7b37d185ba11ea6ff1a6c75b20f75218806
+    InstallerSha256: a28aa67ebdb948b89c40a02316cb0bf83ea863a35a942b8f0a88930c6c3332ed
 ManifestType: installer
 ManifestVersion: 1.12.0

@@ -1,7 +1,7 @@
 # Qling (轻灵)
 
-<!-- release-1.4.0-status -->
-当前源码版本 / Source version: **1.4.0** (2026-11-05)。GitHub、npm、Scoop 独立发布；WinGet 1.4.0 须经官方 PR 审核后进入源。下文标注旧核验日期的渠道表保留历史状态，最新状态以各渠道页面为准。
+<!-- release-1.4.1-status -->
+当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#install)
@@ -280,14 +280,14 @@ npm run dep:layers -- --strict
 
 ## Distribution status
 
-Verified on **2026-07-29**; channel pages remain the source of truth after that date.
+Verified on **2026-11-05**; channel pages remain the source of truth after that date.
 
 | Channel | Verified state |
 |---|---|
-| Source / GitHub Release | `v1.3.1`; Windows portable ZIP is published |
-| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged**; package ID `Zzy-min.qling`, manifest `1.3.1` in [winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1) |
-| npm `@qlingzzy/qling` | **`1.3.1` published** (`npm view @qlingzzy/qling version`) |
-| Public `Zzy-min/scoop-qling` bucket | **`1.3.1`** (portable ZIP + hash aligned with GitHub Release) |
+| Source / GitHub Release | `v1.4.1`; Windows portable ZIP is published |
+| **WinGet** | **[PR #402294](https://github.com/microsoft/winget-pkgs/pull/402294) merged**; package ID `Zzy-min.qling`, manifest `1.3.1` in [winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/z/Zzy-min/qling/1.3.1)；[1.4.1 更新待审核](https://github.com/microsoft/winget-pkgs/pull/471445) |
+| npm `@qlingzzy/qling` | **`1.4.1` published** (`npm view @qlingzzy/qling version`) |
+| Public `Zzy-min/scoop-qling` bucket | **`1.4.1`** (portable ZIP + hash aligned with GitHub Release) |
 | Scoop Extras | PR #18307 closed without merge |
 
 Do not infer that every channel carries the same version. See [docs/install.md](docs/install.md) for install commands and verification.
