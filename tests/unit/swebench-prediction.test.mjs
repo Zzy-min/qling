@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
 import * as swebenchPrediction from "../../dist/eval/swebench-prediction.js";
 import { isRootDiagnosticArtifact, resolveExplicitDeliverablePaths } from "../../dist/diagnostic-artifact.js";
@@ -346,12 +347,12 @@ test("SWE-bench source candidate preserves a production dependency shim", () => 
 });
 
 test("explicit deliverables normalize aliases and absolute workspace paths", () => {
-  const workspace = "C:\\work\\repo";
+  const workspace = path.resolve("deliverable-fixture", "repo");
   assert.deepEqual(resolveExplicitDeliverablePaths(workspace, [
     "./zz_api.py",
     "workspace_dir/zz_config.ts",
-    "C:\\work\\repo\\zz_cli.py",
-    "C:\\outside\\nope.py",
+    path.join(workspace, "zz_cli.py"),
+    path.resolve(workspace, "..", "outside", "nope.py"),
   ].join(",")), ["zz_api.py", "zz_config.ts", "zz_cli.py"]);
 });
 

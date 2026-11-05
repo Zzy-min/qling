@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   formatMandatoryRulesBlock,
   loadMandatoryRuleFiles,
@@ -26,14 +29,21 @@ describe("mandatory rule files", () => {
     assert.match(block, /诚实大于安全/);
   });
 
-  it("loads real user home rules when present", async () => {
+  it("loads home rules from an isolated fixture", async () => {
+    const home = await mkdtemp(join(tmpdir(), "qling-rule-home-"));
+    try {
+    await writeFile(join(home, "AGENTS.md"), "fixture-home-rule");
     const files = await loadMandatoryRuleFiles({
-      workspaceDir: process.env.USERPROFILE || process.env.HOME,
-      stateDir: (process.env.USERPROFILE || process.env.HOME) + "/.qling",
+      workspaceDir: home,
+      stateDir: join(home, ".qling"),
+      homeDir: home,
     });
-    // 本机应至少有 user-rules 或 Agents.md
-    assert.ok(files.length >= 1, "expected at least one rule file on this machine");
+    assert.equal(files.length, 1);
+    assert.equal(files[0].content, "fixture-home-rule");
     const block = formatMandatoryRulesBlock(files);
     assert.match(block, /强制用户规则/);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

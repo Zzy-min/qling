@@ -4,6 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
 import {
   splitShell,
@@ -342,13 +343,14 @@ describe("PermissionGrantStore reuse boundary", () => {
   });
 
   it("resolves relative paths against the granted cwd", () => {
+    const cwd = path.resolve("permission-fixture", "a");
     const store = new PermissionGrantStore();
     store.remember("read", {
       sessionId: "s1",
-      arguments: { path: "a.txt", cwd: "C:\\work\\a" },
+      arguments: { path: "a.txt", cwd },
     });
-    assert.equal(store.hasAllow("read", { path: "C:\\work\\a\\a.txt", cwd: "C:\\work\\a" }, "s1"), true);
-    assert.equal(store.hasAllow("read", { path: "a.txt", cwd: "C:\\work\\b" }, "s1"), false);
+    assert.equal(store.hasAllow("read", { path: path.join(cwd, "a.txt"), cwd }, "s1"), true);
+    assert.equal(store.hasAllow("read", { path: "a.txt", cwd: path.resolve(cwd, "..", "b") }, "s1"), false);
   });
 
   it("keeps non-bash grants reusable", () => {
