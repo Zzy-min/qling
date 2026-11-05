@@ -76,10 +76,14 @@ export async function loadMandatoryRuleFiles(options: {
   let total = 0;
   for (const p of ruleFileCandidates(options)) {
     const normalized = path.resolve(p);
-    if (seen.has(normalized.toLowerCase())) continue;
-    seen.add(normalized.toLowerCase());
+    const stat = await fs.stat(normalized).catch(() => null);
+    if (!stat?.isFile()) continue;
+    // Physical identity handles case-insensitive volumes and symlink aliases.
+    const key = stat.ino !== 0 ? `${stat.dev}:${stat.ino}` : normalized;
+    if (seen.has(key)) continue;
     const file = await readIfExists(normalized);
     if (!file) continue;
+    seen.add(key);
     if (total + file.content.length > MAX_TOTAL_CHARS) {
       const room = MAX_TOTAL_CHARS - total;
       if (room < 200) break;
