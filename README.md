@@ -115,13 +115,17 @@ npm run bootstrap -- --with-browser
 qling setup
 ```
 
-`setup` 保存 Provider、Model、Endpoint 等非敏感配置，不把 API key 写入 `.env`。推荐将密钥放入系统用户环境变量：
+直接运行 `qling`：交互式终端缺少当前连接时，自动选择 ChatGPT 账号、Grok 账号、API Key 或本地模型。保存后在同一进程进入对话；`qling setup` 可重新配置。API Key 隐藏输入，非敏感连接档案和凭据引用保存在状态目录的 `auth/`，Windows 凭据使用当前用户 DPAPI 加密，macOS/Linux 使用私有目录和 0600 文件权限保护（并非系统钥匙串加密）。现有 `.env` 和高级设置不会被替换。
+
+`qling login [chatgpt|grok]` / `/login` 重新授权；`qling logout [provider]` / `/logout` 只退出 Qling 连接，不退出 Grok 官方 CLI 的全局会话；保留已退出的账号选择元数据，防止重启后自动改用 API 计费。Grok 账号需自行安装 [官方 Grok Build CLI](https://x.ai/cli)，Qling 不会自动安装。`qling auth status` / `/authstatus` 只检查本地状态，不刷新或发送模型请求。账号目录失败时可手填模型并标记尚未验证；登录成功不代表订阅权限或推理已验证。
+
+无 TTY、管道和 `run --json` 不弹向导；缺连接返回 `LLM_CONNECTION_REQUIRED` 和 `qling setup` 指引。已有环境变量仍兼容，供应商变量优先于档案中的 API Key；账号模式不会回退到 API 计费。也可手动设置环境变量：
 
 ```powershell
 [Environment]::SetEnvironmentVariable('QLING_LLM_API_KEY', '<your-key>', 'User')
 ```
 
-配置优先级：默认值 < 工作目录 `qling.config.{yaml,yml,json}` 或 `--config` < `QLING_LLM_*` 环境变量 < CLI `--provider/--model/--endpoint/--api-key` < 当前进程里的 `/model` 会话切换（会话切换不写回配置文件）。
+未选择新连接档案时的配置优先级：默认值 < 工作目录 `qling.config.{yaml,yml,json}` 或 `--config` < `QLING_LLM_*` 环境变量 < CLI `--provider/--model/--endpoint/--api-key` < 当前进程里的 `/model` 会话切换（会话切换不写回配置文件）。
 
 只给 `--provider` 或 `QLING_LLM_PROVIDER`、且 endpoint/model 仍是默认值时，会用该 provider 的预设补齐 endpoint 和 model。`QLING_LLM_API_KEY` 只属于启动时的 provider，不会在切换供应商后继续当成新供应商的密钥。各供应商使用自己的环境变量：
 

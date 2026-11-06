@@ -46,7 +46,7 @@ export function buildOnboardingSteps(options: OnboardingCardOptions = {}): Onboa
     steps.unshift({
       id: "setup",
       title: "先完成 LLM 配置",
-      detail: "运行 setup 选择 Provider/Model；API key 写入系统环境变量，勿写入 .env。",
+      detail: "运行 setup 选择账号或 API Key 与模型；凭据保存在私有 auth/，不替换 .env。",
       example: "qling setup",
     });
   }
@@ -124,8 +124,6 @@ export async function checkOnboarding(
     write(line);
   }
 
-  if (!options.force) {
-    await markOnboardingComplete(stateDir);
-  }
+  // Seeing a card is not a saved connection; only the wizard marks completion.
   return { shown: true };
 }

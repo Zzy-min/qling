@@ -1,3 +1,4 @@
+import { loginCommand, logoutCommand, authCommand } from "./auth.js";
 import { SlashCommand } from "./types.js";
 import { helpCommand } from "./help.js";
 import { clearCommand } from "./clear.js";
@@ -70,6 +71,9 @@ import { basename, join } from "path";
 
 export const COMMANDS: SlashCommand[] = [
   helpCommand,
+  loginCommand,
+  logoutCommand,
+  authCommand,
   initCommand,
   sessionsCommand,
   resumeCommand,

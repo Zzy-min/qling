@@ -40,6 +40,7 @@ export class StreamingREPL {
   private readonly startupResumeTarget?: string;
   private readonly startupContinue: boolean;
   private immediatePrompt: string | null = null;
+  private inferenceRunning = false;
   private statusLineEnabled = true;
   private readonly inputQueue: SerialInputQueue;
   private closed = false;
@@ -345,6 +346,14 @@ export class StreamingREPL {
   private createSlashContext(): SlashCommandContext {
     return {
       agentLoop: this.agent,
+      isInferenceRunning: () => this.inferenceRunning,
+      withTerminalHandoff: async (run) => {
+        this.scheduler?.setBusy(true);
+        // Stop only the terminal UI, never the REPL/session/scheduler.
+        this.ui.stop();
+        try { return await run(); }
+        finally { this.ui.start(); this.scheduler?.setBusy(false); }
+      },
       scheduler: this.scheduler,
       goalController: this.goalController,
       workspaceDir: this.agent.getWorkspaceDir(),
@@ -471,6 +480,7 @@ export class StreamingREPL {
   private async processPrompt(input: string): Promise<void> {
     let currentPrompt: string | null = input;
     this.scheduler.setBusy(true);
+    this.inferenceRunning = true;
     // 硬锁：整段 agent 任务期间禁止中途叠输入框
     this.ui.setAgentBusy(true);
 
@@ -570,6 +580,7 @@ export class StreamingREPL {
       }
     } finally {
       this.ui.setAgentBusy(false);
+      this.inferenceRunning = false;
       this.scheduler.setBusy(false);
       await this.scheduler.runDueTasksOnce();
     }

@@ -11,7 +11,8 @@ test("slash catalog excludes unsupported Claude placeholders", () => {
   const names = catalog.map((c) => c.name);
   assert.ok(names.includes("/help"));
   assert.ok(names.includes("/model"));
-  assert.ok(!names.includes("/login"));
+  assert.ok(names.includes("/login"));
+  assert.equal(catalog.find(c=>c.name === "/login").availability,"local");
   assert.ok(!names.includes("/desktop"));
   assert.ok(!names.includes("/teleport"));
 });
@@ -36,7 +37,7 @@ test("slash skill catalog excludes archive/examples and has real descriptions", 
 
 test("grouped panel does not list Claude cloud placeholders", () => {
   const text = formatGroupedSlashPanel(100).join("\n");
-  assert.doesNotMatch(text, /\/login|\/desktop|\/teleport/);
+  assert.doesNotMatch(text, /\/desktop|\/teleport/);
   assert.doesNotMatch(text, /\/archive|\/examples/);
   assert.match(text, /切换器|Enter/);
 });
@@ -45,7 +46,7 @@ test("picker list is non-empty and executable-only", () => {
   const list = listExecutableSlashCommandsForPicker();
   assert.ok(list.length > 5);
   assert.ok(list.every((i) => i.id.startsWith("/")));
-  assert.ok(!list.some((i) => i.id === "/login"));
+  assert.ok(list.some((i) => i.id === "/login"));
   // Grok slash_dropdown 的 [tag]：切换器需要中文分类徽标
   assert.ok(list.every((i) => i.category.length > 0));
   assert.ok(list.every((i) => i.categoryLabel.length > 0));

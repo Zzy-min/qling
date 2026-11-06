@@ -30,6 +30,7 @@ export class Repl {
   private goalController: SessionGoalController | null = null;
   private controllersSessionId: string | null = null;
   private immediatePrompt: string | null = null;
+  private inferenceRunning = false;
   private runningScheduledTask = false;
   private readonly handleSlashCommandOverride?: SlashCommandHandler;
 
@@ -170,6 +171,7 @@ export class Repl {
   private async processPrompt(input: string): Promise<void> {
     let currentPrompt: string | null = input;
     this.scheduler?.setBusy(true);
+    this.inferenceRunning = true;
 
     try {
       while (currentPrompt) {
@@ -194,6 +196,7 @@ export class Repl {
         currentPrompt = await this.resolveGoalContinuationPrompt();
       }
     } finally {
+      this.inferenceRunning = false;
       this.scheduler?.setBusy(false);
       if (!this.runningScheduledTask) {
         await this.scheduler?.runDueTasksOnce();
@@ -267,6 +270,15 @@ export class Repl {
   private createSlashContext(): SlashCommandContext {
     return {
       agentLoop: this.agent,
+      isInferenceRunning: () => this.inferenceRunning,
+      withTerminalHandoff: async (run) => {
+        this.scheduler?.setBusy(true);
+        // Closing detaches readline's data/key handlers; pause alone still consumes keystrokes.
+        this.rl.close();
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        try { return await run(); }
+        finally { this.rl = readline.createInterface({input:process.stdin,output:process.stdout}); this.scheduler?.setBusy(false); }
+      },
       scheduler: this.scheduler ?? undefined,
       goalController: this.goalController ?? undefined,
       workspaceDir: typeof (this.agent as any).getWorkspaceDir === "function"

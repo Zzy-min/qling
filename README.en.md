@@ -111,13 +111,17 @@ npm run bootstrap -- --with-browser
 qling setup
 ```
 
-`setup` stores non-secret Provider, model, and endpoint settings. It does not write the API key into `.env`. Prefer an OS user environment variable:
+Run `qling` in an interactive terminal: a missing connection opens an account-first wizard (ChatGPT, Grok, API key, or local model). Saving continues into chat in the same process. `qling setup` reopens it. Keys use hidden input and are stored under the configured state directory's `auth/`: Windows uses current-user DPAPI; macOS/Linux use a private directory and 0600 files, not an OS keychain. Existing `.env` and advanced settings are preserved.
+
+Use `qling login [chatgpt|grok]` or `/login` to authorize again. Grok account mode requires the user-installed [official CLI](https://x.ai/cli); Qling does not install it. `qling logout [provider]` or `/logout` signs out Qling only, leaving the official Grok session intact. Detached account metadata remains selected to prevent automatic API billing fallback after restart. `qling auth status` or `/authstatus` checks local readiness without refresh or inference. Model catalogs can fail; manual models and inference remain explicitly unverified. Account mode never falls back to API billing.
+
+Pipes, non-TTY input, and `run --json` never prompt; missing credentials return `LLM_CONNECTION_REQUIRED` with setup guidance. Existing provider-specific environment variables remain supported and take precedence over stored API keys. Optional manual environment configuration:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('QLING_LLM_API_KEY', '<your-key>', 'User')
 ```
 
-Then open a new terminal:
+For manual environment changes, open a new terminal. The wizard itself requires no restart. Sending a task below invokes the selected model:
 
 ```bash
 qling doctor

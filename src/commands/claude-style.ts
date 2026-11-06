@@ -825,8 +825,6 @@ export const initCommand: SlashCommand = {
 // /rewind 已迁至 commands/rewind.ts（真实回退用户轮）
 
 export const unavailableClaudeCommands: SlashCommand[] = [
-  createUnavailableCommand("/login", "Claude 账号登录入口", "/config 查看本地 provider 配置"),
-  createUnavailableCommand("/logout", "Claude 账号退出入口", "/config 查看本地 provider 配置"),
   createUnavailableCommand("/desktop", "打开 Claude Desktop 会话", "/export 导出当前会话", ["/app"]),
   createUnavailableCommand("/mobile", "显示 Claude 移动端二维码", "/sessions 与 /resume 在本地恢复会话", ["/ios", "/android"]),
   createUnavailableCommand("/teleport", "拉取 Claude Web 会话", "/resume 恢复本地会话", ["/tp"]),

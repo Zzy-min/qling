@@ -25,6 +25,8 @@ import { readGrokCredential, runOfficialGrokLogin } from "./grok.js";
 interface Entry {
   profile: AuthProfile;
   credentialFile?: string;
+  /** Account logout retains the selected identity to prevent legacy API billing fallback. */
+  detached?: true;
 }
 interface Connections {
   version: 1;
@@ -162,6 +164,7 @@ export function createAuthService(deps: Dependencies = {}) {
           })
       )
         throw Error("Auth profile mismatch; select a connection");
+      if (e.detached) throw Error("needs_login: account connection is detached");
       if (p.method === "none") return "";
       if (p.method === "grok_cli_session") {
         const c = await (deps.readGrokCredential || readGrokCredential)();
@@ -205,11 +208,37 @@ export function createAuthService(deps: Dependencies = {}) {
       return c.accessToken;
     });
   };
+  /** Local readiness only: never refresh, invoke login, or verify inference. */
+  const inspectActiveConnection = async (dir: string): Promise<{
+    profile: AuthProfile | null; status: "unconfigured" | "ready" | "needs_login";
+    expiresAt?: number; needsRefresh?: boolean;
+  }> => {
+    const s = await read(dir);
+    const e = s.activeId ? s.entries[s.activeId] : undefined;
+    if (!e) return { profile: null, status: "unconfigured" };
+    const profile = e.profile;
+    validateProfile(profile);
+    if (e.detached) return { profile, status: "needs_login" };
+    try {
+      if (profile.method === "none") return { profile, status: "ready" };
+      const c = profile.method === "grok_cli_session"
+        ? await (deps.readGrokCredential || readGrokCredential)()
+        : await secret(dir, e);
+      const expired = !c.expiresAt || c.expiresAt <= Date.now() + 60000;
+      const ready = profile.method === "api_key" ? Boolean(c.apiKey)
+        : profile.method === "grok_cli_session" ? Boolean(c.accessToken && c.expiresAt && c.expiresAt > Date.now())
+        : Boolean(c.accessToken && c.scopes?.includes("chatgpt.tokens.use.direct") &&
+          c.scopes.includes("resource.invoke") && (!expired || c.refreshToken));
+      return { profile, status: ready ? "ready" : "needs_login",
+        ...(c.expiresAt ? { expiresAt: c.expiresAt } : {}),
+        ...(profile.method === "chatgpt_oauth" && expired && ready ? {needsRefresh:true} : {}) };
+    } catch { return { profile, status: "needs_login" }; }
+  };
   const loginChatGpt = async (options: ChatGptLoginOptions) => {
     let previous: AuthCredential | undefined;
     const s = await read(options.stateDir);
     const e = s.activeId ? s.entries[s.activeId] : undefined;
-    if (e?.profile.method === "chatgpt_oauth")
+    if (e?.profile.method === "chatgpt_oauth" && !e.detached)
       previous = await secret(options.stateDir, e);
     return authorizeChatGpt(options, http, previous);
   };
@@ -240,13 +269,18 @@ export function createAuthService(deps: Dependencies = {}) {
       if (!s.activeId) return;
       const e = s.entries[s.activeId];
       if (provider && e?.profile.provider !== provider) return;
-      delete s.entries[s.activeId];
-      s.activeId = null;
+      if (e && ["chatgpt_oauth", "grok_cli_session"].includes(e.profile.method)) {
+        s.entries[s.activeId] = { profile: e.profile, detached: true };
+      } else {
+        delete s.entries[s.activeId];
+        s.activeId = null;
+      }
       await persist(dir, s);
       await retireSecret(dir, e?.credentialFile);
     });
   return {
     loadActiveProfile,
+    inspectActiveConnection,
     saveConnection,
     resolveProfileCredential,
     loginChatGpt,
@@ -257,6 +291,7 @@ export function createAuthService(deps: Dependencies = {}) {
 const service = createAuthService();
 export const {
   loadActiveProfile,
+  inspectActiveConnection,
   saveConnection,
   resolveProfileCredential,
   loginChatGpt,

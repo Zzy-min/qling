@@ -40,7 +40,8 @@ import {
 } from "./cli/channel-bootstrap.js";
 import { buildToolRegistry } from "./tools/index.js";
 import { runSetup } from "./cli/setup.js";
-import { checkOnboarding } from "./onboarding/tutorial.js";
+import { prepareStartupConnection } from "./cli/first-run.js";
+import { runAuthCli } from "./cli/auth.js";
 import type { AgentConfig } from "./types.js";
 import type { Mission, MissionEvent } from "./mission/types.js";
 import { MissionManager } from "./mission/manager.js";
@@ -409,22 +410,6 @@ async function main() {
     process.exit(0);
   }
 
-  // chat/repl：尽早安静启动（只留顶栏+输入框）；Dashboard 仍可后台默认起
-  if (decision.mode === "chat" || decision.mode === "repl") {
-    const { enterBootQuietMode } = await import("./runtime/console-guard.js");
-    enterBootQuietMode();
-  }
-
-  // v0.4 / Phase 1.4 Onboarding（仅交互模式；非 TTY 跳过）
-  if (decision.mode === "chat" || decision.mode === "repl") {
-    const { hasAnyConfiguredApiKey } = await import("./providers/resolve-llm.js");
-    const needSetup = !hasAnyConfiguredApiKey(process.env);
-    await checkOnboarding({
-      stateDir: decision.global.fileStateDir,
-      needSetup,
-    });
-  }
-
   for (const warning of decision.warnings) {
     console.error(`Warning: ${warning}`);
   }
@@ -438,6 +423,25 @@ async function main() {
     return;
   }
 
+  // Resolve the actual selected connection before starting quiet mode or constructing AgentLoop.
+  const authStateDir = loaded.config.runtime.file_state_dir;
+  if (decision.mode === "login" || decision.mode === "logout" || decision.mode === "auth") {
+    process.exitCode = await runAuthCli(decision.mode, decision.subArgs, authStateDir);
+    return;
+  }
+  if (decision.mode === "setup") { await runSetup({stateDir:authStateDir}); return; }
+  const connection = await prepareStartupConnection({mode:decision.mode,json:jsonMode,
+    isTTY:Boolean(process.stdin.isTTY && process.stdout.isTTY),loaded,cli:decision.global,load:loadQlingConfig});
+  if (connection.status === "cancelled") return;
+  if (connection.status === "required") {
+    reportError("LLM_CONNECTION_REQUIRED", "当前提供商缺少可用连接；请在交互式终端运行 qling setup，并检查显式 --provider/--endpoint 参数。");
+    process.exitCode=1;return;
+  }
+  loaded=connection.loaded;
+  if (decision.mode === "chat" || decision.mode === "repl") {
+    const { enterBootQuietMode } = await import("./runtime/console-guard.js");
+    enterBootQuietMode();
+  }
   for (const warning of loaded.warnings) {
     console.error(`Warning: ${warning}`);
   }
@@ -455,14 +459,10 @@ async function main() {
   };
 
   // v0.3 Management Subcommands
-  if (decision.mode === "setup") {
-    await runSetup();
-    return;
-  }
 
   if (decision.mode === "bootstrap") {
     await runBootstrap(decision.subArgs, {
-      setupRunner: runSetup,
+      setupRunner: () => runSetup({stateDir}),
       doctorRunner: () => buildCliDoctorLines(loaded.config),
       stateDir: loaded.config.runtime.file_state_dir,
     });

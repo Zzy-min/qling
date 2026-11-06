@@ -189,15 +189,19 @@ winget install --manifest packaging\winget\manifests\Zzy-min\qling\1.4.1
 qling setup
 ```
 
-`setup` 保存 Provider、Model、Endpoint 等非敏感配置，不把 API key 写入 `.env`。推荐使用系统用户环境变量：
+直接运行 `qling`：交互式终端缺少当前连接时，自动选择 ChatGPT 账号、Grok 账号、API Key 或本地模型。保存后在同一进程进入对话；`qling setup` 可重新配置。API Key 隐藏输入，非敏感连接档案和凭据引用保存在状态目录的 `auth/`，Windows 凭据使用当前用户 DPAPI 加密，macOS/Linux 使用私有目录和 0600 文件权限保护（并非系统钥匙串加密）。现有 `.env` 和高级设置不会被替换。
+
+`qling login [chatgpt|grok]` / `/login` 重新授权；`qling logout [provider]` / `/logout` 只退出 Qling 连接，不退出 Grok 官方 CLI 的全局会话；保留已退出的账号选择元数据，防止重启后自动改用 API 计费。Grok 账号需自行安装 [官方 Grok Build CLI](https://x.ai/cli)，Qling 不会自动安装。`qling auth status` / `/authstatus` 只检查本地状态，不刷新或发送模型请求。账号目录失败时可手填模型并标记尚未验证；登录成功不代表订阅权限或推理已验证。
+
+无 TTY、管道和 `run --json` 不弹向导；缺连接返回 `LLM_CONNECTION_REQUIRED` 和 `qling setup` 指引。已有环境变量仍兼容，供应商变量优先于档案中的 API Key；账号模式不会回退到 API 计费。也可手动设置环境变量：
 
 ```powershell
 [Environment]::SetEnvironmentVariable('QLING_LLM_API_KEY', '<your-key>', 'User')
 ```
 
-优先级是默认 < 配置文件 < `QLING_LLM_*` < CLI 参数 < 当前进程的 `/model` 切换。`QLING_LLM_API_KEY` 只绑定启动 provider。切换到其他供应商时使用对应变量（`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`ZHIPU_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`SILICONFLOW_API_KEY`、`DEEPSEEK_API_KEY`），不会把上一把 key 发给新主机。
+未选择新连接档案时，优先级是默认 < 配置文件 < `QLING_LLM_*` < CLI 参数 < 当前进程的 `/model` 切换。`QLING_LLM_API_KEY` 只绑定启动 provider。切换到其他供应商时使用对应变量（`MOONSHOT_API_KEY`、`OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`ZHIPU_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`SILICONFLOW_API_KEY`、`DEEPSEEK_API_KEY`），不会把上一把 key 发给新主机。
 
-新开终端后验证：
+手动环境变量方式需新开终端；向导保存后可直接继续。主动发送以下任务会调用模型：
 
 ```bash
 qling doctor

@@ -95,6 +95,9 @@ export interface SlashCommandContext {
   writeClipboard?: (text: string) => Promise<void>;
   /** /quit 专用：请求宿主优雅退出（关闭 UI、scheduler 与 agent）。 */
   requestExit?: () => void | Promise<void>;
+  /** Suspend host input and restore it in finally around interactive authentication. */
+  withTerminalHandoff?: <T>(run: () => Promise<T>) => Promise<T>;
+  isInferenceRunning?: () => boolean;
   writeLine: (line?: string) => void;
   writeError: (line?: string) => void;
 }
@@ -126,6 +129,8 @@ export function withDefaultWriters(
     onModelChanged: context.onModelChanged,
     writeClipboard: context.writeClipboard,
     requestExit: context.requestExit,
+    withTerminalHandoff: context.withTerminalHandoff,
+    isInferenceRunning: context.isInferenceRunning,
     writeLine: context.writeLine ?? ((line = "") => console.log(line)),
     writeError: context.writeError ?? ((line = "") => console.error(line)),
     agentLoop: context.agentLoop,

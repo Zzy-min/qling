@@ -4,10 +4,10 @@ import { formatLocalGuidancePanel } from "./guidance-panel.js";
 import { getLocalizedText } from "../i18n/index.js";
 import { formatCliVersion, getPackageVersion } from "../package-version.js";
 
-export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp" | "models";
+export type CliMode = "help" | "version" | "run" | "chat" | "repl" | "workflow" | "memory" | "dashboard" | "discovery" | "setup" | "bootstrap" | "mission" | "daemon" | "agents" | "logs" | "doctor" | "status" | "storage" | "exports" | "sessions" | "checkpoint" | "tasks" | "goal" | "privacy" | "context" | "shortcuts" | "statusline" | "recap" | "permissions" | "config" | "mcp" | "hooks" | "trust" | "untrust" | "knowledge" | "connect" | "acp" | "models" | "login" | "logout" | "auth";
 
-const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
-const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models"];
+const KNOWN_MODES: CliMode[] = ["help", "version", "run", "chat", "repl", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models", "login", "logout", "auth"];
+const MANAGEMENT_MODES: CliMode[] = ["help", "version", "workflow", "memory", "dashboard", "discovery", "setup", "bootstrap", "mission", "daemon", "agents", "logs", "doctor", "status", "storage", "exports", "sessions", "checkpoint", "tasks", "goal", "privacy", "context", "shortcuts", "statusline", "recap", "permissions", "config", "mcp", "hooks", "trust", "untrust", "knowledge", "connect", "acp", "models", "login", "logout", "auth"];
 const TOP_LEVEL_MODE_ALIASES: Record<string, CliMode> = {
   "帮助": "help",
   "版本": "version",
@@ -711,6 +711,9 @@ TUI 环境变量:
   ${binName} recap [session|latest] [count] # 查看本地保存会话回顾
   ${binName} permissions              # 查看本地权限默认策略与规则
   ${binName} permissions explain <tool> # 解释指定工具的权限决策
+  ${binName} login [chatgpt|grok]     # 账号登录或重新授权
+  ${binName} logout [provider]        # 解除 Qling 连接（不退出 Grok 全局会话）
+  ${binName} auth status              # 本地认证状态；不刷新或调用模型
   ${binName} config                   # 查看本地配置摘要（密钥脱敏）
   ${binName} models [--all]           # 默认只列当前服务商（远端失败回退该服务商预设，不打印 key）；--all 列出全部预设且不请求其他服务商
   ${binName} mcp                      # MCP 状态 / list / presets / add / remove
@@ -776,7 +779,7 @@ TUI 环境变量:
 
 本地边界:
   help / doctor / privacy / config 只读本地状态；不会调用模型或联网。
-  API key 推荐配置到系统用户环境变量，例如 QLING_LLM_API_KEY；setup 不会写入 .env。
+  setup 将 Key/账号凭据保存在状态目录的 auth/；Windows DPAPI 加密，其他平台私有文件权限保护。不会替换 .env。
 
 模式冲突示例:
   ${binName} repl --once "x"          # Error: [CLI_INVALID_MODE_COMBINATION]
