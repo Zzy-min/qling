@@ -15,6 +15,7 @@ export type ModelErrorKind =
 export interface ModelErrorClassification {
   kind: ModelErrorKind;
   retryable: boolean;
+  nonReplayable?: boolean;
   retryAfterMs?: number;
   status?: number;
   requestId?: string;
@@ -159,6 +160,9 @@ export function classifyModelError(error: unknown): ModelErrorClassification {
   if (isCanceledError(error)) {
     return { ...base, kind: "canceled", retryable: false };
   }
+  if (record?.nonReplayable === true) {
+    return { ...base, kind: "stream_interrupted", retryable: false, nonReplayable: true };
+  }
   if (/context_length_exceeded|context_length|maximum context|too many tokens|context length/.test(blob)) {
     return { ...base, kind: "context_length", retryable: false };
   }
@@ -290,6 +294,7 @@ export class ModelRetryError extends Error {
   readonly code?: string;
   readonly requestId?: string;
   readonly retriable: boolean;
+  readonly nonReplayable?: boolean;
   readonly retryAfterMs?: number;
 
   constructor(options: {
@@ -302,6 +307,7 @@ export class ModelRetryError extends Error {
     code?: string;
     requestId?: string;
     retriable: boolean;
+    nonReplayable?: boolean;
     retryAfterMs?: number;
   }) {
     super(options.message);
@@ -314,6 +320,7 @@ export class ModelRetryError extends Error {
     this.code = options.code;
     this.requestId = options.requestId;
     this.retriable = options.retriable;
+    this.nonReplayable = options.nonReplayable;
     this.retryAfterMs = options.retryAfterMs;
   }
 }
@@ -415,7 +422,8 @@ export async function callModelWithRetry<T>(options: CallModelWithRetryOptions<T
       status: lastClassification.status,
       code: lastClassification.code ?? kind,
       requestId: lastClassification.requestId,
-      retriable: RETRYABLE_KINDS.has(kind),
+      retriable: RETRYABLE_KINDS.has(kind) && lastClassification.retryable,
+      nonReplayable: lastClassification.nonReplayable,
       retryAfterMs: lastClassification.retryAfterMs,
     });
   };

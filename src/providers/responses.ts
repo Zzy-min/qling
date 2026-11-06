@@ -67,9 +67,17 @@ export async function streamResponses(client: AxiosInstance, payload: Record<str
       if (buffer.length > 8 * 1024 * 1024 || content.length > 16 * 1024 * 1024 || [...calls.values()].reduce((n, c) => n + (c.arguments?.length ?? 0), 0) > 8 * 1024 * 1024) throw Error('Responses stream exceeds limit');
       buffer = buffer.replace(/\r\n/g, '\n');
       let boundary: number;
-      while ((boundary = buffer.indexOf('\n\n')) >= 0) { consume(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2); }
+      while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+        consume(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        if (completed) break;
+      }
+      if (completed) break;
     }
-    buffer += decoder.decode(); if (buffer.trim()) consume(buffer.replace(/\r\n/g, '\n'));
+    if (!completed) {
+      buffer += decoder.decode();
+      if (buffer.trim()) consume(buffer.replace(/\r\n/g, '\n'));
+    }
     if (!completed) throw Object.assign(Error('Responses stream interrupted before completed'), { code: 'stream_interrupted' });
     const tool_calls: RawToolCall[] = [];
     for (const call of calls.values()) {
@@ -78,6 +86,9 @@ export async function streamResponses(client: AxiosInstance, payload: Record<str
       tool_calls.push({ id: call.call_id, type: 'function', function: { name: call.name, arguments: call.arguments ?? '' } });
     }
     return { content, usage, streamed: true, finishReason: tool_calls.length ? 'tool_calls' : 'stop', ...(tool_calls.length ? { tool_calls } : {}) };
+  } catch (error) {
+    // An accepted account SSE turn must never be replayed by the outer retry loop.
+    throw Object.assign(error instanceof Error ? error : Error('Responses stream failed'), { nonReplayable: true });
   } finally { stream.destroy?.(); }
 }
 function nextChunk(iterator: AsyncIterator<Uint8Array>, stream: { destroy?: () => void }, signal: AbortSignal | undefined, idleMs: number): Promise<IteratorResult<Uint8Array>> {

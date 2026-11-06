@@ -56,6 +56,7 @@ export interface ProviderHttpErrorOptions {
   retryAfterMs?: number;
   requestId?: string;
   retriable: boolean;
+  nonReplayable?: boolean;
   detail?: string;
   model?: string;
   endpointHost?: string;
@@ -69,6 +70,7 @@ export class ProviderHttpError extends Error {
   readonly retryAfterMs?: number;
   readonly requestId?: string;
   readonly retriable: boolean;
+  readonly nonReplayable?: boolean;
   readonly model?: string;
   readonly endpointHost?: string;
   override readonly cause?: unknown;
@@ -92,6 +94,7 @@ export class ProviderHttpError extends Error {
     this.retryAfterMs = options.retryAfterMs;
     this.requestId = options.requestId;
     this.retriable = options.retriable;
+    this.nonReplayable = options.nonReplayable;
     this.model = options.model;
     this.endpointHost = options.endpointHost;
     Object.defineProperty(this, "cause", {
@@ -365,11 +368,20 @@ export class LlmHttpClient {
       if (input.signal?.aborted || (error instanceof Error && error.name === "AgentRunCanceledError")) {
         throw error instanceof Error && error.name === "AgentRunCanceledError" ? error : canceledRequestError();
       }
-      if (error instanceof ProviderHttpError) throw error;
-      throw interrupted(error);
+      const terminal = error instanceof ProviderHttpError ? error : interrupted(error);
+      if (isManagedProvider(this.provider) && receivedBytes > 0) {
+        throw this.providerError({status:terminal.status,code:terminal.code,retriable:false,
+          nonReplayable:true,detail:"Account stream failed after delivery began; resume explicitly"});
+      }
+      throw terminal;
     }
 
-    if (!sawDone && !finishReason) throw interrupted();
+    if (!sawDone && !finishReason) {
+      if (isManagedProvider(this.provider) && receivedBytes > 0) throw this.providerError({
+        code:"stream_interrupted",retriable:false,nonReplayable:true,detail:"Account stream ended before completion; resume explicitly",
+      });
+      throw interrupted();
+    }
 
     const tool_calls = [...toolParts.entries()]
       .sort(([a], [b]) => a - b)
@@ -433,6 +445,7 @@ export class LlmHttpClient {
     const e = err as {
       code?: string;
       status?: number;
+      nonReplayable?: boolean;
       response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
     };
     const status = e.response?.status ?? e.status;
@@ -443,7 +456,8 @@ export class LlmHttpClient {
       code: body?.error?.code ?? e.code,
       retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
       requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
-      retriable: status === undefined || status === 429 || (status !== undefined && status >= 500),
+      retriable: !e.nonReplayable && (status === undefined || status === 429 || (status !== undefined && status >= 500)),
+      nonReplayable: e.nonReplayable,
       detail: sanitizeProviderDetail(e.response?.data ?? e.code ?? (isManagedProvider(this.provider) ? "account request failed; run qling login if authorization expired" : "request failed")),
       cause: isManagedProvider(this.provider) ? undefined : err,
     });

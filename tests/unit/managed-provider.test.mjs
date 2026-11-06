@@ -139,3 +139,27 @@ test('Responses consumes Unicode final frame without delimiter and enforces idle
  await assert.rejects(c.chatCompletions(input),e=>e.code==='stream_interrupted');
  }finally{if(previous===undefined)delete process.env.QLING_LLM_STREAM_IDLE_MS;else process.env.QLING_LLM_STREAM_IDLE_MS=previous;}
 });
+
+for (const terminal of ['failed','interrupted']) test(`outer model retry never replays partial managed SSE (${terminal})`,async()=>{
+ const {callModelWithRetry,resolveModelRetryPolicy}=await import('../../dist/providers/model-retry.js');
+ const c=client();let sent=0;const deltas=[];
+ fixture(c,[{type:'response.output_text.delta',delta:'partial'},...(terminal==='failed'?[{type:'response.failed',response:{error:{code:'server_error'}}}]:[])],()=>sent++);
+ await assert.rejects(callModelWithRetry({models:['test-model','backup'],policy:{...resolveModelRetryPolicy({}),maxRetries:1},sleep:async()=>{},call:()=>c.chatCompletions({...input,onTextDelta:d=>deltas.push(d)})}),e=>e.nonReplayable===true && e.retriable===false);
+ assert.equal(sent,1);assert.deepEqual(deltas,['partial']);
+});
+for (const trailing of ['pending','error']) test(`Responses completed closes immediately before trailing ${trailing}`,async()=>{
+ const c=client();let destroyed=false,nextCalls=0;
+ const final=Buffer.from('data: '+JSON.stringify({type:'response.completed',response:{output:[{type:'message',content:[{type:'output_text',text:'complete'}]}]}})+'\n\n');
+ c.client.defaults.adapter=async config=>({status:200,config,headers:{'content-type':'text/event-stream'},data:{[Symbol.asyncIterator](){return {next:async()=>{nextCalls++;if(nextCalls===1)return {done:false,value:final};if(trailing==='error')throw Error('after completion');return new Promise(()=>{});}};},destroy(){destroyed=true;}}});
+ const old=process.env.QLING_LLM_STREAM_IDLE_MS;process.env.QLING_LLM_STREAM_IDLE_MS='20';
+ try {assert.equal((await c.chatCompletions(input)).content,'complete');assert.equal(nextCalls,1);assert.equal(destroyed,true);}
+ finally{if(old===undefined)delete process.env.QLING_LLM_STREAM_IDLE_MS;else process.env.QLING_LLM_STREAM_IDLE_MS=old;}
+});
+
+test('outer model retry preserves Grok partial-stream terminal boundary',async()=>{
+ const {callModelWithRetry,resolveModelRetryPolicy}=await import('../../dist/providers/model-retry.js');
+ const c=client('grok-account','https://cli-chat-proxy.grok.com/v1');let sent=0;const deltas=[];
+ fixture(c,[{choices:[{delta:{content:'partial'}}]},{error:{message:'server',status:500,code:'server_error'}}],()=>sent++);
+ await assert.rejects(callModelWithRetry({models:['test-model','backup'],policy:{...resolveModelRetryPolicy({}),maxRetries:1},sleep:async()=>{},call:()=>c.chatCompletions({...input,onTextDelta:d=>deltas.push(d)})}),e=>e.nonReplayable===true && e.retriable===false);
+ assert.equal(sent,1);assert.deepEqual(deltas,['partial']);
+});
