@@ -11,7 +11,13 @@ export async function runAuthCli(mode: "login" | "logout" | "auth", args: string
   }
   if (mode === "logout") {
     if (args.length > 1) { write("用法: qling logout [provider]"); return 2; }
-    await logoutProfile(stateDir, args[0] === "grok" ? "grok-account" : args[0]);
+    const target = args[0] === "grok" ? "grok-account" : args[0];
+    const active = await inspectActiveConnection(stateDir);
+    if (!active.profile) { write("当前没有可退出的 Qling 连接。"); return 0; }
+    if (target && active.profile.provider !== target) {
+      write(`当前连接是 ${active.profile.provider}，与 ${target} 不匹配；未做更改。`); return 0;
+    }
+    await logoutProfile(stateDir, target);
     write("已退出匹配的 Qling 账号或解除连接；账号选择元数据保留以防自动 API 计费回退，Grok 全局登录保持不变。"); return 0;
   }
   if (args.length > 1 || (args[0] && !["chatgpt", "grok"].includes(args[0]))) { write("用法: qling login [chatgpt|grok]"); return 2; }

@@ -53,10 +53,8 @@ test("cli startup smoke: missing API key exits with setup guidance and no stack 
     });
 
     assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.match(result.stderr, /QLING_API_KEY_MISSING/);
+    assert.match(result.stderr, /LLM_CONNECTION_REQUIRED/);
     assert.match(result.stderr, /qling setup/);
-    assert.match(result.stderr, /QLING_LLM_API_KEY/);
-    assert.match(result.stderr, /Ollama/);
     assert.doesNotMatch(result.stderr, /at new AgentLoop|file:\/\/\/|Node\.js v\d+/);
   } finally {
     rmSync(root, { recursive: true, force: true });

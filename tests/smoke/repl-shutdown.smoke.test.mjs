@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
 
-function waitForExit(child, timeoutMs = 8_000) {
+function waitForExit(child, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill();

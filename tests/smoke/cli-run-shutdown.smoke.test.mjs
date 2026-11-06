@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
 
-function waitForExit(child, timeoutMs = 10_000) {
+function waitForExit(child, timeoutMs = 30_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill();

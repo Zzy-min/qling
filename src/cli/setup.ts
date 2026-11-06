@@ -183,7 +183,10 @@ export async function runConnectionWizard(options: {
         profile.model = models[Number(answer) - 1] || answer || models[0] || profile.model;
         const invalid = validateModelName(profile.model);
         if (!profile.model || invalid) { prompt.write(invalid || "模型 ID 不能为空。"); continue; }
-        prompt.write(`Provider: ${profile.provider}\n数据发送至: ${profile.endpoint}\nModel: ${profile.model}（尚未验证）\n认证方式: ${profile.method}\n凭据: ${process.platform === "win32" ? "当前 Windows 用户 DPAPI 加密" : "私有目录、0600 文件权限保护；并非系统钥匙串加密"}\n连接保存至: ${path.join(options.stateDir, "auth")}；保留现有 .env 和高级设置。`);
+        const credentialCopy = profile.method === "none" ? ""
+          : process.platform === "win32" ? "当前 Windows 用户 DPAPI 加密"
+          : "私有目录、0600 文件权限保护；并非系统钥匙串加密";
+        prompt.write(`Provider: ${profile.provider}\n数据发送至: ${profile.endpoint}\nModel: ${profile.model}（尚未验证）\n认证方式: ${profile.method}${credentialCopy ? `\n凭据: ${credentialCopy}` : ""}\n连接保存至: ${path.join(options.stateDir, "auth")}；保留现有 .env 和高级设置。`);
         if ((await ask("保存并使用此连接？[Y/n]: ")).toLowerCase() === "n") throw new CancelSetup();
         try { await (services.saveConnection ?? auth.saveConnection)(options.stateDir, profile, credential); }
         catch { throw Error("连接保存失败；请检查本地认证状态和目录权限后重试 qling setup。"); }

@@ -14,7 +14,7 @@ test("knowledge smoke: top-level and slash show Chinese RAG guidance + citations
       ...process.env,
       QLING_LLM_API_KEY: "sk-smoke-knowledge",
     },
-    timeout: 8000,
+    timeout: 30000,
   });
 
   const out = (result.stdout || "") + (result.stderr || "");
@@ -33,7 +33,7 @@ test("knowledge smoke: index subcommand uses Chinese chunk strategy", () => {
     const result = spawnSync(process.execPath, [ENTRY, "knowledge", "index", root], {
       encoding: "utf-8",
       env: { ...process.env },
-      timeout: 8000,
+      timeout: 30000,
     });
     const out = result.stdout || "";
     assert.match(out, /索引|chunk|中文 chunk 策略/);

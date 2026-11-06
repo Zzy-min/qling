@@ -118,7 +118,9 @@ test("slash catalog exposes Claude-compatible command shell metadata", () => {
   }
   assert.equal(byName.get("/model").category, "session");
   assert.match(byName.get("/model").argumentHint, /list|use|model/i);
-  assert.equal(byName.get("/login").availability, "unsupported");
+  // /login is now a real local command (wizard-backed), not a Claude cloud placeholder.
+  assert.equal(byName.get("/login").availability, "local");
+  assert.equal(byName.get("/logout").availability, "local");
 });
 
 test("slash unavailable Claude cloud command returns local boundary only", async () => {
