@@ -122,9 +122,13 @@ export const PROVIDER_PRESET_ORDER: string[] = [
   "siliconflow",
   "openai",
   "ollama",
+  "xai",
 ];
 
 const PRESET_MAP: Record<string, ProviderPreset> = {
+  xai: {id:"xai",displayName:"xAI API",provider:"xai",endpoint:"https://api.x.ai/v1",model:"grok-4",requiresApiKey:true},
+  chatgpt: {id:"chatgpt",displayName:"ChatGPT account",provider:"chatgpt",endpoint:"https://api.openai.com/v1",model:"gpt-6.1-sol",requiresApiKey:true,tags:["account"]},
+  "grok-account": {id:"grok-account",displayName:"Grok account",provider:"grok-account",endpoint:"https://cli-chat-proxy.grok.com/v1",model:"grok-build",requiresApiKey:true,tags:["account"]},
   deepseek: {
     id: "deepseek",
     displayName: "DeepSeek",
@@ -297,6 +301,7 @@ export function isLoopbackEndpoint(endpoint: string): boolean {
 }
 
 export function apiKeyRequiredForEndpoint(endpoint: string, provider?: string): boolean {
+  if (provider === "chatgpt" || provider === "grok-account") return true;
   if (provider && (provider === "ollama" || provider === "local")) return false;
   if (endpoint && isLoopbackEndpoint(endpoint)) return false;
   const preset = provider ? getProviderPreset(provider) : undefined;
@@ -326,7 +331,7 @@ function normalizeProviderId(provider: string | undefined): string {
 export function presetsForProvider(provider: string): ProviderPreset[] {
   const id = normalizeProviderId(provider);
   if (!id) return [];
-  return listProviderPresets().filter(
+  return Object.values(PRESET_MAP).filter(preset => !preset.tags?.includes("alias")).filter(
     (preset) => normalizeProviderId(preset.provider) === id || normalizeProviderId(preset.id) === id
   );
 }

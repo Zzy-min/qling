@@ -19,6 +19,7 @@ export interface LlmFieldSources {
 export const PROVIDER_API_KEY_ENV: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
   openai: "OPENAI_API_KEY",
+  xai: "XAI_API_KEY",
   dashscope: "DASHSCOPE_API_KEY",
   moonshot: "MOONSHOT_API_KEY",
   zhipu: "ZHIPU_API_KEY",
@@ -84,6 +85,9 @@ export function resolveProviderApiKey(
   env: EnvLike = process.env,
   options: ResolveProviderApiKeyOptions = {}
 ): ResolvedProviderApiKey {
+  if (["chatgpt","grok-account"].includes(normalizeProviderId(provider))) {
+    return {apiKey:"",source:"none",refused:true,message:"Account mode requires qling login"};
+  }
   const explicit = options.explicitApiKey?.trim();
   if (explicit) {
     return { apiKey: explicit, source: "cli", refused: false };

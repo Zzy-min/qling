@@ -1,3 +1,4 @@
+import { managedRequestHeaders, isManagedProvider } from "./managed-auth.js";
 import type { QlingConfig } from "../config.js";
 import { presetsForProvider, providerModelNames, resolveModelCandidates } from "./presets.js";
 import { endpointHost } from "./resolve-llm.js";
@@ -10,6 +11,8 @@ export interface RemoteModelList {
 
 export async function listRemoteModels(options: {
   endpoint: string;
+  provider?: string;
+  authStateDir?: string;
   apiKey?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -26,13 +29,21 @@ export async function listRemoteModels(options: {
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     const apiKey = String(options.apiKey ?? "").trim();
-    if (apiKey && apiKey !== "local") headers.Authorization = `Bearer ${apiKey}`;
-    const response = await fetchImpl(url, { method: "GET", headers, signal: controller.signal });
+    Object.assign(headers,await managedRequestHeaders({...options,apiKey},controller.signal));
+    const response = await fetchImpl(url, { method: "GET", headers, signal: controller.signal,
+      ...(isManagedProvider(options.provider) ? {redirect:"error" as const} : {}),
+    });
     if (!response.ok) {
       return { ok: false, models: [], warning: `GET /models HTTP ${response.status}，已改用预设列表` };
     }
-    const body = (await response.json()) as { data?: Array<{ id?: string }> };
-    const models = [...new Set((body.data ?? []).map((item) => String(item.id ?? "").trim()).filter(Boolean))];
+    const body = (await response.json()) as {
+      data?: Array<{ id?: string }>;
+      models?: Array<{slug?:string;visibility?:string}>;
+    };
+    const ids = options.provider === "chatgpt" && Array.isArray(body.models)
+      ? body.models.filter(item=>item.visibility === "list").map(item=>item.slug)
+      : (body.data ?? []).map(item=>item.id);
+    const models = [...new Set(ids.map(id=>String(id ?? "").trim()).filter(Boolean))];
     if (models.length === 0) {
       return { ok: false, models: [], warning: "远端未返回模型，已改用预设列表" };
     }
@@ -46,7 +57,7 @@ export async function listRemoteModels(options: {
 
 export async function runModelsCli(
   args: string[],
-  config: Pick<QlingConfig, "llm">,
+  config: Pick<QlingConfig, "llm"> & Partial<Pick<QlingConfig,"runtime">>,
   _env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof fetch,
 ): Promise<number> {
@@ -69,6 +80,8 @@ export async function runModelsCli(
   } else {
     const remote = await listRemoteModels({
       endpoint: config.llm.endpoint,
+      provider: config.llm.provider,
+      authStateDir: config.runtime?.file_state_dir,
       apiKey: config.llm.api_key,
       timeoutMs: 5000,
       fetchImpl,

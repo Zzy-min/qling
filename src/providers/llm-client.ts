@@ -3,6 +3,8 @@
 // foundation 层：仅 axios + token-usage，无业务副作用。
 // ============================================================
 
+import { managedRequestHeaders, isManagedProvider } from "./managed-auth.js";
+import { responsesPayload, streamResponses } from "./responses.js";
 import axios, { type AxiosInstance } from "axios";
 import {
   extractProviderUsage,
@@ -39,6 +41,7 @@ export interface LlmStreamCallbacks {
 
 export interface LlmClientOptions {
   endpoint: string;
+  authStateDir?: string;
   apiKey: string;
   timeoutMs: number;
   provider?: string;
@@ -77,7 +80,7 @@ export class ProviderHttpError extends Error {
     const host = options.endpointHost ? ` endpoint=${options.endpointHost}` : "";
     let hint = "";
     if (options.status === 401 || options.status === 403) {
-      hint = `；key 无效或不属于 ${options.provider}`;
+      hint = isManagedProvider(options.provider) ? "；账号需要重新授权，请运行 qling login" : `；key 无效或不属于 ${options.provider}`;
     } else if (options.status === 404 && options.model) {
       hint = "；模型名可能不存在，用 /model list --remote 查看";
     }
@@ -114,17 +117,21 @@ function sanitizeProviderDetail(value: unknown): string {
 
 export class LlmHttpClient {
   private client: AxiosInstance;
+  private options: LlmClientOptions;
   private provider: string;
   private endpointHost = "";
   private requestModel = "";
+  private accountSecrets = new Set<string>();
 
   constructor(options: LlmClientOptions) {
+    this.options = options;
     this.provider = options.provider ?? "unknown";
     this.endpointHost = endpointHost(options.endpoint);
     this.client = this.buildClient(options);
   }
 
   reconfigure(options: LlmClientOptions): void {
+    this.options = options;
     this.provider = options.provider ?? this.provider;
     this.endpointHost = endpointHost(options.endpoint);
     this.client = this.buildClient(options);
@@ -145,6 +152,28 @@ export class LlmHttpClient {
     signal?: AbortSignal;
   } & LlmStreamCallbacks): Promise<LlmChatResponse> {
     this.requestModel = input.model;
+    if (this.provider === "chatgpt") {
+      for (let attempt=0; attempt<2; attempt++) {
+        try { return await streamResponses(this.client, responsesPayload(input), input); }
+        catch (error) {
+          if (error instanceof Error && error.name === "AgentRunCanceledError") throw error;
+          // Only an HTTP rejection before SSE delivery can be retried. Never replay partial turns.
+          const rejected = error as {response?:{status?:number;data?:{destroy?:()=>void}};config?:{headers?:{Authorization?:string}}};
+          rejected.response?.data?.destroy?.();
+          const authorization = rejected.config?.headers?.Authorization;
+          if (attempt===0 && rejected.response?.status===401 && authorization?.startsWith("Bearer ")) {
+            try { await managedRequestHeaders(this.options,input.signal,authorization.slice(7)); }
+            catch {
+              if(input.signal?.aborted) throw canceledRequestError();
+              throw this.providerError({status:401,code:"needs_login",retriable:false,detail:"Account refresh failed; run qling login"});
+            }
+            continue;
+          }
+          throw this.normalizeRequestError(error, input.signal);
+        }
+      }
+      throw this.providerError({code:"needs_login",retriable:false});
+    }
     const systemMsg: Message = { role: "system", content: input.systemPrompt };
     const wireMessages = [systemMsg, ...input.messages].map((message) => ({
       role: message.role,
@@ -168,7 +197,7 @@ export class LlmHttpClient {
       ...(input.overrides ?? {}),
     };
 
-    if (input.stream) {
+    if (input.stream || isManagedProvider(this.provider)) {
       return this.streamChatCompletions(payload, input);
     }
 
@@ -222,7 +251,7 @@ export class LlmHttpClient {
       const error = this.providerErrorFromResponse(status, resp.headers ?? {}, detail);
       const unsupported = status === 415 || status === 501 ||
         ([400, 404, 405, 422].includes(status) && /stream|sse|not\s+support|unsupported/i.test(detail));
-      if (unsupported) {
+      if (unsupported && !isManagedProvider(this.provider)) {
         try { input.onStreamFallback?.(`HTTP ${status}`); } catch { /* UI feedback is best-effort */ }
         return this.postNonStreaming(payload, input.signal);
       }
@@ -231,6 +260,7 @@ export class LlmHttpClient {
 
     const contentType = String(resp.headers?.["content-type"] ?? "").toLowerCase();
     if (!contentType.includes("text/event-stream")) {
+      if (isManagedProvider(this.provider)) throw this.providerError({code:"invalid_stream",retriable:false,detail:"Account endpoint requires SSE"});
       const raw = await readResponseStream(resp.data, 8 * 1024 * 1024);
       try {
         return this.parseChatResponse(JSON.parse(raw), false);
@@ -399,11 +429,13 @@ export class LlmHttpClient {
 
   private normalizeRequestError(err: unknown, signal?: AbortSignal): Error {
     if (signal?.aborted) return canceledRequestError();
+    if (err instanceof ProviderHttpError) return err;
     const e = err as {
       code?: string;
+      status?: number;
       response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
     };
-    const status = e.response?.status;
+    const status = e.response?.status ?? e.status;
     const headers = e.response?.headers ?? {};
     const body = e.response?.data as { error?: { code?: string } } | undefined;
     return this.providerError({
@@ -412,8 +444,8 @@ export class LlmHttpClient {
       retryAfterMs: parseRetryAfterMs(headers["retry-after"]),
       requestId: String(headers["x-request-id"] ?? headers["request-id"] ?? "") || undefined,
       retriable: status === undefined || status === 429 || (status !== undefined && status >= 500),
-      detail: sanitizeProviderDetail(e.response?.data ?? e.code ?? "request failed"),
-      cause: err,
+      detail: sanitizeProviderDetail(e.response?.data ?? e.code ?? (isManagedProvider(this.provider) ? "account request failed; run qling login if authorization expired" : "request failed")),
+      cause: isManagedProvider(this.provider) ? undefined : err,
     });
   }
 
@@ -443,6 +475,10 @@ export class LlmHttpClient {
   ): ProviderHttpError {
     return new ProviderHttpError({
       ...options,
+      ...(isManagedProvider(this.provider) ? {
+        cause: undefined,
+        detail: options.detail ? [...this.accountSecrets].reduce((detail,secret)=>detail.split(secret).join("[REDACTED]"),options.detail) : undefined,
+      } : {}),
       provider: this.provider,
       model: this.requestModel || undefined,
       endpointHost: this.endpointHost || undefined,
@@ -453,12 +489,30 @@ export class LlmHttpClient {
     const client = axios.create({
       baseURL: options.endpoint,
       headers: {
-        Authorization: "Bearer " + options.apiKey,
+        ...(options.apiKey && !options.apiKey.startsWith("qling-auth:") && !isManagedProvider(options.provider) ? {Authorization: "Bearer " + options.apiKey} : {}),
         "Content-Type": "application/json",
       },
       timeout: options.timeoutMs,
+      ...(isManagedProvider(options.provider) ? {maxRedirects:0} : {}),
     });
-
+    client.interceptors.request.use(async config => {
+      try {
+        const headers = await managedRequestHeaders(options, config.signal as AbortSignal | undefined);
+        if (isManagedProvider(options.provider) && headers.Authorization) {
+          this.accountSecrets.add(headers.Authorization.slice(7));
+          if (this.accountSecrets.size > 4) this.accountSecrets.delete(this.accountSecrets.values().next().value!);
+        }
+        for (const [name,value] of Object.entries(headers)) config.headers.set(name,value);
+        if (options.provider === "grok-account") {
+          const payload = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+          if (payload?.model) config.headers.set("x-grok-model-override",payload.model);
+        }
+        return config;
+      } catch (error) {
+        if (config.signal?.aborted) throw canceledRequestError();
+        throw this.providerError({code:"needs_login",retriable:false,detail:"Connection requires authorization; run qling login"});
+      }
+    });
     return client;
   }
 }

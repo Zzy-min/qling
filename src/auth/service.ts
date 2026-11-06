@@ -140,6 +140,8 @@ export function createAuthService(deps: Dependencies = {}) {
     p: AuthProfile,
     options?: {
       signal?: AbortSignal;
+      /** Refresh only if this rejected token is still current under the profile lock. */
+      rejectedAccessToken?: string;
     },
   ): Promise<string> => {
     validateProfile(p);
@@ -176,7 +178,8 @@ export function createAuthService(deps: Dependencies = {}) {
         !c.scopes.includes("resource.invoke")
       )
         throw Error("needs_login: insufficient ChatGPT scopes");
-      if (!c.expiresAt || c.expiresAt <= Date.now() + 60000) {
+      if (!c.expiresAt || c.expiresAt <= Date.now() + 60000 ||
+          (options?.rejectedAccessToken && c.accessToken === options.rejectedAccessToken)) {
         c = await refreshChatGpt(http, c, options?.signal);
         options?.signal?.throwIfAborted();
         await locked(resolve(dir), async () => {

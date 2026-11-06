@@ -1,3 +1,7 @@
+import { loadActiveProfile, resolveProfileCredential } from "./auth/service.js";
+import { validateProfile } from "./auth/types.js";
+import { providerApiKeyEnv, resolveProviderApiKey } from "./providers/resolve-llm.js";
+import { isManagedProvider, AUTH_MARKER_PREFIX } from "./providers/managed-auth.js";
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import * as os from "os";
@@ -528,6 +532,7 @@ export async function loadQlingConfig(
   await mergeLocalMcpStore(withCli, warnings);
   const llmSources = detectLlmSources(fromFile, fromEnv, cli);
   alignLoadedLlmConfig(withCli.llm, llmSources, env, warnings);
+  await applyActiveAuthProfile(withCli, cli, env, llmSources, warnings);
 
   return {
     config: withCli,
@@ -535,6 +540,54 @@ export async function loadQlingConfig(
     usedConfigPath,
     llmSources,
   };
+}
+
+/** Local startup resolution: account refresh is intentionally deferred until inference. */
+export async function applyActiveAuthProfile(
+  config: QlingConfig, cli: CliGlobalOptions, env: NodeJS.ProcessEnv,
+  sources: LlmFieldSources, warnings: string[],
+): Promise<void> {
+  const profile = await loadActiveProfile(config.runtime.file_state_dir);
+  if (!profile) return;
+  validateProfile(profile);
+  if (cli.provider && cli.provider !== profile.provider) {
+    const preset=getProviderPreset(cli.provider);
+    config.llm.endpoint=cli.endpoint || preset?.endpoint || config.llm.endpoint;
+    config.llm.model=cli.model || preset?.model || config.llm.model;
+    config.llm.api_key=resolveProviderApiKey(cli.provider,env,{
+      startupProvider:env.QLING_LLM_STARTUP_PROVIDER || env.QLING_LLM_PROVIDER || profile.provider,
+      explicitApiKey:cli.apiKey,
+    }).apiKey;
+    sources.endpoint=cli.endpoint?"cli":preset?"preset":sources.endpoint;
+    sources.model=cli.model?"cli":preset?"preset":sources.model;
+    sources.apiKey=cli.apiKey?'cli':config.llm.api_key?'env':'default';
+    return;
+  }
+  if (isManagedProvider(profile.provider) && ((cli.endpoint && cli.endpoint !== profile.endpoint) || cli.apiKey)) {
+    throw Error('Account connection requires its official endpoint and account credential; select another connection');
+  }
+  config.llm.provider=profile.provider;
+  config.llm.endpoint=cli.endpoint || profile.endpoint;
+  config.llm.model=cli.model || profile.model;
+  sources.provider=cli.provider?'cli':'session';
+  sources.endpoint=cli.endpoint?'cli':'session';
+  sources.model=cli.model?'cli':'session';
+  config.llm.api_key=''; sources.apiKey='default';
+  if (isManagedProvider(profile.provider)) {
+    config.llm.api_key=AUTH_MARKER_PREFIX+profile.id;sources.apiKey='session';
+  } else if(profile.method==='api_key') {
+    const name=providerApiKeyEnv(profile.provider);
+    const specific=name ? env[name]?.trim() : '';
+    const generic=env.QLING_LLM_API_KEY?.trim();
+    const startup=env.QLING_LLM_STARTUP_PROVIDER || env.QLING_LLM_PROVIDER;
+    const key=cli.apiKey || specific || (startup===profile.provider ? generic : '');
+    if(key) {config.llm.api_key=key;sources.apiKey=cli.apiKey?'cli':'env';}
+    else {
+      try { config.llm.api_key=await resolveProfileCredential(config.runtime.file_state_dir,profile);sources.apiKey='session'; }
+      catch { warnings.push('Current connection has no usable API key; run qling setup'); }
+    }
+    if(config.llm.api_key.startsWith(AUTH_MARKER_PREFIX)){config.llm.api_key='';warnings.push('Reserved auth marker is not an API key');}
+  }
 }
 
 function llmFieldDefined(

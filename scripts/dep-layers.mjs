@@ -37,6 +37,7 @@ export function layerOf(rel) {
     p.startsWith("persistence/") ||
     p.startsWith("utils/") ||
     p.startsWith("i18n/") ||
+    p.startsWith("auth/") ||
     p.startsWith("providers/")
   ) {
     return "foundation";

@@ -201,6 +201,49 @@ test("refresh is single flight and keeps rotating token in protected snapshot", 
   );
   assert.equal(count, 1);
 });
+test("concurrent rejected-token refresh is single flight even before expiry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "qling-oauth-"));
+  let count = 0;
+  const s = createAuthService({
+    cipher,
+    http: async (url, init) => {
+      assert.equal(url, TOKEN_URL);
+      assert.equal(init.body.get("refresh_token"), "OLD_REFRESH");
+      count++;
+      await new Promise((r) => setTimeout(r, 10));
+      return response({
+        access_token: "NEW",
+        refresh_token: "ROTATED",
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: "resource.invoke chatgpt.tokens.use.direct",
+      });
+    },
+  });
+  const p = {
+    id: "c",
+    provider: "chatgpt",
+    method: "chatgpt_oauth",
+    endpoint: "https://api.openai.com/v1",
+    model: "m",
+  };
+  await s.saveConnection(dir, p, {
+    accessToken: "OLD",
+    refreshToken: "OLD_REFRESH",
+    expiresAt: Date.now()+3600000,
+    clientId: "client",
+    issuer: ISSUER,
+    subject: "user",
+    scopes: ["resource.invoke", "chatgpt.tokens.use.direct"],
+  });
+  assert.deepEqual(
+    await Promise.all(
+      Array.from({ length: 8 }, () => s.resolveProfileCredential(dir, p, {rejectedAccessToken:"OLD"})),
+    ),
+    Array(8).fill("NEW"),
+  );
+  assert.equal(count, 1);
+});
 test("cancellation during JWKS cannot return authorized credentials", async () => {
   const dir = await mkdtemp(join(tmpdir(), "qling-oauth-"));
   const controller = new AbortController();

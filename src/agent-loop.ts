@@ -519,6 +519,7 @@ export class AgentLoop extends AgentEventEmitter {
 
     // HTTP client（foundation: providers/llm-client）
     this.llmClient = new LlmHttpClient({
+      authStateDir: this.runtimeRootDir,
       endpoint,
       apiKey: this.config.apiKey,
       timeoutMs: this.resolveLlmRequestTimeout(),
@@ -1343,6 +1344,7 @@ export class AgentLoop extends AgentEventEmitter {
     if (modelChanged) this.refreshCompactor();
 
     this.llmClient.reconfigure({
+      authStateDir: this.runtimeRootDir,
       endpoint: this.config.endpoint ?? "",
       apiKey: this.config.apiKey,
       timeoutMs: this.resolveLlmRequestTimeout(),
