@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.0 (2026-11-07)
+
+- **智能模型选择器与凭据感知路由 (对标 Codex Router)**：解耦 `/model` 独立命令模块，支持 TUI 多层级分类（国内推荐/国际主流/本地离线/托管账号）、就绪徽标（★当前/✓已就绪/⚡免Key/🔒账号/○需配Key）、按厂商折叠与实时键入过滤别名（如 `ds`、`qwen`、`kimi`、`claude`、`gpt`、`glm`、`grok` 等）。
+- **全厂商最新模型目录全面现代化**：完整支持并纳管 Qwen 3.8/3.7 系列、Claude 5.x 全系列、Gemini 4/3.8 系列、GLM 5.x 系列、Kimi k3.x 系列、GPT-6 系列等最新旗舰，支持 1M/2M 上下文感知；修复已知模型与亲和性目录的底层聚合屏蔽缺陷。
+- **Mistral AI & Vibe Code 专项支持**：新增对 Mistral Vibe API 密钥与每月 $150 专属额度池的原生支持，内置 `mistral-vibe-cli-latest`、`codestral-latest`、`deepseek-v4-1-flash-1017` 等模型。
+- **Grok 账号代理通信链路修复**：自动注入 xAI CLI 专用代理所需的版本号与请求头规范，解决账号会话登录后的 HTTP 426 Upgrade Required 拦截问题。
+- **文档与配置升级**：更新 README 环境变量矩阵与模型选择器交互全景指南，更新项目介绍与语义版本。
+
 ## v1.4.1 (2026-11-05)
 
 - 修复 Linux 上不存在的 `Agents.md` 候选屏蔽实际 `AGENTS.md` 的问题；按文件身份去重，兼容大小写别名、符号链接和硬链接。

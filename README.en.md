@@ -1,7 +1,7 @@
 # Qling (轻灵)
 
-<!-- release-1.4.1-status -->
-当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
+<!-- release-1.5.0-status -->
+当前版本 / Current version: **1.5.0**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white)](#install)
@@ -11,7 +11,7 @@
 
 [中文说明](README.md) · [Install guide](docs/install.md) · [60-second demo](docs/demo.md) · [CHANGELOG](CHANGELOG.md)
 
-**A local-first AI Agent CLI workbench designed for Chinese developers and inspectable terminal workflows.**
+**A local-first AI Agent CLI workbench with credential-aware model routing and inspectable terminal workflows.**
 
 Qling brings chat, tool execution, permissions, memory, recovery, background work, and runtime evidence into one terminal control surface. It does not treat “the model said it is done” as success: every run has an explicit outcome, tool calls have a timeline, failures can pause with context intact, and long-running missions can survive the terminal session.
 
@@ -30,6 +30,7 @@ Qling brings chat, tool execution, permissions, memory, recovery, background wor
 | **Terminal-native UX** | Slash discovery, completion, multiline editing, history search, managed scrollback, and Chinese aliases. | `qling`, `/help`, `qling shortcuts` |
 | **Explainable safety** | Permission rules, guards, write sandboxing, secret redaction, and daemon authentication are visible controls. | `/permissions explain`, `/config`, `/hooks` |
 | **Controlled extensibility** | Local Markdown skills, MCP, lifecycle Hooks, signed-manifest plugins, ACP, and a Node SDK. | `/skill`, `qling mcp`, `qling acp` |
+| **Credential-aware model routing** | Inspired by Codex Router with readiness badges, grouped folding, real-time alias search, and safe cross-provider switching across modern LLMs. | `/model`, `/model list`, `qling models` |
 
 ## Runtime shape
 

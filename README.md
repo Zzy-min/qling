@@ -1,7 +1,7 @@
 # 轻灵 Qling
 
-<!-- release-1.4.1-status -->
-当前版本 / Current version: **1.4.1**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
+<!-- release-1.5.0-status -->
+当前版本 / Current version: **1.5.0**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
 
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=node.js&logoColor=white)](#安装)
@@ -11,9 +11,9 @@
 
 [English](README.en.md) · [安装指南](docs/install.md) · [60 秒演示](docs/demo.md) · [CHANGELOG](CHANGELOG.md)
 
-**面向中文开发者的本地优先 AI Agent CLI 工作台。**
+**面向中文开发者的本地优先 AI Agent CLI 工作台，内置全生态大模型凭据感知路由。**
 
-轻灵把聊天、工具执行、权限、记忆、恢复、后台任务和运行证据收进一个终端控制面。它不把“模型说完成了”当作完成：每次运行都有明确终态，工具调用有时间线，失败可以暂停并保留上下文，长任务可以在终端关闭后继续。
+轻灵把多模型智能路由、聊天、工具执行、权限、记忆、恢复、后台任务和运行证据收进一个终端控制面。它不把“模型说完成了”当作完成：每次运行都有明确终态，工具调用有时间线，失败可以暂停并保留上下文，长任务可以在终端关闭后继续。
 
 > 状态和诊断默认留在本机；模型请求只发送给你明确配置的 Provider。使用 Ollama 时，模型也可以运行在本机。
 
@@ -32,6 +32,7 @@
 | **中文终端原生** | 中文帮助与别名、slash 命令面板、补全、多行编辑、历史搜索和 managed scrollback。 | `qling`、`/help`、`qling 快捷键` |
 | **安全边界可解释** | 权限策略、guard、写入沙箱、密钥脱敏和本地 Daemon 鉴权不是隐藏开关。 | `/permissions explain`、`/config`、`/hooks` |
 | **扩展但不失控** | 支持本地 Markdown skills、MCP、生命周期 Hooks、签名清单插件、ACP 和 SDK。 | `/skill`、`qling mcp`、`qling acp` |
+| **全生态模型感知路由** | 对标 Codex Router 架构，支持凭据感知就绪徽标、分组折叠、实时别名搜索与跨厂商安全切换；全面纳管国内外最新现役旗舰。 | `/model`、`/model list`、`qling models` |
 
 ## 它是怎样工作的
 
