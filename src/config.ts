@@ -288,7 +288,7 @@ export function buildDefaultConfig(): QlingConfig {
       endpoint: "https://api.deepseek.com",
       api_key: "",
       request_timeout_ms: 120000,
-      max_retries: 3,
+      max_retries: 10,
     },
     runtime: {
       workspace_dir: process.cwd(),
@@ -663,7 +663,7 @@ export function applyConfigToProcessEnv(config: QlingConfig): void {
   process.env.QLING_LLM_MODEL = config.llm.model;
   process.env.QLING_LLM_ENDPOINT = config.llm.endpoint;
   process.env.QLING_LLM_REQUEST_TIMEOUT_MS = String(config.llm.request_timeout_ms);
-  process.env.QLING_LLM_MAX_RETRIES = String(config.llm.max_retries ?? 3);
+  process.env.QLING_LLM_MAX_RETRIES = String(config.llm.max_retries ?? 10);
   // Generic/provider key variables remain user inputs. Derived session secrets are
   // published only through the scoped QLING_LLM_SESSION_* snapshot by AgentLoop.
   if (!process.env.QLING_LLM_STARTUP_PROVIDER) {

@@ -230,6 +230,8 @@ test("applyConfigToProcessEnv maps memory/mcp/metrics/channels and guard fields"
   loaded.config.guard.permissions.rules = [{ tool_pattern: "bash", decision: "ask" }];
   applyConfigToProcessEnv(loaded.config);
 
+  assert.equal(loaded.config.llm.max_retries, 10);
+  assert.equal(process.env.QLING_LLM_MAX_RETRIES, "10");
   assert.equal(process.env.QLING_MEMORY_WAL_ENABLED, String(loaded.config.memory.wal_enabled));
   assert.equal(process.env.QLING_EXPERIMENTAL_STREAMING_CHAT, "false");
   assert.equal(

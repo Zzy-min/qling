@@ -245,7 +245,7 @@ function readStreamIdleMs(raw: string | undefined): number {
 
 /**
  * Defaults apply only when the variable is missing or not a number.
- * `QLING_LLM_MAX_RETRIES` is still forced to 3 by config.ts when the CLI boots;
+ * `QLING_LLM_MAX_RETRIES` is set to 10 by config.ts by default when the CLI boots;
  * direct AgentLoop/SDK construction without that env uses 5.
  */
 export function resolveModelRetryPolicy(env: NodeJS.ProcessEnv = process.env): ModelRetryPolicy {
