@@ -21,7 +21,8 @@ test("getProviderPreset resolves id, alias, and 1-based index", () => {
   assert.equal(getProviderPreset("ollama")?.provider, "ollama");
   assert.equal(getProviderPreset("local")?.endpoint, "http://localhost:11434/v1");
   assert.equal(getProviderPreset("1")?.id, "deepseek");
-  assert.equal(getProviderPreset("10")?.id, "ollama");
+  // 1-based index must follow the current preset order rather than a fixed slot.
+  assert.equal(getProviderPreset("10")?.id, listProviderPresets()[9].id);
   assert.equal(getProviderPreset("kimi")?.id, "moonshot");
   assert.equal(getProviderPreset("nope"), undefined);
 });

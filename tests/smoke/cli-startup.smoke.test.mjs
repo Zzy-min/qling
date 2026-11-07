@@ -35,6 +35,7 @@ test("cli startup smoke: missing API key exits with setup guidance and no stack 
       ...process.env,
       USERPROFILE: root,
       HOME: root,
+      QLING_LLM_PROVIDER: "deepseek",
       QLING_LLM_ENDPOINT: "https://api.deepseek.com",
       QLING_LLM_API_KEY: "",
       DEEPSEEK_API_KEY: "",
