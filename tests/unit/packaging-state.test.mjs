@@ -18,7 +18,7 @@ test('source validation preserves published 1.4.1 while release gate rejects unp
   const dir=await fixture();const result=await validatePackaging(dir);
   assert.equal(result.sourceVersion,'1.5.0');assert.equal(result.publishedVersion,'1.4.1');assert.deepEqual(result.errors,[]);
   assert.match((await validatePackaging(dir,{release:true})).errors.join(' '),/release pending/);
-  await jsonEdit(dir,'package.json',p=>p.version='1.4.1');assert.deepEqual((await validatePackaging(dir,{release:true})).errors,[]);
+  await jsonEdit(dir,'package.json',p=>p.version='1.4.1');assert.match((await validatePackaging(dir,{release:true})).errors.join(' '),/missing release artifact/);
 });
 test('source version cannot trail published installer state',async()=>{
   const dir=await fixture();await jsonEdit(dir,'package.json',p=>p.version='1.4.0');assert.match((await validatePackaging(dir)).errors.join(' '),/older than published/);
@@ -34,4 +34,28 @@ test('source validation rejects WinGet artifact/hash mismatch and invalid Scoop 
   assert.match((await validatePackaging(dir)).errors.join(' '),/hash differs/);
   await jsonEdit(dir,'packaging/scoop/qling.json',p=>p.architecture['64bit'].url='https://example.invalid/1.4.1');
   assert.match((await validatePackaging(dir)).errors.join(' '),/url does not pin/);
+});
+import { createHash } from 'node:crypto';
+async function equalVersionArtifactFixture() {
+  const dir=await fixture();await jsonEdit(dir,'package.json',p=>p.version='1.4.1');
+  const bytes=Buffer.from('504b05060000000000000000000000000000000000000000','hex'),hash=createHash('sha256').update(bytes).digest('hex');
+  for(const path of ['packaging/scoop/qling.json','packaging/scoop-bucket/qling.json'])await jsonEdit(dir,path,p=>p.architecture['64bit'].hash=hash);
+  for(const path of ['packaging/winget/Zzy-min.qling.yaml','packaging/winget/manifests/Zzy-min/qling/1.4.1/Zzy-min.qling.installer.yaml']){
+    const file=join(dir,path);await writeFile(file,(await readFile(file,'utf8')).replace(/InstallerSha256: [a-f0-9]+/,'InstallerSha256: '+hash));
+  }
+  await mkdir(join(dir,'dist-portable'));
+  await writeFile(join(dir,'dist-portable/qling-win-x64.zip'),bytes);
+  await writeFile(join(dir,'dist-portable/portable-meta.json'),JSON.stringify({version:'1.4.1',zip:'qling-win-x64.zip',size:bytes.length,sha256:hash}));
+  return dir;
+}
+test('equal version release hashes actual artifact bytes, source validation needs no artifact',async()=>{
+  const dir=await equalVersionArtifactFixture();assert.deepEqual((await validatePackaging(dir,{release:true})).errors,[]);
+  await writeFile(join(dir,'dist-portable/qling-win-x64.zip'),'different actual ZIP bytes');
+  assert.match((await validatePackaging(dir,{release:true})).errors.join(' '),/artifact SHA-256/);assert.deepEqual((await validatePackaging(dir)).errors,[]);
+  const missing=await fixture();await jsonEdit(missing,'package.json',p=>p.version='1.4.1');assert.match((await validatePackaging(missing,{release:true})).errors.join(' '),/missing release artifact/);assert.deepEqual((await validatePackaging(missing)).errors,[]);
+});
+test('equal version release requires metadata matching version filename size and digest',async()=>{
+  for(const [field,value] of [['version','1.4.0'],['zip','wrong.zip'],['size',1],['sha256','a'.repeat(64)]]){
+    const dir=await equalVersionArtifactFixture();await jsonEdit(dir,'dist-portable/portable-meta.json',p=>p[field]=value);assert.match((await validatePackaging(dir,{release:true})).errors.join(' '),/portable metadata/);
+  }
 });

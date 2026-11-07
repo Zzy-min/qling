@@ -115,3 +115,47 @@ test('Grok headers cover injected pending discovery, active discovery and infere
   client.client.defaults.adapter=async config=>{check(config.headers);return {status:200,headers:{'content-type':'text/event-stream'},config,data:Readable.from([Buffer.from('data: '+JSON.stringify({choices:[{delta:{content:'ok'}}]})+'\n\ndata: [DONE]\n\n')])};};
   await client.chatCompletions({model:'grok-build',systemPrompt:'test',messages:[{role:'user',content:'test'}],tools:[]});
 });
+
+test('real proxy OpenAI to attached ChatGPT to OpenAI refuses original generic proxy key',async t=>{
+  cleanEnv(t,{QLING_LLM_PROVIDER:'openai',QLING_LLM_STARTUP_PROVIDER:'openai',QLING_LLM_ENDPOINT:'https://proxy.invalid/tenant',QLING_LLM_API_KEY:'ORIGINAL-PROXY-KEY',QLING_MEMORY_WAL_ENABLED:'false'});
+  const {AgentLoop}=await import('../../dist/agent-loop.js');
+  const dir=await mkdtemp(join(tmpdir(),'qling-origin-transitions-'));
+  const agent=new AgentLoop({provider:'openai',endpoint:'https://proxy.invalid/tenant',apiKey:'ORIGINAL-PROXY-KEY',model:'proxy-model',runtime:{fileStateDir:dir}});t.after(()=>agent.shutdown());
+  selected=account;status='ready';const errors=[];
+  const ctx={agentLoop:agent,writeLine(){},writeError:s=>errors.push(s)};
+  await modelCommand.execute(['use','chatgpt'],ctx);assert.equal(agent.getProvider(),'chatgpt');
+  await modelCommand.execute(['use','openai'],ctx);assert.equal(agent.getProvider(),'chatgpt');assert.ok(errors.length);
+  process.env.OPENAI_BASE_URL='https://api.openai.com/v1';
+  await modelCommand.execute(['use','openai'],ctx);assert.equal(agent.getProvider(),'chatgpt');
+  process.env.OPENAI_API_KEY='INDEPENDENT-OFFICIAL-KEY';
+  await modelCommand.execute(['use','openai'],ctx);assert.equal(agent.getProvider(),'openai');assert.equal(agent.getApiKey(),'INDEPENDENT-OFFICIAL-KEY');
+});
+test('actual endpoint-only AgentLoop patch clears bearer for key-free target and refuses keyed target',async t=>{
+  cleanEnv(t,{QLING_MEMORY_WAL_ENABLED:'false'});
+  const {AgentLoop}=await import('../../dist/agent-loop.js');const dir=await mkdtemp(join(tmpdir(),'qling-endpoint-only-'));
+  const agent=new AgentLoop({provider:'openai',endpoint:'https://proxy.invalid/tenant',apiKey:'SYNTHETIC-OLD-KEY',model:'m',runtime:{fileStateDir:dir}});t.after(()=>agent.shutdown());
+  agent.applyLlmSession({endpoint:'http://127.0.0.1:11434/v1'});
+  agent.llmClient.client.defaults.adapter=async config=>{assert.equal(config.headers.get('Authorization'),undefined);return {status:200,headers:{},config,data:{choices:[{message:{content:'ok'}}]}};};
+  await agent.llmClient.chatCompletions({model:'m',systemPrompt:'test',messages:[{role:'user',content:'test'}],tools:[]});
+  assert.throws(()=>agent.applyLlmSession({endpoint:'https://api.openai.com/v1'}),/credential/);
+  assert.throws(()=>agent.applyLlmSession({endpoint:'https://api.openai.com/v1',apiKey:''}),/credential/);
+  assert.throws(()=>agent.applyLlmSession({provider:'mistral',endpoint:'https://api.mistral.ai/v1'}),/credential/);assert.equal(agent.getEndpoint(),'http://127.0.0.1:11434/v1');
+});
+test('same-target CLI/session key wins; destination env precedes vault; managed is revalidated',async t=>{
+  cleanEnv(t,{MISTRAL_API_KEY:'ENV-KEY'});
+  selected={id:'vault',provider:'mistral',method:'api_key',endpoint:'https://api.mistral.ai/v1',model:'codestral-latest'};status='ready';
+  const live=context('mistral',selected.endpoint);live.state.apiKey='EXPLICIT-CLI-KEY';
+  await modelCommand.execute(['use','mistral'],live.ctx);assert.equal(live.state.apiKey,'EXPLICIT-CLI-KEY');
+  const cross=context('deepseek','https://api.deepseek.com');await modelCommand.execute(['use','mistral'],cross.ctx);assert.equal(cross.state.apiKey,'ENV-KEY');
+  delete process.env.MISTRAL_API_KEY;const vault=context('deepseek','https://api.deepseek.com');await modelCommand.execute(['use','mistral'],vault.ctx);assert.equal(vault.state.apiKey,'DESTINATION-VAULT-KEY');
+  selected=account;status='needs_login';const detached=context('chatgpt',account.endpoint);detached.state.apiKey='qling-auth:attached';await modelCommand.execute(['use','chatgpt'],detached.ctx);assert.equal(detached.patches.length,0);
+});
+test('plaintext all-provider output shares exact active endpoint and readiness evidence',async t=>{
+  cleanEnv(t);
+  const p=getProviderPreset('mimo-token-plan'),f=context('mimo',p.endpoint,p.model),lines=[];delete f.ctx.openOptionPicker;f.ctx.writeLine=s=>lines.push(s);
+  await modelCommand.execute(['list','--all'],f.ctx);assert.equal(lines.filter(s=>s.startsWith('✔')).length,1);
+  const local=context('openai','http://localhost:11434/v1');local.state.apiKey='local';const statusLines=[];local.ctx.writeLine=s=>statusLines.push(s);
+  await modelCommand.execute(['status'],local.ctx);assert.match(statusLines.join('\n'),/免Key/);
+  const {formatGroupedModelPickerLines}=await import('../../dist/tui/model-picker.js');
+  const text=formatGroupedModelPickerLines('chatgpt','gpt-4o',{}, {currentEndpoint:account.endpoint,connection:{profile:account,status:'ready'}}).join('\n');assert.match(text,/本地账号就绪/);
+});

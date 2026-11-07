@@ -3,6 +3,7 @@ import {
   getProviderPreset,
   listProviderPresets,
   lookupModelWindow,
+  apiKeyRequiredForEndpoint,
   type ProviderPreset,
 } from "./presets.js";
 import type { AuthProfile } from "../auth/types.js";
@@ -69,6 +70,19 @@ export function isUsableApiKey(key?: string): boolean {
   return Boolean(value && value !== "local" && !value.startsWith("qling-auth:"));
 }
 
+/** Capture user-input credential ownership before publishing mutable session settings.
+ * Dedicated fields survive child processes; provider-specific BASE_URL hints never
+ * rewrite the generic key's original connection.
+ */
+export function captureGenericCredentialOrigin(env: EnvLike = process.env, provider?: string, endpoint?: string): void {
+  if (env.QLING_LLM_API_KEY_PROVIDER || env.QLING_LLM_API_KEY_ENDPOINT) return;
+  const owner = normalizeProviderId(env.QLING_LLM_STARTUP_PROVIDER || env.QLING_LLM_PROVIDER || provider);
+  const base = String(env.QLING_LLM_ENDPOINT || endpoint || getProviderPreset(owner)?.endpoint || "");
+  if (!owner || !base) return;
+  env.QLING_LLM_API_KEY_PROVIDER = owner;
+  env.QLING_LLM_API_KEY_ENDPOINT = normalizeLlmEndpoint(base);
+}
+
 export function providerApiKeyEnv(provider: string): string | undefined {
   return PROVIDER_API_KEY_ENV[normalizeProviderId(provider)];
 }
@@ -104,6 +118,7 @@ export function resolveProviderApiKey(
   env: EnvLike = process.env,
   options: ResolveProviderApiKeyOptions = {}
 ): ResolvedProviderApiKey {
+  captureGenericCredentialOrigin(env, options.startupProvider ?? provider, options.currentEndpoint ?? options.endpoint);
   if (["chatgpt","grok-account"].includes(normalizeProviderId(provider))) {
     return {apiKey:"",source:"none",refused:true,message:"Account mode requires qling login"};
   }
@@ -130,18 +145,20 @@ export function resolveProviderApiKey(
     options.startupProvider ?? env.QLING_LLM_STARTUP_PROVIDER ?? ""
   );
   const generic = String(env.QLING_LLM_API_KEY ?? "").trim();
-  const genericOwnedHere = !startup || startup === keyProvider || startup === normalized;
+  const genericOwner = normalizeProviderId(env.QLING_LLM_API_KEY_PROVIDER);
+  const genericOwnedHere = genericOwner === keyProvider;
   const target = options.endpoint ? normalizeLlmEndpoint(options.endpoint) : undefined;
   const scopedEndpoint = providerScopedBaseUrl(keyProvider, env) ||
-    ((normalizeProviderId(env.QLING_LLM_STARTUP_PROVIDER ?? env.QLING_LLM_PROVIDER) === keyProvider)
-      ? String(env.QLING_LLM_ENDPOINT ?? "") : "");
+    (genericOwner === keyProvider ? String(env.QLING_LLM_API_KEY_ENDPOINT ?? "") : "");
   const switchingEndpoint = normalizeProviderId(options.currentProvider) === keyProvider &&
     normalizeLlmEndpoint(options.currentEndpoint) !== target;
   const specificOwnedHere = !target || (scopedEndpoint
     ? normalizeLlmEndpoint(scopedEndpoint) === target
     : !switchingEndpoint && normalizeLlmEndpoint(preset?.endpoint) === target);
-  const genericEndpointOwned = !target || Boolean(scopedEndpoint && normalizeLlmEndpoint(scopedEndpoint) === target);
-  if (isUsableApiKey(generic) && genericOwnedHere && genericEndpointOwned) {
+  const genericEndpointOwned = !target || normalizeLlmEndpoint(env.QLING_LLM_API_KEY_ENDPOINT) === target;
+  // Keep the legacy unscoped startup lookup order; explicit destination switches
+  // prefer the destination's provider variable before generic/vault fallback.
+  if (!target && isUsableApiKey(generic) && genericOwnedHere) {
     return { apiKey: generic, source: "env", envVar: "QLING_LLM_API_KEY", refused: false };
   }
 
@@ -149,6 +166,9 @@ export function resolveProviderApiKey(
   const specific = envVar ? String(env[envVar] ?? "").trim() : "";
   if (isUsableApiKey(specific) && specificOwnedHere) {
     return { apiKey: specific, source: "env", envVar, refused: false };
+  }
+  if (isUsableApiKey(generic) && genericOwnedHere && genericEndpointOwned) {
+    return { apiKey: generic, source: "env", envVar: "QLING_LLM_API_KEY", refused: false };
   }
 
   if (!requiresKey) {
@@ -327,6 +347,7 @@ export function resolveLlmSettings(
     if (conflict) warnings.push(conflict);
   }
 
+  captureGenericCredentialOrigin(env, provider, endpoint);
   if (!apiKey && !explicitEmptyKey) {
     const resolved = resolveProviderApiKey(provider, env, { startupProvider: provider });
     if (resolved.apiKey) {
@@ -382,6 +403,7 @@ export function alignLoadedLlmConfig(
     const conflict = endpointProviderConflict(llm.provider, llm.endpoint);
     if (conflict) warnings.push(conflict);
   }
+  captureGenericCredentialOrigin(env, llm.provider, llm.endpoint);
   if (!llm.api_key) {
     const resolved = resolveProviderApiKey(llm.provider, env, { startupProvider: llm.provider });
     if (resolved.apiKey) {
@@ -459,17 +481,20 @@ export function isProviderCredentialReady(
 ): CredentialStatus {
   const norm = normalizeProviderId(provider);
   const preset = getProviderPreset(norm);
-  const requiresKey = preset ? preset.requiresApiKey : true;
+  const endpoint = options.endpoint ?? (options.currentProvider === norm ? options.currentEndpoint : undefined) ?? preset?.endpoint;
+  const requiresKey = apiKeyRequiredForEndpoint(endpoint ?? "", norm);
 
   if (!requiresKey || norm === "ollama" || norm === "local") {
     return { ready: true, requiresKey: false, badge: "⚡ 免Key", source: "none" };
   }
 
-  const endpoint = options.endpoint ?? preset?.endpoint;
   const connection = options.connection;
   const profile = connection?.profile;
   const matches = profile?.provider === norm &&
     normalizeLlmEndpoint(profile.endpoint) === normalizeLlmEndpoint(endpoint);
+  if (matches && connection?.status === "ready" && profile?.method === "none") {
+    return { ready: true, requiresKey: false, badge: "⚡ 免Key", source: "session" };
+  }
   if (norm === "chatgpt" || norm === "grok-account") {
     const ready = Boolean(matches && connection?.status === "ready");
     return { ready, requiresKey: true, badge: ready ? "🔒 本地账号就绪" : "○ 需登录", source: ready ? "session" : "none",

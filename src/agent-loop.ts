@@ -64,6 +64,8 @@ import {
 import {
   isHttpEndpoint,
   normalizeLlmEndpoint,
+  captureGenericCredentialOrigin,
+  isUsableApiKey,
   publishProcessLlmSession,
   resolveLlmSettings,
   resolveProviderApiKey,
@@ -1310,6 +1312,7 @@ export class AgentLoop extends AgentEventEmitter {
    * provider 变化且未显式给出 apiKey 时清空旧 key，避免把上一供应商的密钥发给新主机。
    */
   applyLlmSession(patch: LlmSessionPatch): { provider: string; endpoint: string; model: string } {
+    captureGenericCredentialOrigin(process.env, this.config.provider, this.config.endpoint);
     const previousProvider = this.config.provider ?? "";
     if (typeof patch.model === "string" && patch.model.trim()) {
       const invalid = validateModelName(patch.model);
@@ -1324,9 +1327,14 @@ export class AgentLoop extends AgentEventEmitter {
       patch.provider.trim() !== previousProvider;
     const endpointChanged = typeof patch.endpoint === "string" && Boolean(patch.endpoint.trim()) &&
       normalizeLlmEndpoint(patch.endpoint) !== normalizeLlmEndpoint(this.config.endpoint);
-    if (endpointChanged && !providerChanged && patch.apiKey === undefined &&
+    if (endpointChanged && patch.apiKey === undefined &&
       apiKeyRequiredForEndpoint(patch.endpoint!, patch.provider ?? previousProvider)) {
       throw new Error("Endpoint change requires a destination-scoped credential; select a connection");
+    }
+    if (endpointChanged && apiKeyRequiredForEndpoint(patch.endpoint!, patch.provider ?? previousProvider) &&
+      patch.apiKey !== undefined && !isUsableApiKey(patch.apiKey) &&
+      !(["chatgpt", "grok-account"].includes(patch.provider ?? previousProvider) && patch.apiKey.startsWith("qling-auth:"))) {
+      throw new Error("Endpoint change requires a usable destination credential");
     }
 
     if (typeof patch.provider === "string" && patch.provider.trim()) {
@@ -1353,7 +1361,7 @@ export class AgentLoop extends AgentEventEmitter {
         this.config.provider ?? ""
       );
       this.llmSources.apiKey = "session";
-    } else if (providerChanged) {
+    } else if (providerChanged || endpointChanged) {
       this.config.apiKey = resolveSessionApiKey(
         "",
         this.config.endpoint ?? "",

@@ -8,6 +8,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import YAML from "yaml";
+import { createHash } from "node:crypto";
 
 const defaultRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 export async function validatePackaging(root = defaultRoot, { release = false } = {}) {
@@ -110,6 +111,22 @@ if (existsSync(multiInstaller)) {
     if (!existsSync(file)) errors.push(`missing ${name}`);
     else checkWinget(await readFile(file, 'utf8'), name, false);
   }
+}
+if (release) {
+  const artifact = join(root, 'dist-portable', 'qling-win-x64.zip');
+  try {
+    const bytes = await readFile(artifact);
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    if (digest !== String(scoopHash).toLowerCase()) errors.push('release artifact SHA-256 differs from installer manifests');
+    try {
+      const metadata = JSON.parse(await readFile(join(root, 'dist-portable', 'portable-meta.json'), 'utf8'));
+      if (metadata.version !== sourceVersion || metadata.zip !== 'qling-win-x64.zip' ||
+          metadata.size !== bytes.length || metadata.sha256 !== digest ||
+          (metadata.path && resolve(metadata.path) !== resolve(artifact))) {
+        errors.push('portable metadata does not match release artifact version/filename/size/SHA-256/path');
+      }
+    } catch { errors.push('missing or invalid portable metadata for release artifact'); }
+  } catch { errors.push('missing release artifact dist-portable/qling-win-x64.zip'); }
 }
 return { errors, sourceVersion, publishedVersion: version, scoopUrl, scoopHash };
 }

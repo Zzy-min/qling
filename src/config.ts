@@ -1,6 +1,6 @@
 import { loadActiveProfile, resolveProfileCredential } from "./auth/service.js";
 import { validateProfile } from "./auth/types.js";
-import { providerApiKeyEnv, resolveProviderApiKey } from "./providers/resolve-llm.js";
+import { captureGenericCredentialOrigin, providerApiKeyEnv, resolveProviderApiKey } from "./providers/resolve-llm.js";
 import { isManagedProvider, AUTH_MARKER_PREFIX } from "./providers/managed-auth.js";
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
@@ -657,6 +657,7 @@ async function mergeLocalMcpStore(config: QlingConfig, warnings: string[]): Prom
 }
 
 export function applyConfigToProcessEnv(config: QlingConfig): void {
+  captureGenericCredentialOrigin(process.env, config.llm.provider, config.llm.endpoint);
   const startupProvider = process.env.QLING_LLM_STARTUP_PROVIDER || process.env.QLING_LLM_PROVIDER || config.llm.provider;
   process.env.QLING_LLM_PROVIDER = config.llm.provider;
   process.env.QLING_LLM_MODEL = config.llm.model;

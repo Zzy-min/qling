@@ -22,7 +22,7 @@ import {
 import { listRemoteModels } from "../providers/remote-models.js";
 import { inspectActiveConnection, resolveProfileCredential } from "../auth/service.js";
 import { AUTH_MARKER_PREFIX } from "../providers/managed-auth.js";
-import { normalizeLlmEndpoint, isUsableApiKey } from "../providers/resolve-llm.js";
+import { captureGenericCredentialOrigin, normalizeLlmEndpoint, isUsableApiKey } from "../providers/resolve-llm.js";
 import { openOptionPickerOrFallback } from "../tui/option-picker-helpers.js";
 import {
   buildGroupedModelPickerSpec,
@@ -61,11 +61,20 @@ export const modelCommand: SlashCommand = {
     const unknownProvider = presetsForProvider(currentProvider).length === 0;
     let showCatalogHint = true;
     const stateDir = loop?.getRuntimeRootDir?.();
+    captureGenericCredentialOrigin(process.env, currentProvider, currentEndpoint);
     const connection = stateDir ? await inspectActiveConnection(stateDir) : undefined;
     const evidence = { currentProvider, currentEndpoint, sessionApiKey: sessionKey, connection };
     const resolveConnectionKey = async (provider: string, endpoint: string): Promise<string | null> => {
       const latest = stateDir ? await inspectActiveConnection(stateDir) : undefined;
       const profile = latest?.profile;
+      const sameTarget = provider === currentProvider && normalizeLlmEndpoint(endpoint) === normalizeLlmEndpoint(currentEndpoint);
+      const managed = provider === "chatgpt" || provider === "grok-account";
+      if (!managed && sameTarget && isUsableApiKey(sessionKey)) return sessionKey;
+      const resolved = resolveProviderApiKey(provider, process.env, {
+        ...evidence, endpoint, sameProvider: false,
+        startupProvider: loop?.getStartupProvider?.() ?? currentProvider,
+      });
+      if (!managed && !resolved.refused && isUsableApiKey(resolved.apiKey)) return resolved.apiKey;
       if (profile?.provider === provider && normalizeLlmEndpoint(profile.endpoint) === normalizeLlmEndpoint(endpoint) && latest?.status === "ready") {
         if (profile.method === "chatgpt_oauth" || profile.method === "grok_cli_session") return AUTH_MARKER_PREFIX + profile.id;
         if (profile.method === "none") return "";
@@ -74,10 +83,6 @@ export const modelCommand: SlashCommand = {
           if (isUsableApiKey(key)) return key;
         } catch { /* A changed/unavailable vault must not switch the session. */ }
       }
-      const resolved = resolveProviderApiKey(provider, process.env, {
-        ...evidence, endpoint, sameProvider: provider === currentProvider,
-        startupProvider: loop?.getStartupProvider?.() ?? currentProvider,
-      });
       if (resolved.refused) { context.writeError(`❌ ${resolved.message}`); return null; }
       return resolved.apiKey;
     };
@@ -288,7 +293,7 @@ export const modelCommand: SlashCommand = {
           context.writeLine(`当前      : ${currentProvider} · ${currentModel}`);
           context.writeLine(`Endpoint  : ${endpointLabel}`);
           if (allRequested) {
-            for (const line of formatGroupedModelPickerLines(currentProvider, currentModel, process.env)) {
+            for (const line of formatGroupedModelPickerLines(currentProvider, currentModel, process.env, evidence)) {
               context.writeLine(line);
             }
           } else {

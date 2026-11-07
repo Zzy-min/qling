@@ -229,20 +229,28 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
 export function formatGroupedModelPickerLines(
   currentProvider?: string,
   currentModel?: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  evidence: LocalConnectionEvidence = {},
 ): string[] {
   const sections = listAllGroupedProviderModelEntries(currentProvider, currentModel);
+  const spec = buildGroupedModelPickerSpec({currentProvider, currentModel,
+    currentEndpoint: evidence.currentEndpoint, credentialEvidence: evidence, env,
+    callbacks: {applyModel() {}, applyPreset() {}, writeNotice() {}, writeError() {}}});
+  const activeId = spec.selectedId;
   const lines: string[] = [];
   lines.push("范围      : 全部模型提供商（按服务商分组 · Codex Router 增强）");
   let totalIdx = 1;
 
   for (const section of sections) {
-    const cred = isProviderCredentialReady(section.providerId, env);
-    const currBadge = section.isCurrent ? " ★ 当前" : ` [${cred.badge}]`;
+    const cred = isProviderCredentialReady(section.providerId, env, evidence);
+    const currBadge = `${section.isCurrent ? " ★ 当前" : ""} [${cred.badge}]`;
     lines.push(`\n[${section.displayName}${currBadge}]`);
 
     for (const entry of section.entries) {
-      const isCur = section.isCurrent && entry.model.toLowerCase() === (currentModel ?? "").toLowerCase();
+      const endpoint = entry.presetId ? getProviderPreset(entry.presetId)?.endpoint :
+        section.isCurrent ? evidence.currentEndpoint : presetsForProvider(section.providerId)[0]?.endpoint;
+      const rowId = `${section.providerId}:${normalizeLlmEndpoint(endpoint)}:${entry.id}`;
+      const isCur = rowId === activeId;
       const marker = isCur ? "✔" : " ";
       const desc = getModelDescription(entry.model, section.displayName);
       lines.push(`${marker} ${String(totalIdx++).padStart(3, " ")}. ${entry.model.padEnd(28)} (${desc})`);
