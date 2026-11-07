@@ -17,7 +17,7 @@ import { markOnboardingComplete } from "../onboarding/tutorial.js";
 import { isHttpEndpoint, validateModelName } from "../providers/resolve-llm.js";
 import * as os from "os";
 import { getLocalizedText } from "../i18n/index.js";
-import { apiKeyRequiredForEndpoint, listProviderPresets } from "../providers/presets.js";
+import { apiKeyRequiredForEndpoint, getProviderPreset, listProviderModelEntries, listProviderPresets } from "../providers/presets.js";
 
 export interface SetupEnvInput {
   provider: string;
@@ -121,6 +121,37 @@ interface WizardServices {
   openBrowser?: (url: string) => Promise<void>;
 }
 export type SetupResult = { status: "saved"; profile: AuthProfile } | { status: "cancelled" | "skipped" };
+export function renderSetupBox(title: string, lines: string[]): string {
+  const visibleLen = (s: string) => s.replace(/[\u4e00-\u9fa5]/g, "aa").length;
+  const maxContentWidth = Math.max(
+    title.length + 6,
+    ...lines.map((l) => visibleLen(l))
+  );
+  const width = Math.min(Math.max(maxContentWidth + 4, 62), 80);
+  const titlePart = ` ${title} `;
+  const remain = Math.max(0, width - visibleLen(titlePart) - 1);
+  const top = `╭─${titlePart}${"─".repeat(remain)}╮`;
+  const bottom = `╰${"─".repeat(width)}╯`;
+  const formattedLines = lines.map((line) => {
+    const pad = Math.max(0, width - visibleLen(line) - 2);
+    return `│ ${line}${" ".repeat(pad)} │`;
+  });
+  return [top, ...formattedLines, bottom].join("\n");
+}
+
+export function renderWelcomeMessage(): string {
+  const box = renderSetupBox("轻灵 Qling · 快速连接与模型配置向导", [
+    "欢迎使用 Qling 连接向导：",
+    "  1. ★ ChatGPT 账号 (免 API Key，支持 OAuth 订阅授权)",
+    "  2. ★ Grok 账号 (复用 xAI 官方 CLI 本地会话)",
+    "  3. 🔒 API Key 直连 (DeepSeek / 通义千问 / Kimi / Claude / OpenAI 等)",
+    "  4. ○ 本地模型 (Ollama / Local，免 Key 本地运行)",
+    "  5. 稍后配置",
+    "快捷提示：Ctrl+C / Esc / /cancel 取消；/back 返回连接选择。",
+  ]);
+  return `${box}\n欢迎使用 Qling：1. ChatGPT 账号  2. Grok 账号  3. API Key  4. 本地模型  5. 稍后配置\nCtrl+C / Esc / /cancel 取消；/back 返回连接选择。`;
+}
+
 class CancelSetup extends Error { }
 class BackSetup extends Error { }
 export async function runConnectionWizard(options: {
@@ -142,7 +173,7 @@ export async function runConnectionWizard(options: {
     return answer.trim();
   };
   try {
-    prompt.write("\n欢迎使用 Qling：1. ChatGPT 账号  2. Grok 账号  3. API Key  4. 本地模型  5. 稍后配置\nCtrl+C / Esc / /cancel 取消；/back 返回连接选择。");
+    prompt.write("\n" + renderWelcomeMessage());
     while (true) {
       try {
         const choice = options.account === "chatgpt" ? "1" : options.account === "grok" ? "2" : await ask("连接方式 [1]: ") || "1";
@@ -160,9 +191,19 @@ export async function runConnectionWizard(options: {
           let provider = "ollama", endpoint = "http://localhost:11434/v1", model = "llama3", requiresKey = false;
           if (choice === "3") {
             const presets = listProviderPresets();
+            prompt.write(
+              "\n" +
+              renderSetupBox(
+                "请选择 API Key 提供商（输入序号或简称如 ds, qwen, kimi, claude）",
+                [
+                  ...presets.map((p, i) => `  ${i + 1}. ${p.displayName} (${p.provider})`),
+                  `  ${presets.length + 1}. 自定义兼容 API`,
+                ]
+              )
+            );
             prompt.write(presets.map((p, i) => `${i + 1}. ${p.displayName}`).join("\n") + `\n${presets.length + 1}. 自定义兼容 API`);
             const selected = await ask("提供商 [1]: ") || "1";
-            const preset = presets[Number(selected) - 1] ?? presets.find(p => p.id === selected);
+            const preset = presets[Number(selected) - 1] ?? presets.find(p => p.id === selected) ?? getProviderPreset(selected);
             if (preset) { provider = preset.provider; endpoint = preset.endpoint; model = preset.model; requiresKey = preset.requiresApiKey; }
             else if (selected === String(presets.length + 1)) { provider = await ask("Provider 名称 [custom]: ") || "custom"; endpoint = ""; model = ""; requiresKey = true; }
             else { prompt.write("请选择列表中的提供商。"); continue; }
@@ -190,7 +231,20 @@ export async function runConnectionWizard(options: {
           if (catalog.ok) models = catalog.models;
           else prompt.write("账号模型目录不可用；可手动填写，尚未验证。");
         }
-        if (models.length) prompt.write(models.map((m, i) => `${i + 1}. ${m}`).join("\n"));
+        if (!models.length && profile.provider) {
+          const entries = listProviderModelEntries(profile.provider, profile.model);
+          models = entries.map((e) => e.model);
+        }
+        if (models.length) {
+          prompt.write(
+            "\n" +
+            renderSetupBox(
+              `可选模型列表 [${profile.provider}]（输入编号快速选择，或直接回车使用默认）`,
+              models.map((m, i) => `  ${i + 1}. ${m}${m === profile.model ? " ★ (默认推荐)" : ""}`)
+            )
+          );
+          prompt.write(models.map((m, i) => `${i + 1}. ${m}`).join("\n"));
+        }
         prompt.write("可选目录编号或手动模型 ID；模型推理尚未验证，保存不会发送付费测试请求。");
         const answer = await ask(`模型 ID [${models[0] || profile.model}]: `);
         profile.model = models[Number(answer) - 1] || answer || models[0] || profile.model;
@@ -200,7 +254,20 @@ export async function runConnectionWizard(options: {
           : profile.method === "grok_cli_session" ? "凭据由官方 Grok Build CLI 存储和管理；Qling 仅保存本地连接引用"
           : process.platform === "win32" ? "当前 Windows 用户 DPAPI 加密"
           : "私有目录、0600 文件权限保护；并非系统钥匙串加密";
-        prompt.write(`Provider: ${profile.provider}\n数据发送至: ${profile.endpoint}\nModel: ${profile.model}（尚未验证）\n认证方式: ${profile.method}${credentialCopy ? `\n凭据: ${credentialCopy}` : ""}\n连接保存至: ${path.join(options.stateDir, "auth")}；保留现有 .env 和高级设置。`);
+        const summaryCard = renderSetupBox("连接配置摘要", [
+          `提供商   : ${profile.provider}`,
+          `接口地址 : ${profile.endpoint}`,
+          `默认模型 : ${profile.model} ★（尚未验证）`,
+          `认证方式 : ${profile.method}`,
+          ...(credentialCopy ? [`凭据存储 : ${credentialCopy}`] : []),
+          `配置目录 : ${path.join(options.stateDir, "auth")}`,
+        ]);
+        prompt.write(
+          "\n" +
+          summaryCard +
+          "\n" +
+          `Provider: ${profile.provider}\n数据发送至: ${profile.endpoint}\nModel: ${profile.model}（尚未验证）\n认证方式: ${profile.method}${credentialCopy ? `\n凭据: ${credentialCopy}` : ""}\n连接保存至: ${path.join(options.stateDir, "auth")}；保留现有 .env 和高级设置。`
+        );
         while (true) {
           const confirmation = (await ask("保存并使用此连接？[Y/n]: ")).toLowerCase();
           if (["n", "no"].includes(confirmation)) throw new CancelSetup();

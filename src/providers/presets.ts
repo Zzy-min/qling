@@ -43,6 +43,8 @@ export interface ModelWindowMeta {
  */
 export const KNOWN_MODEL_WINDOWS: Record<string, ModelWindowMeta> = {
   // --- DeepSeek ---
+  "deepseek-chat": { contextWindow: 128000, maxOutputTokens: 8192 },
+  "deepseek-reasoner": { contextWindow: 128000, maxOutputTokens: 8192 },
   "deepseek-flash": { contextWindow: 1000000, maxOutputTokens: 393216 },
   "deepseek-v4-pro": { contextWindow: 1000000, maxOutputTokens: 393216 },
   "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 393216 },
@@ -399,6 +401,7 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
 };
 
 const ALIASES: Record<string, string> = {
+  ds: "deepseek",
   local: "ollama",
   ollama: "ollama",
   mistral: "mistral",
@@ -522,6 +525,8 @@ const MODEL_PROVIDER_AFFINITY: Record<string, string> = {
   "zai-glm-5-3-flash": "mistral",
 
   // DeepSeek
+  "deepseek-chat": "deepseek",
+  "deepseek-reasoner": "deepseek",
   "deepseek-flash": "deepseek",
   "deepseek-v4-pro": "deepseek",
   "deepseek-v4-flash": "deepseek",
