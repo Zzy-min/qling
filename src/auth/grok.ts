@@ -77,3 +77,12 @@ export async function runOfficialGrokLogin(
     );
   });
 }
+
+export function getGrokCliHeaders(): Record<string, string> {
+  return {
+    "X-XAI-Token-Auth": "xai-grok-cli",
+    "User-Agent": "xai-grok-cli",
+    "x-grok-client-version": process.env.GROK_CLI_VERSION || "1.0.78",
+    "x-grok-client-identifier": "grok-shell",
+  };
+}

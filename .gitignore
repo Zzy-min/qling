@@ -15,6 +15,9 @@ dist/
 /logs/
 *grader*.json
 *trajectory*.jsonl
+gold*.json
+qling__*.json
+archive_worktree_data/
 
 # Temp / debug files
 *.ps1

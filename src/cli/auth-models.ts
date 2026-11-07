@@ -1,5 +1,5 @@
 import { validateProfile, type AuthProfile, type AuthCredential } from "../auth/types.js";
-import { readGrokCredential } from "../auth/grok.js";
+import { readGrokCredential, getGrokCliHeaders } from "../auth/grok.js";
 import type { RemoteModelList } from "../providers/remote-models.js";
 /** Pending account only: fixed official origin, no activation/refresh/inference. */
 export async function listPendingAccountModels(profile: AuthProfile, credential?: AuthCredential,
@@ -13,7 +13,7 @@ export async function listPendingAccountModels(profile: AuthProfile, credential?
     options.signal?.throwIfAborted();
     if (!c?.accessToken) return { ok: false, models: [] };
     const headers: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${c.accessToken}` };
-    if (profile.method === "grok_cli_session") { headers["X-XAI-Token-Auth"] = "xai-grok-cli"; headers["x-grok-model-override"] = profile.model; }
+    if (profile.method === "grok_cli_session") { Object.assign(headers, getGrokCliHeaders()); headers["x-grok-model-override"] = profile.model; }
     const response = await (options.fetchImpl ?? fetch)(`${profile.endpoint}/models`, { headers, signal, redirect: "error" });
     if (!response.ok) return { ok: false, models: [] };
     const body = await response.json() as { models?: { slug?: string; visibility?: string }[]; data?: { id?: string }[] };

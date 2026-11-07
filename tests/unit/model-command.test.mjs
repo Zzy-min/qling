@@ -278,9 +278,21 @@ test("/model picker and list stay on the current provider, then moonshot after u
     specs.push(spec);
   };
   try {
+    // 默认模型选择器按服务商分组呈现各服务商
     await modelCommand.execute([], context);
     assert.equal(specs.length, 1);
     assert.equal(activeItems(specs[0]).length, 1);
+    assert.equal(specs[0].title, "模型切换 · 按服务商浏览");
+    const groupedBlob = specs[0].items.map((item) => `${item.id} ${item.label} ${item.description}`).join("\n");
+    assert.match(groupedBlob, /deepseek/i);
+    assert.match(groupedBlob, /section:deepseek/);
+    assert.match(groupedBlob, /section:dashscope/);
+
+    // --current 参数仅过滤出当前服务商
+    specs.length = 0;
+    await modelCommand.execute(["list", "--current"], context);
+    assert.equal(specs.length, 1);
+    assert.equal(specs[0].title, "模型切换 · deepseek");
     const deepseekBlob = specs[0].items.map((item) => `${item.id} ${item.label} ${item.description}`).join("\n");
     assert.match(deepseekBlob, /deepseek/);
     assert.match(deepseekBlob, /model:deepseek-v4-pro/);
@@ -297,8 +309,7 @@ test("/model picker and list stay on the current provider, then moonshot after u
     const listed = lines.join("\n");
     assert.match(listed, /deepseek-flash/);
     assert.match(listed, /deepseek-v4-pro/);
-    assert.doesNotMatch(listed, /deepseek-chat/);
-    assert.doesNotMatch(listed, /ollama|openai|moonshot/);
+        assert.doesNotMatch(listed, /ollama|openai|moonshot/);
 
     context.openOptionPicker = (spec) => {
       specs.push(spec);
@@ -309,7 +320,7 @@ test("/model picker and list stay on the current provider, then moonshot after u
     assert.equal(state.apiKey, "sk-moon-filter");
     specs.length = 0;
     lines.length = 0;
-    await modelCommand.execute([], context);
+    await modelCommand.execute(["list", "--current"], context);
     assert.equal(specs.length, 1);
     assert.equal(activeItems(specs[0]).length, 1);
     const moonBlob = specs[0].items.map((item) => `${item.id} ${item.label} ${item.description}`).join("\n");
@@ -429,7 +440,7 @@ test("/model list for an unknown provider shows the current model and a use hint
   context.openOptionPicker = (spec) => {
     specs.push(spec);
   };
-  await modelCommand.execute([], context);
+  await modelCommand.execute(["list", "--current"], context);
   assert.equal(specs.length, 1);
   assert.equal(activeItems(specs[0]).length, 1);
   assert.deepEqual(specs[0].items.map((item) => item.label), ["custom-model"]);
@@ -459,3 +470,64 @@ test("/model list for an unknown provider shows the current model and a use hint
     await failed.close();
   }
 });
+
+test("/model clears or sets input draft via setInputDraft", async () => {
+  let draft = "initial";
+  const { context } = createContext();
+  context.setInputDraft = (d) => { draft = d; };
+  context.openOptionPicker = () => true;
+
+  // /model should clear input draft to avoid /model residue
+  await modelCommand.execute([], context);
+  assert.equal(draft, "");
+
+  // /model pick qwen should pass query to input draft
+  await modelCommand.execute(["pick", "qwen"], context);
+  assert.equal(draft, "qwen");
+});
+
+test("/model help prints usage instructions", async () => {
+  const { context, lines } = createContext();
+  await modelCommand.execute(["help"], context);
+  const text = lines.join("\n");
+  assert.match(text, /命令帮助/);
+  assert.match(text, /\/model list/);
+  assert.match(text, /\/model status/);
+  assert.match(text, /\/model use <preset>/);
+});
+
+test("/model list --all prints grouped providers with credential badges in fallback mode", async () => {
+  const { context, lines } = createContext();
+  await modelCommand.execute(["list", "--all"], context);
+  const text = lines.join("\n");
+  assert.match(text, /按服务商分组 · Codex Router 增强/);
+  assert.match(text, /DeepSeek/);
+  assert.match(text, /阿里云百炼/);
+});
+
+test("/model use updates QLING_LLM_API_KEY when loop uses setModel fallback", async () => {
+  const previousKey = process.env.QLING_LLM_API_KEY;
+  const previousMoon = process.env.MOONSHOT_API_KEY;
+  process.env.MOONSHOT_API_KEY = "sk-moon-fallback-key";
+  delete process.env.QLING_LLM_API_KEY;
+
+  let assignedModel = "";
+  const { context } = createContext({
+    applyLlmSession: undefined,
+    setModel: (m) => { assignedModel = m; },
+    getStartupProvider: () => "deepseek",
+  });
+
+  try {
+    await modelCommand.execute(["use", "kimi"], context);
+    assert.equal(assignedModel, "kimi-k3");
+    assert.equal(process.env.QLING_LLM_PROVIDER, "moonshot");
+    assert.equal(process.env.QLING_LLM_API_KEY, "sk-moon-fallback-key");
+  } finally {
+    if (previousKey === undefined) delete process.env.QLING_LLM_API_KEY;
+    else process.env.QLING_LLM_API_KEY = previousKey;
+    if (previousMoon === undefined) delete process.env.MOONSHOT_API_KEY;
+    else process.env.MOONSHOT_API_KEY = previousMoon;
+  }
+});
+

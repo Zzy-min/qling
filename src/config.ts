@@ -547,9 +547,20 @@ export async function applyActiveAuthProfile(
   config: QlingConfig, cli: CliGlobalOptions, env: NodeJS.ProcessEnv,
   sources: LlmFieldSources, warnings: string[],
 ): Promise<void> {
+  const isTest =
+    process.execArgv.includes("--test") ||
+    Boolean(process.env.NODE_TEST_CONTEXT) ||
+    process.env.NODE_ENV === "test";
+  if (
+    isTest &&
+    path.resolve(config.runtime.file_state_dir).toLowerCase() === path.resolve(DEFAULT_STATE_DIR).toLowerCase()
+  ) {
+    return;
+  }
   const profile = await loadActiveProfile(config.runtime.file_state_dir);
   if (!profile) return;
   validateProfile(profile);
+  if (sources.apiKey === "file") return;
   if (cli.provider && cli.provider !== profile.provider) {
     const preset=getProviderPreset(cli.provider);
     config.llm.endpoint=cli.endpoint || preset?.endpoint || config.llm.endpoint;

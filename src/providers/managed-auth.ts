@@ -1,5 +1,6 @@
 import { loadActiveProfile, resolveProfileCredential } from '../auth/service.js';
 import { CHATGPT_ENDPOINT, GROK_ENDPOINT, validateProfile } from '../auth/types.js';
+import { getGrokCliHeaders } from '../auth/grok.js';
 export const AUTH_MARKER_PREFIX = 'qling-auth:';
 export function isManagedProvider(provider?: string): boolean {
   return provider === 'chatgpt' || provider === 'grok-account';
@@ -28,6 +29,6 @@ export async function managedRequestHeaders(options: {
   if (!credential || credential.startsWith(AUTH_MARKER_PREFIX)) throw Error('Account needs login; run qling login');
   return {
     Authorization: `Bearer ${credential}`,
-    ...(options.provider === 'grok-account' ? { 'X-XAI-Token-Auth': 'xai-grok-cli' } : {}),
+    ...(options.provider === 'grok-account' ? getGrokCliHeaders() : {}),
   };
 }

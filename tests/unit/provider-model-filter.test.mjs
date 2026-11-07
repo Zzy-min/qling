@@ -61,13 +61,23 @@ test("provider catalogs keep known siblings and drop other providers", () => {
   ]);
   assert.deepEqual(providerModelNames("moonshot", "moonshot-v1-8k"), [
     "kimi-k3",
+    "kimi-k3.1-pro",
     "kimi-k2.7-code",
     "kimi-k2.6",
     "moonshot-v1-8k",
+    "moonshot-v1-32k",
+    "moonshot-v1-128k",
   ]);
   assert.deepEqual(providerModelNames("openai", "gpt-4o"), [
     "gpt-6-astra",
     "gpt-6.1-sol",
+    "o4-mini",
+    "o3",
+    "o3-mini",
+    "o1",
+    "o1-mini",
+    "gpt-oss-120b",
+    "gpt-oss-20b",
     "gpt-4o",
     "gpt-4o-mini",
   ]);

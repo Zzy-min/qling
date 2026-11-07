@@ -26,6 +26,10 @@ export const PROVIDER_API_KEY_ENV: Record<string, string> = {
   minimax: "MINIMAX_API_KEY",
   mimo: "MIMO_API_KEY",
   siliconflow: "SILICONFLOW_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 export interface ResolveProviderApiKeyOptions {
@@ -402,4 +406,49 @@ export function resolveActiveLlm(env: EnvLike = process.env): ResolvedLlmSetting
     };
   }
   return resolveLlmSettings({}, env);
+}
+
+export interface CredentialStatus {
+  ready: boolean;
+  requiresKey: boolean;
+  badge: string;
+  source: "env" | "session" | "none";
+  message?: string;
+}
+
+export function isProviderCredentialReady(
+  provider: string,
+  env: EnvLike = process.env,
+  _options: { authStateDir?: string } = {}
+): CredentialStatus {
+  const norm = normalizeProviderId(provider);
+  const preset = getProviderPreset(norm);
+  const requiresKey = preset ? preset.requiresApiKey : true;
+
+  if (!requiresKey || norm === "ollama" || norm === "local") {
+    return { ready: true, requiresKey: false, badge: "⚡ 免Key", source: "none" };
+  }
+
+  if (norm === "chatgpt" || norm === "grok-account") {
+    return { ready: true, requiresKey: true, badge: "🔒 账号", source: "session" };
+  }
+
+  const envName = providerApiKeyEnv(norm);
+  const val = envName ? String(env[envName] ?? "").trim() : "";
+  if (val) {
+    return { ready: true, requiresKey: true, badge: "✓ 已就绪", source: "env" };
+  }
+
+  const startup = String(env.QLING_LLM_STARTUP_PROVIDER ?? env.QLING_LLM_PROVIDER ?? "").trim().toLowerCase();
+  if (startup === norm && String(env.QLING_LLM_API_KEY ?? "").trim()) {
+    return { ready: true, requiresKey: true, badge: "✓ 已就绪", source: "env" };
+  }
+
+  return {
+    ready: false,
+    requiresKey: true,
+    badge: "○ 需配Key",
+    source: "none",
+    message: envName ? `未配置环境变量 ${envName}` : "缺少 API Key",
+  };
 }

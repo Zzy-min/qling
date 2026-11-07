@@ -42,27 +42,88 @@ export interface ModelWindowMeta {
  * 保留且未改数值：gpt-4o、gpt-4o-mini、glm-4、qwen-plus、Qwen/Qwen2.5-7B-Instruct、llama3。
  */
 export const KNOWN_MODEL_WINDOWS: Record<string, ModelWindowMeta> = {
+  // --- DeepSeek ---
   "deepseek-flash": { contextWindow: 1000000, maxOutputTokens: 393216 },
   "deepseek-v4-pro": { contextWindow: 1000000, maxOutputTokens: 393216 },
   "deepseek-v4-flash": { contextWindow: 1000000, maxOutputTokens: 393216 },
+
+  // --- 阿里云百炼 (DashScope / 通义千问) ---
+  "qwen3.8-max": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3.7-max": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3.8-plus": { contextWindow: 1000000, maxOutputTokens: 131072 },
   "qwen3.7-plus": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3.6-plus": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3.5-plus": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3.8-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3.7-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3-coder-plus": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen3-coder-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "qwen-max": { contextWindow: 128000, maxOutputTokens: 8192 },
   "qwen-plus": { contextWindow: 128000 },
+  "Qwen/Qwen2.5-7B-Instruct": { contextWindow: 32768 },
+
+  // --- 智谱清言 (Zhipu GLM) ---
   "glm-5.3": { contextWindow: 1000000, maxOutputTokens: 131072 },
   "glm-5.3-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
   "glm-5.2": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "glm-5.1": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "glm-5": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "glm-4.7": { contextWindow: 128000, maxOutputTokens: 16384 },
+  "glm-4-plus": { contextWindow: 128000, maxOutputTokens: 16384 },
   "glm-4": { contextWindow: 128000 },
+
+  // --- 月之暗面 (Moonshot Kimi) ---
+  "kimi-k3.1-pro": { contextWindow: 1000000, maxOutputTokens: 65536 },
   "kimi-k3": { contextWindow: 1000000 },
   "kimi-k2.7-code": { contextWindow: 256000 },
   "kimi-k2.6": { contextWindow: 256000 },
+
+  // --- Anthropic (Claude) ---
+  "claude-opus-5-5": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "claude-sonnet-5-5": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "claude-haiku-5-5": { contextWindow: 1000000, maxOutputTokens: 131072 },
+  "claude-fable-5-1": { contextWindow: 500000, maxOutputTokens: 65536 },
+  "claude-3-7-sonnet-latest": { contextWindow: 200000, maxOutputTokens: 64000 },
+  "claude-3-5-sonnet-latest": { contextWindow: 200000, maxOutputTokens: 8192 },
+  "claude-3-5-haiku-latest": { contextWindow: 200000, maxOutputTokens: 8192 },
+
+  // --- Google Gemini ---
+  "gemini-4-argon": { contextWindow: 2000000, maxOutputTokens: 131072 },
+  "gemini-3.8-flash": { contextWindow: 1000000, maxOutputTokens: 65536 },
+  "gemini-3.5-pro": { contextWindow: 1000000, maxOutputTokens: 65536 },
+  "gemini-3.5-flash": { contextWindow: 1000000, maxOutputTokens: 65536 },
+  "gemini-2.5-pro": { contextWindow: 1000000, maxOutputTokens: 65536 },
+  "gemini-2.5-flash": { contextWindow: 1000000, maxOutputTokens: 65536 },
+  "gemini-2.0-flash": { contextWindow: 1000000, maxOutputTokens: 8192 },
+
+  // --- OpenAI ---
+  "gpt-6-astra": { contextWindow: 1050000, maxOutputTokens: 131072 },
+  "gpt-6.1-sol": { contextWindow: 1050000, maxOutputTokens: 131072 },
+  "o4-mini": { contextWindow: 200000, maxOutputTokens: 100000 },
+  "o3": { contextWindow: 200000, maxOutputTokens: 100000 },
+  "o3-mini": { contextWindow: 200000, maxOutputTokens: 100000 },
+  "o1": { contextWindow: 200000, maxOutputTokens: 100000 },
+  "o1-mini": { contextWindow: 128000, maxOutputTokens: 65536 },
+  "gpt-4o": { contextWindow: 128000, maxOutputTokens: 16384 },
+  "gpt-4o-mini": { contextWindow: 128000, maxOutputTokens: 16384 },
+
+  // --- MiniMax & Xiaomi ---
+  "minimax-m3.1-flash": { contextWindow: 1000000, maxOutputTokens: 65536 },
   "MiniMax-M3": { contextWindow: 1000000 },
   "MiniMax-M2.7": { contextWindow: 204800 },
   "mimo-v2.6-pro": { contextWindow: 1000000, maxOutputTokens: 131072 },
   "mimo-v2.6-flash": { contextWindow: 1000000, maxOutputTokens: 131072 },
-  "gpt-6-astra": { contextWindow: 1050000, maxOutputTokens: 131072 },
-  "gpt-6.1-sol": { contextWindow: 1050000, maxOutputTokens: 131072 },
-  "gpt-4o": { contextWindow: 128000, maxOutputTokens: 16384 },
-  "gpt-4o-mini": { contextWindow: 128000, maxOutputTokens: 16384 },
-  "Qwen/Qwen2.5-7B-Instruct": { contextWindow: 32768 },
+
+  // --- Mistral AI ---
+  "deepseek-v4-1-flash-1017": { contextWindow: 128000, maxOutputTokens: 16384 },
+  "codestral-latest": { contextWindow: 256000, maxOutputTokens: 32768 },
+  "codestral-2508": { contextWindow: 256000, maxOutputTokens: 32768 },
+  "mistral-large-latest": { contextWindow: 128000, maxOutputTokens: 32768 },
+  "mistral-small-latest": { contextWindow: 128000, maxOutputTokens: 32768 },
+  "mistral-vibe-cli-latest": { contextWindow: 256000, maxOutputTokens: 32768 },
+  "zai-glm-5-3": { contextWindow: 128000, maxOutputTokens: 32768 },
+
+  // --- Local / Other ---
   llama3: { contextWindow: 8192 },
 };
 
@@ -75,6 +136,7 @@ export const RETIRED_MODELS: Record<string, string> = {
   "moonshot-v1-8k": "kimi-k3",
   "moonshot-v1-32k": "kimi-k3",
   "moonshot-v1-128k": "kimi-k3",
+  "mimo-v2.5-pro": "mimo-v2.6-pro",
   "MiMo-V2.5-Pro": "mimo-v2.6-pro",
 };
 
@@ -120,23 +182,57 @@ export const PROVIDER_PRESET_ORDER: string[] = [
   "mimo",
   "mimo-token-plan",
   "siliconflow",
+  "mistral",
   "openai",
+  "anthropic",
+  "gemini",
+  "openrouter",
   "ollama",
   "xai",
 ];
 
 const PRESET_MAP: Record<string, ProviderPreset> = {
-  xai: {id:"xai",displayName:"xAI API",provider:"xai",endpoint:"https://api.x.ai/v1",model:"grok-4",requiresApiKey:true},
-  chatgpt: {id:"chatgpt",displayName:"ChatGPT account",provider:"chatgpt",endpoint:"https://api.openai.com/v1",model:"gpt-6.1-sol",requiresApiKey:true,tags:["account"]},
-  "grok-account": {id:"grok-account",displayName:"Grok account",provider:"grok-account",endpoint:"https://cli-chat-proxy.grok.com/v1",model:"grok-build",requiresApiKey:true,tags:["account"]},
+  xai: {
+    id: "xai",
+    displayName: "xAI (Grok)",
+    provider: "xai",
+    endpoint: "https://api.x.ai/v1",
+    model: "grok-2-latest",
+    keyHint: "xAI API Key",
+    requiresApiKey: true,
+    tags: ["global"],
+    contextWindow: 131072,
+    maxOutputTokens: 8192,
+  },
+  chatgpt: {
+    id: "chatgpt",
+    displayName: "ChatGPT account",
+    provider: "chatgpt",
+    endpoint: "https://api.openai.com/v1",
+    model: "gpt-6.1-sol",
+    requiresApiKey: true,
+    tags: ["account"],
+  },
+  "grok-account": {
+    id: "grok-account",
+    displayName: "Grok account",
+    provider: "grok-account",
+    endpoint: "https://cli-chat-proxy.grok.com/v1",
+    model: "grok-build",
+    requiresApiKey: true,
+    tags: ["account"],
+  },
   deepseek: {
     id: "deepseek",
     displayName: "DeepSeek",
     provider: "deepseek",
     endpoint: "https://api.deepseek.com",
     model: "deepseek-flash",
+    keyHint: "DeepSeek API Key",
     requiresApiKey: true,
     tags: ["china", "recommended"],
+    contextWindow: 1000000,
+    maxOutputTokens: 393216,
   },
   dashscope: {
     id: "dashscope",
@@ -146,7 +242,9 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     model: "qwen3.7-plus",
     keyHint: "阿里云 API Key",
     requiresApiKey: true,
-    tags: ["china"],
+    tags: ["china", "recommended"],
+    contextWindow: 1000000,
+    maxOutputTokens: 131072,
   },
   zhipu: {
     id: "zhipu",
@@ -157,6 +255,8 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "智谱 AI Key",
     requiresApiKey: true,
     tags: ["china"],
+    contextWindow: 1000000,
+    maxOutputTokens: 131072,
   },
   moonshot: {
     id: "moonshot",
@@ -167,6 +267,7 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "Kimi API Key",
     requiresApiKey: true,
     tags: ["china"],
+    contextWindow: 1000000,
   },
   minimax: {
     id: "minimax",
@@ -177,6 +278,7 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "MiniMax API Key",
     requiresApiKey: true,
     tags: ["china"],
+    contextWindow: 1000000,
   },
   mimo: {
     id: "mimo",
@@ -187,6 +289,8 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "小米 MiMo sk-xxx",
     requiresApiKey: true,
     tags: ["china"],
+    contextWindow: 1000000,
+    maxOutputTokens: 131072,
   },
   "mimo-token-plan": {
     id: "mimo-token-plan",
@@ -197,6 +301,8 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "小米 MiMo tp-xxx",
     requiresApiKey: true,
     tags: ["china"],
+    contextWindow: 1000000,
+    maxOutputTokens: 131072,
   },
   siliconflow: {
     id: "siliconflow",
@@ -208,14 +314,65 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     requiresApiKey: true,
     tags: ["china"],
   },
+  mistral: {
+    id: "mistral",
+    displayName: "Mistral AI",
+    provider: "mistral",
+    endpoint: "https://api.mistral.ai/v1",
+    model: "mistral-vibe-cli-latest",
+    keyHint: "Mistral API Key",
+    requiresApiKey: true,
+    tags: ["global", "recommended"],
+    contextWindow: 128000,
+    maxOutputTokens: 32768,
+  },
   openai: {
     id: "openai",
     displayName: "OpenAI",
     provider: "openai",
     endpoint: "https://api.openai.com/v1",
     model: "gpt-6-astra",
+    keyHint: "OpenAI API Key",
     requiresApiKey: true,
-    tags: ["global"],
+    tags: ["global", "recommended"],
+    contextWindow: 1050000,
+    maxOutputTokens: 131072,
+  },
+  anthropic: {
+    id: "anthropic",
+    displayName: "Anthropic (Claude)",
+    provider: "anthropic",
+    endpoint: "https://api.anthropic.com/v1",
+    model: "claude-sonnet-5-5",
+    keyHint: "Anthropic API Key",
+    requiresApiKey: true,
+    tags: ["global", "recommended"],
+    contextWindow: 1000000,
+    maxOutputTokens: 65536,
+  },
+  gemini: {
+    id: "gemini",
+    displayName: "Google Gemini",
+    provider: "gemini",
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.8-flash",
+    keyHint: "Gemini API Key",
+    requiresApiKey: true,
+    tags: ["global", "recommended"],
+    contextWindow: 1048576,
+    maxOutputTokens: 65536,
+  },
+  openrouter: {
+    id: "openrouter",
+    displayName: "OpenRouter",
+    provider: "openrouter",
+    endpoint: "https://openrouter.ai/api/v1",
+    model: "anthropic/claude-sonnet-5-5",
+    keyHint: "OpenRouter API Key",
+    requiresApiKey: true,
+    tags: ["global", "recommended"],
+    contextWindow: 1000000,
+    maxOutputTokens: 65536,
   },
   ollama: {
     id: "ollama",
@@ -226,8 +383,8 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "Ollama（可留空）",
     requiresApiKey: false,
     tags: ["local"],
+    contextWindow: 8192,
   },
-  // 别名：历史 setup 用 local 命名
   local: {
     id: "local",
     displayName: "本地部署 (Ollama)",
@@ -237,18 +394,27 @@ const PRESET_MAP: Record<string, ProviderPreset> = {
     keyHint: "Ollama（可留空）",
     requiresApiKey: false,
     tags: ["local", "alias"],
+    contextWindow: 8192,
   },
 };
 
 const ALIASES: Record<string, string> = {
   local: "ollama",
   ollama: "ollama",
-  "llama": "ollama",
+  mistral: "mistral",
+  codestral: "mistral",
+  llama: "ollama",
   "openai-compat": "openai",
   qwen: "dashscope",
   kimi: "moonshot",
   glm: "zhipu",
   deepseek: "deepseek",
+  claude: "anthropic",
+  anthropic: "anthropic",
+  gemini: "gemini",
+  google: "gemini",
+  openrouter: "openrouter",
+  grok: "xai",
 };
 
 export function listProviderPresets(options: { includeAliases?: boolean } = {}): ProviderPreset[] {
@@ -340,15 +506,137 @@ export function presetsForProvider(provider: string): ProviderPreset[] {
  * 前缀归不进去、但属于同一服务商的现役/保留模型。只做精确 ID 映射，不放宽前缀。
  */
 const MODEL_PROVIDER_AFFINITY: Record<string, string> = {
-  "glm-5.2": "zhipu",
-  "glm-4": "zhipu",
-  "kimi-k2.7-code": "moonshot",
-  "kimi-k2.6": "moonshot",
+  // Mistral
+  "deepseek-v4-1-flash-1017": "mistral",
+  "codestral-latest": "mistral",
+  "codestral-2508": "mistral",
+  "mistral-large-latest": "mistral",
+  "mistral-small-latest": "mistral",
+  "ministral-8b-latest": "mistral",
+  "ministral-14b-latest": "mistral",
+  "ministral-3b-latest": "mistral",
+  "mistral-vibe-cli-latest": "mistral",
+  "mistral-vibe-cli-with-tools": "mistral",
+  "mistral-vibe-cli-fast": "mistral",
+  "zai-glm-5-3": "mistral",
+  "zai-glm-5-3-flash": "mistral",
+
+  // DeepSeek
+  "deepseek-flash": "deepseek",
+  "deepseek-v4-pro": "deepseek",
+  "deepseek-v4-flash": "deepseek",
+
+  // OpenAI
+  "gpt-6-astra": "openai",
   "gpt-6.1-sol": "openai",
+  "o4-mini": "openai",
+  "o3": "openai",
+  "o3-mini": "openai",
+  "o1": "openai",
+  "o1-mini": "openai",
+  "gpt-oss-120b": "openai",
+  "gpt-oss-20b": "openai",
   "gpt-4o": "openai",
   "gpt-4o-mini": "openai",
+
+  // Anthropic
+  "claude-opus-5-5": "anthropic",
+  "claude-fable-5-1": "anthropic",
+  "claude-sonnet-5-5": "anthropic",
+  "claude-haiku-5-5": "anthropic",
+  "claude-sonnet-4-5-20250929": "anthropic",
+  "claude-3-7-sonnet-latest": "anthropic",
+  "claude-3-5-sonnet-latest": "anthropic",
+  "claude-3-5-haiku-latest": "anthropic",
+
+  // Google Gemini
+  "gemini-4-argon": "gemini",
+  "gemini-3.8-flash": "gemini",
+  "gemini-3.5-pro": "gemini",
+  "gemini-3.5-flash": "gemini",
+  "gemini-3.1-pro": "gemini",
+  "gemini-3.1-flash-lite": "gemini",
+  "gemini-2.5-pro": "gemini",
+  "gemini-2.5-flash": "gemini",
+  "gemini-2.0-flash": "gemini",
+
+  // 阿里云百炼 (DashScope)
+  "qwen3.8-max": "dashscope",
+  "qwen3.7-max": "dashscope",
+  "qwen3.8-plus": "dashscope",
+  "qwen3.7-plus": "dashscope",
+  "qwen3.6-plus": "dashscope",
+  "qwen3.5-plus": "dashscope",
+  "qwen3.8-flash": "dashscope",
+  "qwen3.7-flash": "dashscope",
+  "qwen3-coder-plus": "dashscope",
+  "qwen3-coder-flash": "dashscope",
+  "qwen-max": "dashscope",
   "qwen-plus": "dashscope",
-  "qwen/qwen2.5-7b-instruct": "siliconflow",
+  "qwen2.5-coder-32b-instruct": "dashscope",
+
+  // 智谱清言 (Zhipu)
+  "glm-5.3": "zhipu",
+  "glm-5.3-flash": "zhipu",
+  "glm-5.2": "zhipu",
+  "glm-4.7": "zhipu",
+  "glm-4.7-flash": "zhipu",
+  "glm-4": "zhipu",
+
+  // 月之暗面 (Moonshot)
+  "kimi-k3.1-pro": "moonshot",
+  "kimi-k3": "moonshot",
+  "kimi-k2.7-code": "moonshot",
+  "kimi-k2.6": "moonshot",
+  "moonshot-v1-8k": "moonshot",
+  "moonshot-v1-32k": "moonshot",
+  "moonshot-v1-128k": "moonshot",
+
+  // MiniMax
+  "minimax-m3.1-flash": "minimax",
+  "minimax-m3": "minimax",
+  "minimax-m2.7": "minimax",
+  "minimax-m2.7-highspeed": "minimax",
+
+  // Xiaomi MiMo
+  "mimo-v2.6-pro": "mimo",
+  "mimo-v2.6-flash": "mimo",
+
+  // 硅基流动 (SiliconFlow)
+  "deepseek-ai/deepseek-v4.1-flash": "siliconflow",
+  "deepseek-ai/deepseek-v3": "siliconflow",
+  "deepseek-ai/deepseek-r1": "siliconflow",
+  "qwen/qwen2.5-coder-32b-instruct": "siliconflow",
+  "qwen/qwen2.5-72b-instruct": "siliconflow",
+  "meta-llama/meta-llama-3.1-405b-instruct": "siliconflow",
+
+  // xAI
+  "grok-2-latest": "xai",
+  "grok-2": "xai",
+  "grok-2-mini": "xai",
+  "grok-4": "xai",
+  "grok-build": "xai",
+
+  // OpenRouter
+  "anthropic/claude-3.7-sonnet": "openrouter",
+  "anthropic/claude-sonnet-5-5": "openrouter",
+  "deepseek/deepseek-r1": "openrouter",
+  "deepseek/deepseek-chat": "openrouter",
+  "google/gemini-2.0-flash-001": "openrouter",
+  "meta-llama/llama-3.3-70b-instruct": "openrouter",
+
+  // 本地 Ollama
+  "deepseek-r1:latest": "ollama",
+  "deepseek-r1:8b": "ollama",
+  "deepseek-r1:14b": "ollama",
+  "deepseek-r1:32b": "ollama",
+  "qwen2.5-coder:latest": "ollama",
+  "qwen2.5-coder:7b": "ollama",
+  "qwen2.5-coder:14b": "ollama",
+  "qwen2.5-coder:32b": "ollama",
+  "llama3.3:latest": "ollama",
+  "llama3.1:8b": "ollama",
+  "llama3": "ollama",
 };
 
 function modelBelongsToPresets(modelName: string, presets: ProviderPreset[]): boolean {
@@ -370,7 +658,11 @@ function modelBelongsToPresets(modelName: string, presets: ProviderPreset[]): bo
 export function knownModelsForProvider(provider: string): string[] {
   const presets = presetsForProvider(provider);
   if (presets.length === 0) return [];
-  return Object.keys(KNOWN_MODEL_WINDOWS).filter((name) => modelBelongsToPresets(name, presets));
+  const candidateKeys = new Set([
+    ...Object.keys(MODEL_PROVIDER_AFFINITY),
+    ...Object.keys(KNOWN_MODEL_WINDOWS),
+  ]);
+  return Array.from(candidateKeys).filter((name) => modelBelongsToPresets(name, presets));
 }
 
 export interface ProviderModelEntry {
@@ -380,6 +672,14 @@ export interface ProviderModelEntry {
   description: string;
   presetId?: string;
   source: "preset" | "known" | "current";
+  provider?: string;
+}
+
+export interface GroupedProviderSection {
+  providerId: string;
+  displayName: string;
+  isCurrent: boolean;
+  entries: ProviderModelEntry[];
 }
 
 /**
@@ -398,6 +698,7 @@ export function listProviderModelEntries(provider: string, currentModel?: string
       description: `${preset.provider} · ${preset.model}`,
       presetId: preset.id,
       source: "preset",
+      provider: preset.provider,
     });
     seenModels.add(preset.model.toLowerCase());
   }
@@ -410,6 +711,7 @@ export function listProviderModelEntries(provider: string, currentModel?: string
       label: model,
       description: `${providerId} · 已知模型`,
       source: "known",
+      provider: providerId,
     });
   }
   const current = String(currentModel ?? "").trim();
@@ -420,6 +722,7 @@ export function listProviderModelEntries(provider: string, currentModel?: string
       label: current,
       description: `${providerId || "当前"} · 当前模型`,
       source: "current",
+      provider: providerId,
     });
   }
   return entries;
@@ -456,5 +759,98 @@ export function formatProviderModelLines(
     lines.push(`${String(index + 1).padStart(2, " ")}. ${entry.model}`);
     lines.push(`    ${kind}`);
   });
+  return lines;
+}
+
+
+/**
+ * 列出所有服务商及其模型，按服务商分组
+ */
+export function listAllGroupedProviderModelEntries(
+  currentProvider?: string,
+  currentModel?: string
+): GroupedProviderSection[] {
+  const normCurrent = normalizeProviderId(currentProvider);
+  const sections: GroupedProviderSection[] = [];
+  const handledProviders = new Set<string>();
+
+  // 1. 标准预设服务商按 PROVIDER_PRESET_ORDER 处理
+  for (const presetId of PROVIDER_PRESET_ORDER) {
+    const preset = PRESET_MAP[presetId];
+    if (!preset) continue;
+    const providerKey = normalizeProviderId(preset.provider);
+    if (handledProviders.has(providerKey)) continue;
+    handledProviders.add(providerKey);
+
+    const isCurrent = normCurrent === providerKey || Boolean(preset.id && normCurrent === normalizeProviderId(preset.id));
+    const entries = listProviderModelEntries(providerKey, isCurrent ? currentModel : undefined);
+    for (const e of entries) {
+      if (!e.provider) e.provider = providerKey;
+    }
+    if (entries.length > 0) {
+      sections.push({
+        providerId: providerKey,
+        displayName: preset.displayName || providerKey,
+        isCurrent,
+        entries,
+      });
+    }
+  }
+
+  // 2. 账号连接 (ChatGPT / Grok 等)
+  for (const [id, preset] of Object.entries(PRESET_MAP)) {
+    if (!preset.tags?.includes("account")) continue;
+    const providerKey = normalizeProviderId(preset.provider);
+    if (handledProviders.has(providerKey)) continue;
+    handledProviders.add(providerKey);
+
+    const isCurrent = normCurrent === providerKey;
+    const entries = listProviderModelEntries(providerKey, isCurrent ? currentModel : undefined);
+    for (const e of entries) {
+      if (!e.provider) e.provider = providerKey;
+    }
+    if (entries.length > 0) {
+      sections.push({
+        providerId: providerKey,
+        displayName: preset.displayName || providerKey,
+        isCurrent,
+        entries,
+      });
+    }
+  }
+
+  // 3. 当前服务商如果是未在预设中的自定义或未知服务商
+  if (normCurrent && !handledProviders.has(normCurrent)) {
+    const entries = listProviderModelEntries(normCurrent, currentModel);
+    for (const e of entries) {
+      if (!e.provider) e.provider = normCurrent;
+    }
+    sections.unshift({
+      providerId: normCurrent,
+      displayName: `自定义连接 (${normCurrent})`,
+      isCurrent: true,
+      entries,
+    });
+  }
+
+  return sections;
+}
+
+export function formatAllGroupedProviderModelLines(
+  currentProvider?: string,
+  currentModel?: string
+): string[] {
+  const sections = listAllGroupedProviderModelEntries(currentProvider, currentModel);
+  const lines: string[] = [];
+  lines.push("范围      : 全部模型提供商（按服务商分组）");
+  let totalIdx = 1;
+  for (const section of sections) {
+    const currBadge = section.isCurrent ? " ★ 当前" : "";
+    lines.push(`\n[${section.displayName}${currBadge}]`);
+    for (const entry of section.entries) {
+      const kind = entry.source === "preset" ? entry.label : entry.source === "known" ? "已知模型" : "当前模型";
+      lines.push(`${String(totalIdx++).padStart(3, " ")}. ${entry.model.padEnd(28)} (${kind})`);
+    }
+  }
   return lines;
 }

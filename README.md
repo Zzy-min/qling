@@ -131,18 +131,55 @@ qling setup
 
 只给 `--provider` 或 `QLING_LLM_PROVIDER`、且 endpoint/model 仍是默认值时，会用该 provider 的预设补齐 endpoint 和 model。`QLING_LLM_API_KEY` 只属于启动时的 provider，不会在切换供应商后继续当成新供应商的密钥。各供应商使用自己的环境变量：
 
-| Provider | 环境变量 |
-| --- | --- |
-| deepseek | `DEEPSEEK_API_KEY` |
-| openai | `OPENAI_API_KEY` |
-| dashscope | `DASHSCOPE_API_KEY` |
-| moonshot (kimi) | `MOONSHOT_API_KEY` |
-| zhipu | `ZHIPU_API_KEY` |
-| minimax | `MINIMAX_API_KEY` |
-| mimo | `MIMO_API_KEY` |
-| siliconflow | `SILICONFLOW_API_KEY` |
+| Provider | 环境变量 | 说明 / 特性 |
+| --- | --- | --- |
+| deepseek | `DEEPSEEK_API_KEY` | 官方现役旗舰（`deepseek-flash`、`deepseek-v4-pro`） |
+| dashscope | `DASHSCOPE_API_KEY` | 阿里云百炼全系列（Qwen 3.8/3.7/3.6/3.5、Qwen-Coder） |
+| zhipu | `ZHIPU_API_KEY` | 智谱清言（GLM-5.3、GLM-5.2、GLM-4.7 等） |
+| moonshot (kimi) | `MOONSHOT_API_KEY` | 月之暗面（Kimi k3.1-pro、k3、k2.7 等） |
+| minimax | `MINIMAX_API_KEY` | MiniMax（M3.1-flash、M3、M2.7） |
+| mimo | `MIMO_API_KEY` | 小米 MiMo（v2.6-pro、v2.6-flash 等） |
+| siliconflow | `SILICONFLOW_API_KEY` | 硅基流动云端算力底座（DeepSeek/Qwen 等开箱即用） |
+| mistral | `MISTRAL_API_KEY` | Mistral AI / Vibe Code 密钥专项支持（每月 $150 专项额度池） |
+| openai | `OPENAI_API_KEY` | OpenAI 官方系列（GPT-6、o4-mini、o3、o1、GPT-4o） |
+| anthropic | `ANTHROPIC_API_KEY` | Anthropic Claude 5.x 全系列（Opus 5.5、Sonnet 5.5、Haiku 5.5） |
+| gemini | `GEMINI_API_KEY` | Google Gemini 全系列（Gemini 4 Argon、Gemini 3.8 Flash 等） |
+| xai | `XAI_API_KEY` | xAI API（Grok 4、Grok 2 等） |
+| openrouter | `OPENROUTER_API_KEY` | OpenRouter 全球聚合接入 |
+| ollama | *(免Key)* | 本地离线大模型引擎（默认 `http://localhost:11434/v1`） |
+| chatgpt / grok-account | *(CLI/OAuth会话)* | 官方账号直连（Grok 会话已自动补齐客户端版本校验防 426） |
 
-`/model use <preset>` 切到另一家且没有对应 key 时会拒绝切换，不会把上一把 key 发到新 endpoint。`/model` 与 `/model list` 只显示当前服务商的预设、已知模型和当前模型。`qling models` 与 `/model list --remote` 只用当前服务商的 endpoint 和 Key 请求 `GET {endpoint}/models`（5 秒超时；失败或空列表则回退到该服务商预设，不打印 key）。`qling models --all` 才列出全部预设模型，且不会向其他服务商发请求或读取其他 Key。
+### 交互式模型选择器与智能路由 (`/model`)
+
+轻灵内置了借鉴 Codex Router 架构的多层级凭据感知模型选择器：
+
+- **凭据感知徽标 (Credential-Aware)**：
+  - `★ 当前`：当前会话激活的模型与提供商；
+  - `✓ 已就绪`：环境变量已配齐对应 API Key，可直接无缝切换；
+  - `⚡ 免Key`：本地模型（Ollama 等）或无需鉴权的端点；
+  - `🔒 账号`：ChatGPT / Grok 官方 CLI 托管会话；
+  - `○ 需配Key`：尚未配置密钥，选择器会明确提示缺少哪个具体变量（例如提示需配置 `MOONSHOT_API_KEY`）。
+- **多层级分类与 Section 折叠**：
+  - 按国内推荐厂商、国际主流大模型、本地引擎与账号直连清晰分类展示，并标注每个分类下的模型数量。
+- **实时键入过滤与别名快速定位**：
+  - 在 TUI 模式下输入 `/model` 打开浮层，支持直接敲字实时搜索过滤；
+  - 内置厂商缩写字典（键入 `ds`、`qwen`、`kimi`、`claude`、`gpt`、`glm`、`grok` 均可瞬间定位对应厂商与模型）。
+- **上下文感知与安全隔离**：
+  - 自动展示模型的上下文窗口规格（例如 `1M ctx · 131k out`）；
+  - 严格遵循单一服务商密钥安全隔离原则：`/model use <preset>` 切到另一家且没有对应 key 时会拒绝切换，绝不把上一把 key 发到新端点；
+  - 默认情况下仅列出当前服务商的预设与已知模型，仅当显式运行 `qling models --all` 或 `/model list --all` 时才列出全部预设模型，且绝不会向其他服务商发请求或读取其他 Key。
+
+常用子命令：
+
+```text
+/model                  # 在 TUI 中打开交互式多层级模型选择器（无 TUI 时打印分组清单）
+/model list [--all]     # 列出全部厂商模型与凭据就绪状态（默认列出全部，--current 仅查看当前厂商）
+/model list --remote    # live 探测当前厂商的远程 /models 接口并列出最新模型
+/model status           # 查看当前生效的模型、厂商、上下文窗口及建议
+/model use <preset>     # 快速切换提供商底座（如 /model use qwen，/model use deepseek）
+/model <model_name>     # 快速切换当前提供商下的具体模型名称
+/model help             # 查看完整模型操作帮助
+```
 
 新开终端后运行：
 
