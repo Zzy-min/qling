@@ -1,3 +1,4 @@
+import '../helpers/isolated-home.mjs';
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';

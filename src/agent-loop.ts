@@ -63,6 +63,7 @@ import {
 } from "./providers/presets.js";
 import {
   isHttpEndpoint,
+  normalizeLlmEndpoint,
   publishProcessLlmSession,
   resolveLlmSettings,
   resolveProviderApiKey,
@@ -1321,6 +1322,12 @@ export class AgentLoop extends AgentEventEmitter {
       typeof patch.provider === "string" &&
       Boolean(patch.provider.trim()) &&
       patch.provider.trim() !== previousProvider;
+    const endpointChanged = typeof patch.endpoint === "string" && Boolean(patch.endpoint.trim()) &&
+      normalizeLlmEndpoint(patch.endpoint) !== normalizeLlmEndpoint(this.config.endpoint);
+    if (endpointChanged && !providerChanged && patch.apiKey === undefined &&
+      apiKeyRequiredForEndpoint(patch.endpoint!, patch.provider ?? previousProvider)) {
+      throw new Error("Endpoint change requires a destination-scoped credential; select a connection");
+    }
 
     if (typeof patch.provider === "string" && patch.provider.trim()) {
       this.config.provider = patch.provider.trim();

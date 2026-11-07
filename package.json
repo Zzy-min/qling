@@ -101,6 +101,7 @@
     "eval:long-run": "npm run build && node scripts/eval-long-run.mjs",
     "eval:multi-agent": "npm run build && node scripts/eval-multi-agent.mjs",
     "validate:packaging": "node scripts/validate-packaging.mjs",
+    "validate:packaging:release": "node scripts/validate-packaging.mjs --release",
     "dep:layers": "node scripts/dep-layers.mjs",
     "dep:layers:json": "node scripts/dep-layers.mjs --json",
     "dep:layers:baseline": "node scripts/dep-layers.mjs --baseline",

@@ -1,7 +1,7 @@
 # 轻灵 Qling
 
 <!-- release-1.5.0-status -->
-当前版本 / Current version: **1.5.0**。GitHub、npm、公共 Scoop 已同步；[WinGet 更新](https://github.com/microsoft/winget-pkgs/pull/471445)以官方 PR 审核状态为准。
+源码版本：**1.5.0**；仓库保留的已发布安装包清单为 **1.4.1**。源码更新不代表 npm、GitHub Release 或 Scoop 已发布新版本。
 
 
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=node.js&logoColor=white)](#安装)

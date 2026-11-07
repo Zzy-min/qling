@@ -41,8 +41,11 @@ test("package lifecycle builds exactly once through prepare", async () => {
 
 test("install docs and packaging drafts exist", async () => {
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-  const version = pkg.version;
+  const published = JSON.parse(await readFile(join(root, "packaging", "scoop", "qling.json"), "utf8"));
+  const version = published.version;
   const versionRe = new RegExp(version.replace(/\./g, "\\."));
+  const { validatePackaging } = await import("../../scripts/validate-packaging.mjs");
+  assert.deepEqual((await validatePackaging(root)).errors, []);
 
   const install = await readFile(join(root, "docs", "install.md"), "utf8");
   assert.match(install, /bootstrap/);

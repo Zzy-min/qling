@@ -14,25 +14,23 @@
 3. **原有代码缺陷**：
    在 `src/providers/managed-auth.ts` 中，只携带了 `X-XAI-Token-Auth: xai-grok-cli`，遗漏了：
    - `User-Agent: xai-grok-cli`
-   - `x-grok-client-version: 1.0.78`（动态优先读取本地安装的 grok 版本，降级为最新已知版本）
+   - `x-grok-client-version: 1.0.78`（读取 `GROK_CLI_VERSION` 环境变量，未设置时使用代码内默认值；不探测已安装 CLI）
    - `x-grok-client-identifier: grok-shell`
 
 ## 3. 修复方案
 1. **`src/auth/grok.ts`**：
    - 新增 `getGrokCliHeaders()` 函数。
-   - 包含缓存机制探测本地 `grok --version`（当前探测到 `1.0.78`）。
+   - 只读取 `GROK_CLI_VERSION`，默认值为 `1.0.78`；没有 CLI 版本探测或缓存。
    - 组装并返回标准 4 组请求头。
 2. **`src/providers/managed-auth.ts`**：
    - 在 `managedRequestHeaders` 中，针对 `grok-account` 合并 `getGrokCliHeaders()`。
 3. **`src/cli/auth-models.ts`**：
    - 在 `listPendingAccountModels` 中对 `grok-account` 同步补充该组请求头，确保拉取远端模型列表不被拦截。
 
-## 4. 验证结果
-1. **构建与类型检查**：
-   - `npm run build` 成功，TypeScript 编译 0 error，前端 Vite 构建 0 error。
-2. **单元测试**：
-   - 39 个单元测试全部通过：
-     `node --test tests/unit/modernized-catalog.test.mjs tests/unit/model-command.test.mjs tests/unit/model-picker-grouping.test.mjs tests/unit/provider-model-filter.test.mjs` -> `39 pass, 0 fail`。
-3. **真实调用端到端验证**：
-   - 执行 `node dist/index.js run "请只回答四个字：验证成功"`：
-     `grok-4.7` 响应迅速，成功返回 `验证成功`，HTTP 426 彻底消除。
+## 4. 当前验证边界
+
+`tests/unit/auth-review-corrections.test.mjs` 使用注入的凭据与 HTTP/Axios transport 覆盖 pending discovery、active discovery 和 inference 的版本、identifier、User-Agent、token-auth 请求头；不执行已安装的 Grok CLI，也不读取真实会话或调用真实模型。
+
+可运行：`node --experimental-test-module-mocks --test tests/unit/auth-review-corrections.test.mjs`。
+
+旧稿中的 39 项命令引用了树中不存在的 `modernized-catalog.test.mjs`，不能作为可复现的当前证据。历史构建或真实推理叙述也不证明当前提交的真实账户兼容性；HTTP 426 的服务端具体判定尚未在当前修订中独立验证。

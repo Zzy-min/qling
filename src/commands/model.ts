@@ -20,6 +20,9 @@ import {
   validateModelName,
 } from "../providers/resolve-llm.js";
 import { listRemoteModels } from "../providers/remote-models.js";
+import { inspectActiveConnection, resolveProfileCredential } from "../auth/service.js";
+import { AUTH_MARKER_PREFIX } from "../providers/managed-auth.js";
+import { normalizeLlmEndpoint, isUsableApiKey } from "../providers/resolve-llm.js";
 import { openOptionPickerOrFallback } from "../tui/option-picker-helpers.js";
 import {
   buildGroupedModelPickerSpec,
@@ -57,6 +60,27 @@ export const modelCommand: SlashCommand = {
     const sessionKey = typeof loop?.getApiKey === "function" ? String(loop.getApiKey() ?? "") : "";
     const unknownProvider = presetsForProvider(currentProvider).length === 0;
     let showCatalogHint = true;
+    const stateDir = loop?.getRuntimeRootDir?.();
+    const connection = stateDir ? await inspectActiveConnection(stateDir) : undefined;
+    const evidence = { currentProvider, currentEndpoint, sessionApiKey: sessionKey, connection };
+    const resolveConnectionKey = async (provider: string, endpoint: string): Promise<string | null> => {
+      const latest = stateDir ? await inspectActiveConnection(stateDir) : undefined;
+      const profile = latest?.profile;
+      if (profile?.provider === provider && normalizeLlmEndpoint(profile.endpoint) === normalizeLlmEndpoint(endpoint) && latest?.status === "ready") {
+        if (profile.method === "chatgpt_oauth" || profile.method === "grok_cli_session") return AUTH_MARKER_PREFIX + profile.id;
+        if (profile.method === "none") return "";
+        try {
+          const key = await resolveProfileCredential(stateDir, profile);
+          if (isUsableApiKey(key)) return key;
+        } catch { /* A changed/unavailable vault must not switch the session. */ }
+      }
+      const resolved = resolveProviderApiKey(provider, process.env, {
+        ...evidence, endpoint, sameProvider: provider === currentProvider,
+        startupProvider: loop?.getStartupProvider?.() ?? currentProvider,
+      });
+      if (resolved.refused) { context.writeError(`❌ ${resolved.message}`); return null; }
+      return resolved.apiKey;
+    };
 
     const applyPreset = async (presetKey: string): Promise<boolean> => {
       const preset = getProviderPreset(presetKey);
@@ -64,22 +88,8 @@ export const modelCommand: SlashCommand = {
         context.writeError(`❌ 未找到预设 '${presetKey}'。`);
         return false;
       }
-      const sameProvider = preset.provider === currentProvider;
-      let apiKey: string | undefined;
-      if (!sameProvider) {
-        const startup = typeof loop?.getStartupProvider === "function"
-          ? loop.getStartupProvider()
-          : currentProvider;
-        const resolved = resolveProviderApiKey(preset.provider, process.env, {
-          startupProvider: startup,
-          sameProvider: false,
-        });
-        if (preset.requiresApiKey && resolved.refused) {
-          context.writeError(`❌ ${resolved.message}`);
-          return false;
-        }
-        apiKey = resolved.apiKey;
-      }
+      const apiKey = await resolveConnectionKey(preset.provider, preset.endpoint);
+      if (apiKey === null) return false;
       if (typeof loop?.applyLlmSession === "function") {
         loop.applyLlmSession({
           provider: preset.provider,
@@ -230,7 +240,10 @@ export const modelCommand: SlashCommand = {
       const pickerSpec = buildGroupedModelPickerSpec({
         currentProvider,
         currentModel,
+        currentEndpoint,
+        credentialEvidence: evidence,
         callbacks: {
+          resolveConnectionKey,
           applyModel: async (model) => {
             await applyModelOnly(model);
           },
@@ -353,7 +366,7 @@ export const modelCommand: SlashCommand = {
         endpoint: currentEndpoint,
         model: currentModel,
       });
-      const cred = isProviderCredentialReady(currentProvider, process.env);
+      const cred = isProviderCredentialReady(currentProvider, process.env, { ...evidence, endpoint: currentEndpoint });
       const meta = lookupModelWindow(currentModel);
 
       context.writeLine("");

@@ -5,6 +5,7 @@ import {
   lookupModelWindow,
   type ProviderPreset,
 } from "./presets.js";
+import type { AuthProfile } from "../auth/types.js";
 
 export type LlmFieldSource = "default" | "file" | "env" | "cli" | "preset" | "session";
 
@@ -38,6 +39,9 @@ export interface ResolveProviderApiKeyOptions {
   sessionApiKey?: string;
   sameProvider?: boolean;
   explicitApiKey?: string;
+  endpoint?: string;
+  currentProvider?: string;
+  currentEndpoint?: string;
 }
 
 export interface ResolvedProviderApiKey {
@@ -52,6 +56,17 @@ type EnvLike = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
 function normalizeProviderId(provider: string | undefined): string {
   return String(provider ?? "").trim().toLowerCase();
+}
+
+/** Full base URL is the credential boundary, including a proxy's routing path. */
+export function normalizeLlmEndpoint(endpoint?: string): string {
+  try { return new URL(String(endpoint)).href.replace(/\/+$/, ""); }
+  catch { return String(endpoint ?? "").trim().replace(/\/+$/, ""); }
+}
+
+export function isUsableApiKey(key?: string): boolean {
+  const value = String(key ?? "").trim();
+  return Boolean(value && value !== "local" && !value.startsWith("qling-auth:"));
 }
 
 export function providerApiKeyEnv(provider: string): string | undefined {
@@ -93,8 +108,8 @@ export function resolveProviderApiKey(
     return {apiKey:"",source:"none",refused:true,message:"Account mode requires qling login"};
   }
   const explicit = options.explicitApiKey?.trim();
-  if (explicit) {
-    return { apiKey: explicit, source: "cli", refused: false };
+  if (isUsableApiKey(explicit)) {
+    return { apiKey: explicit!, source: "cli", refused: false };
   }
 
   const normalized = normalizeProviderId(provider);
@@ -104,7 +119,9 @@ export function resolveProviderApiKey(
 
   if (options.sameProvider) {
     const sessionKey = String(options.sessionApiKey ?? "").trim();
-    if (sessionKey && sessionKey !== "local") {
+    if (isUsableApiKey(sessionKey) && (!options.endpoint ||
+      (normalizeProviderId(options.currentProvider ?? provider) === keyProvider &&
+       normalizeLlmEndpoint(options.currentEndpoint) === normalizeLlmEndpoint(options.endpoint)))) {
       return { apiKey: sessionKey, source: "session", refused: false };
     }
   }
@@ -114,13 +131,23 @@ export function resolveProviderApiKey(
   );
   const generic = String(env.QLING_LLM_API_KEY ?? "").trim();
   const genericOwnedHere = !startup || startup === keyProvider || startup === normalized;
-  if (generic && genericOwnedHere) {
+  const target = options.endpoint ? normalizeLlmEndpoint(options.endpoint) : undefined;
+  const scopedEndpoint = providerScopedBaseUrl(keyProvider, env) ||
+    ((normalizeProviderId(env.QLING_LLM_STARTUP_PROVIDER ?? env.QLING_LLM_PROVIDER) === keyProvider)
+      ? String(env.QLING_LLM_ENDPOINT ?? "") : "");
+  const switchingEndpoint = normalizeProviderId(options.currentProvider) === keyProvider &&
+    normalizeLlmEndpoint(options.currentEndpoint) !== target;
+  const specificOwnedHere = !target || (scopedEndpoint
+    ? normalizeLlmEndpoint(scopedEndpoint) === target
+    : !switchingEndpoint && normalizeLlmEndpoint(preset?.endpoint) === target);
+  const genericEndpointOwned = !target || Boolean(scopedEndpoint && normalizeLlmEndpoint(scopedEndpoint) === target);
+  if (isUsableApiKey(generic) && genericOwnedHere && genericEndpointOwned) {
     return { apiKey: generic, source: "env", envVar: "QLING_LLM_API_KEY", refused: false };
   }
 
   const envVar = providerApiKeyEnv(keyProvider);
   const specific = envVar ? String(env[envVar] ?? "").trim() : "";
-  if (specific) {
+  if (isUsableApiKey(specific) && specificOwnedHere) {
     return { apiKey: specific, source: "env", envVar, refused: false };
   }
 
@@ -155,7 +182,7 @@ export function isSameLlmTarget(
 ): boolean {
   return (
     normalizeProviderId(preset.provider) === normalizeProviderId(current.provider) &&
-    endpointHost(preset.endpoint) === endpointHost(current.endpoint) &&
+    normalizeLlmEndpoint(preset.endpoint) === normalizeLlmEndpoint(current.endpoint) &&
     preset.model === String(current.model ?? "")
   );
 }
@@ -416,10 +443,19 @@ export interface CredentialStatus {
   message?: string;
 }
 
+export interface LocalConnectionEvidence {
+  endpoint?: string;
+  sessionApiKey?: string;
+  currentProvider?: string;
+  currentEndpoint?: string;
+  authStateDir?: string;
+  connection?: { profile: AuthProfile | null; status: "unconfigured" | "ready" | "needs_login" };
+}
+
 export function isProviderCredentialReady(
   provider: string,
   env: EnvLike = process.env,
-  _options: { authStateDir?: string } = {}
+  options: LocalConnectionEvidence = {}
 ): CredentialStatus {
   const norm = normalizeProviderId(provider);
   const preset = getProviderPreset(norm);
@@ -429,20 +465,25 @@ export function isProviderCredentialReady(
     return { ready: true, requiresKey: false, badge: "⚡ 免Key", source: "none" };
   }
 
+  const endpoint = options.endpoint ?? preset?.endpoint;
+  const connection = options.connection;
+  const profile = connection?.profile;
+  const matches = profile?.provider === norm &&
+    normalizeLlmEndpoint(profile.endpoint) === normalizeLlmEndpoint(endpoint);
   if (norm === "chatgpt" || norm === "grok-account") {
-    return { ready: true, requiresKey: true, badge: "🔒 账号", source: "session" };
+    const ready = Boolean(matches && connection?.status === "ready");
+    return { ready, requiresKey: true, badge: ready ? "🔒 本地账号就绪" : "○ 需登录", source: ready ? "session" : "none",
+      message: ready ? "账号凭据已附加；模型权限及推理尚未验证" : "账号缺失、已解除或需重新登录" };
   }
-
+  if (matches && connection?.status === "ready" && profile?.method === "api_key") {
+    return { ready: true, requiresKey: true, badge: "✓ 本地凭据", source: "session", message: "模型权限及推理尚未验证" };
+  }
+  const resolved = resolveProviderApiKey(norm, env, { ...options, endpoint,
+    sameProvider: options.currentProvider === norm, startupProvider: env.QLING_LLM_STARTUP_PROVIDER ?? env.QLING_LLM_PROVIDER });
+  if (!resolved.refused && isUsableApiKey(resolved.apiKey)) {
+    return { ready: true, requiresKey: true, badge: "✓ 本地凭据", source: resolved.source === "session" ? "session" : "env", message: "模型权限及推理尚未验证" };
+  }
   const envName = providerApiKeyEnv(norm);
-  const val = envName ? String(env[envName] ?? "").trim() : "";
-  if (val) {
-    return { ready: true, requiresKey: true, badge: "✓ 已就绪", source: "env" };
-  }
-
-  const startup = String(env.QLING_LLM_STARTUP_PROVIDER ?? env.QLING_LLM_PROVIDER ?? "").trim().toLowerCase();
-  if (startup === norm && String(env.QLING_LLM_API_KEY ?? "").trim()) {
-    return { ready: true, requiresKey: true, badge: "✓ 已就绪", source: "env" };
-  }
 
   return {
     ready: false,

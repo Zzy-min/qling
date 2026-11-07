@@ -270,3 +270,5 @@ git diff --check
 ```
 
 发布顺序应是：构建并验证不可变 ZIP → 创建 GitHub Release → 校验公开资产摘要 → 更新 Scoop/WinGet 清单 → 分别更新各外部渠道。不得用源码版本推断 npm、Scoop 或 WinGet 已同步。
+
+源码 CI 的 `npm run validate:packaging` 分别核对源码版本与已发布安装包版本，并校验 Scoop、bucket 与 WinGet 的版本、URL、SHA-256 一致性。发布前必须运行 `npm run validate:packaging:release`；源码与安装包版本不一致会阻止发布。当前源码 1.5.0、已发布安装包清单 1.4.1，不应预填尚未构建发布的 URL 或哈希。

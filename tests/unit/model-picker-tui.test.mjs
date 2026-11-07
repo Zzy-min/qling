@@ -17,7 +17,7 @@ test("isProviderCredentialReady correctly reports status for providers", () => {
   // 2. DeepSeek with DEEPSEEK_API_KEY
   const dsReady = isProviderCredentialReady("deepseek", { DEEPSEEK_API_KEY: "sk-ds-key" });
   assert.equal(dsReady.ready, true);
-  assert.equal(dsReady.badge, "✓ 已就绪");
+  assert.equal(dsReady.badge, "✓ 本地凭据");
 
   // 3. DeepSeek without key
   const dsMissing = isProviderCredentialReady("deepseek", {});
@@ -27,8 +27,8 @@ test("isProviderCredentialReady correctly reports status for providers", () => {
 
   // 4. Managed account connection
   const chatgpt = isProviderCredentialReady("chatgpt", {});
-  assert.equal(chatgpt.ready, true);
-  assert.equal(chatgpt.badge, "🔒 账号");
+  assert.equal(chatgpt.ready, false);
+  assert.equal(chatgpt.badge, "○ 需登录");
 });
 
 test("buildGroupedModelPickerSpec creates filterable grouped spec with sections and badges", () => {
@@ -60,7 +60,7 @@ test("buildGroupedModelPickerSpec creates filterable grouped spec with sections 
   assert.equal(dsSection.tag, "★ 当前");
 
   // Models under deepseek
-  const flashItem = spec.items.find((item) => item.id === "deepseek");
+  const flashItem = spec.items.find((item) => item.id.startsWith("deepseek:") && item.id.endsWith(":deepseek"));
   assert.ok(flashItem, "deepseek preset item should exist");
   assert.equal(flashItem.active, true);
   assert.match(flashItem.description, /1M ctx/);
@@ -122,12 +122,12 @@ test("buildGroupedModelPickerSpec onPick dispatches correctly", async () => {
   assert.equal(appliedModel, null);
 
   // Picking a preset
-  const dsItem = spec.items.find((item) => item.id === "deepseek");
+  const dsItem = spec.items.find((item) => item.id.startsWith("deepseek:") && item.id.endsWith(":deepseek"));
   await spec.onPick(dsItem);
   assert.equal(appliedPreset, "deepseek");
 
   // Picking a model across providers with session
-  const kimiItem = spec.items.find((item) => item.id === "model:kimi-k2.7-code");
+  const kimiItem = spec.items.find((item) => item.id.startsWith("moonshot:") && item.id.endsWith(":model:kimi-k2.7-code"));
   if (kimiItem) {
     await spec.onPick(kimiItem);
     assert.ok(appliedSession, "Should have applied LLM session across provider");
@@ -161,21 +161,21 @@ test("buildGroupedModelPickerSpec provides shorthand provider aliases for search
     },
   });
 
-  const dsItem = spec.items.find((item) => item.id === "deepseek");
+  const dsItem = spec.items.find((item) => item.id.startsWith("deepseek:") && item.id.endsWith(":deepseek"));
   assert.ok(dsItem);
   assert.ok(dsItem.aliases.includes("ds"), "DeepSeek item should have 'ds' alias");
   assert.ok(dsItem.aliases.includes("deepseek"));
 
-  const qwenItem = spec.items.find((item) => item.id === "dashscope");
+  const qwenItem = spec.items.find((item) => item.id.startsWith("dashscope:") && item.id.endsWith(":dashscope"));
   assert.ok(qwenItem);
   assert.ok(qwenItem.aliases.includes("qwen"), "DashScope item should have 'qwen' alias");
   assert.ok(qwenItem.aliases.includes("aliyun"), "DashScope item should have 'aliyun' alias");
 
-  const moonshotItem = spec.items.find((item) => item.id === "moonshot");
+  const moonshotItem = spec.items.find((item) => item.id.startsWith("moonshot:") && item.id.endsWith(":moonshot"));
   assert.ok(moonshotItem);
   assert.ok(moonshotItem.aliases.includes("kimi"), "Moonshot item should have 'kimi' alias");
 
-  const claudeItem = spec.items.find((item) => item.id === "anthropic");
+  const claudeItem = spec.items.find((item) => item.id.startsWith("anthropic:") && item.id.endsWith(":anthropic"));
   assert.ok(claudeItem);
   assert.ok(claudeItem.aliases.includes("claude"), "Anthropic item should have 'claude' alias");
 });
@@ -197,7 +197,7 @@ test("cross-provider model switch without applyLlmSession errors and never calls
     },
   });
 
-  const qwenModelItem = spec.items.find((item) => item.id === "model:qwen-plus");
+  const qwenModelItem = spec.items.find((item) => item.id.startsWith("dashscope:") && item.id.endsWith(":model:qwen-plus"));
   assert.ok(qwenModelItem, "qwen-plus model item should exist");
   await spec.onPick(qwenModelItem);
 

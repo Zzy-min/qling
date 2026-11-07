@@ -36,6 +36,8 @@ jobs:
           if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag and package version differ' }
           npm run build:portable-win
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate release packaging
+        run: npm run validate:packaging:release
       - name: Upload verified portable assets to existing draft release
         shell: pwsh
         env:

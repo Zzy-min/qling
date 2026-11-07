@@ -43,7 +43,7 @@ function createContext(options = {}) {
 test("listAllGroupedProviderModelEntries groups all providers and tags current provider", () => {
   const sections = listAllGroupedProviderModelEntries("deepseek", "deepseek-flash");
   assert.ok(sections.length >= 8, `Expected at least 8 sections, got ${sections.length}`);
-  
+
   const deepseek = sections.find((s) => s.providerId === "deepseek");
   assert.ok(deepseek, "DeepSeek section must exist");
   assert.equal(deepseek.isCurrent, true);
@@ -84,6 +84,7 @@ test("/model opens picker with sections grouped by provider", async () => {
   const { context } = createContext({
     provider: "deepseek",
     model: "deepseek-flash",
+    endpoint: "https://api.deepseek.com",
   });
   context.openOptionPicker = (spec) => {
     specs.push(spec);
@@ -104,13 +105,13 @@ test("/model opens picker with sections grouped by provider", async () => {
   // Current active model should be deepseek-flash under deepseek
   const activeItem = spec.items.find((item) => item.active);
   assert.ok(activeItem, "An active item must be marked");
-  assert.equal(activeItem.id, "deepseek");
+  assert.match(activeItem.id, /^deepseek:.*:deepseek$/);
   assert.match(activeItem.label, /deepseek/i);
 
   // Other providers' models are also included
-  assert.ok(spec.items.some((item) => item.id === "dashscope" || item.label.includes("qwen")));
-  assert.ok(spec.items.some((item) => item.id === "zhipu" || item.label.includes("glm")));
-  assert.ok(spec.items.some((item) => item.id === "moonshot" || item.label.includes("kimi")));
+  assert.ok(spec.items.some((item) => item.id.startsWith("dashscope:") && item.id.endsWith(":dashscope") || item.label.includes("qwen")));
+  assert.ok(spec.items.some((item) => item.id.startsWith("zhipu:") && item.id.endsWith(":zhipu") || item.label.includes("glm")));
+  assert.ok(spec.items.some((item) => item.id.startsWith("moonshot:") && item.id.endsWith(":moonshot") || item.label.includes("kimi")));
 });
 
 test("/model onPick safely switches provider with preset", async () => {
@@ -120,6 +121,7 @@ test("/model onPick safely switches provider with preset", async () => {
   const { context, state } = createContext({
     provider: "deepseek",
     model: "deepseek-flash",
+    endpoint: "https://api.deepseek.com",
   });
   context.openOptionPicker = (spec) => {
     specs.push(spec);
@@ -130,7 +132,7 @@ test("/model onPick safely switches provider with preset", async () => {
     assert.equal(specs.length, 1);
 
     // Pick Kimi preset
-    const kimiItem = specs[0].items.find((item) => item.id === "moonshot");
+    const kimiItem = specs[0].items.find((item) => item.id.startsWith("moonshot:") && item.id.endsWith(":moonshot"));
     assert.ok(kimiItem, "moonshot item must exist");
     await specs[0].onPick(kimiItem);
 
@@ -148,6 +150,7 @@ test("/model list --current filters only to current provider", async () => {
   const { context } = createContext({
     provider: "deepseek",
     model: "deepseek-flash",
+    endpoint: "https://api.deepseek.com",
   });
   context.openOptionPicker = (spec) => {
     specs.push(spec);

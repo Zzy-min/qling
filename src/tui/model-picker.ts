@@ -12,6 +12,8 @@ import {
   isProviderCredentialReady,
   resolveProviderApiKey,
   type CredentialStatus,
+  type LocalConnectionEvidence,
+  normalizeLlmEndpoint,
 } from "../providers/resolve-llm.js";
 
 export interface ModelPickerCallbacks {
@@ -26,11 +28,14 @@ export interface ModelPickerCallbacks {
   writeNotice: (msg: string) => void;
   writeError: (msg: string) => void;
   getStartupProvider?: () => string;
+  resolveConnectionKey?: (provider: string, endpoint: string) => Promise<string | null>;
 }
 
 export interface BuildGroupedModelPickerOptions {
   currentProvider?: string;
   currentModel?: string;
+  currentEndpoint?: string;
+  credentialEvidence?: LocalConnectionEvidence;
   callbacks: ModelPickerCallbacks;
   env?: NodeJS.ProcessEnv;
   filterCurrentProviderOnly?: boolean;
@@ -97,10 +102,11 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
   }
 
   const items: OptionPickerItem[] = [];
-  const allEntries: ProviderModelEntry[] = [];
+  const allEntries = new Map<string, ProviderModelEntry>();
+  let marked = false;
 
   for (const sec of sections) {
-    const cred: CredentialStatus = isProviderCredentialReady(sec.providerId, env);
+    const cred: CredentialStatus = isProviderCredentialReady(sec.providerId, env, options.credentialEvidence);
     const isCurrentSec = sec.isCurrent;
 
     // 添加服务商 Section 标题头
@@ -116,13 +122,17 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
     });
 
     for (const entry of sec.entries) {
-      allEntries.push(entry);
+      const endpoint = entry.presetId ? getProviderPreset(entry.presetId)?.endpoint :
+        sec.isCurrent ? options.currentEndpoint : presetsForProvider(sec.providerId)[0]?.endpoint;
+      const rowId = `${sec.providerId}:${normalizeLlmEndpoint(endpoint)}:${entry.id}`;
+      allEntries.set(rowId, entry);
       const isModelActive = Boolean(
-        isCurrentSec && (
+        !marked && isCurrentSec && (!options.currentEndpoint || normalizeLlmEndpoint(endpoint) === normalizeLlmEndpoint(options.currentEndpoint)) && (
           entry.model.toLowerCase() === currentModel.toLowerCase() ||
           (entry.presetId && currentModel.toLowerCase() === entry.model.toLowerCase())
         )
       );
+      if (isModelActive) marked = true;
 
       const desc = getModelDescription(entry.model, sec.displayName);
       const meta = lookupModelWindow(entry.model);
@@ -139,7 +149,7 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
       ]);
 
       items.push({
-        id: entry.id,
+        id: rowId,
         label: entry.source === "preset" ? entry.label : entry.model,
         description: desc,
         active: isModelActive,
@@ -162,7 +172,8 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
     onPick: async (item: OptionPickerItem) => {
       if (item.section) return;
 
-      const entry = allEntries.find((candidate) => candidate.id === item.id);
+      const entry = allEntries.get(item.id);
+      if (!entry) return;
       if (entry?.presetId) {
         await callbacks.applyPreset(entry.presetId);
         return;
@@ -175,11 +186,18 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
           return;
         }
         const startup = callbacks.getStartupProvider ? callbacks.getStartupProvider() : currentProvider;
-        const resolved = resolveProviderApiKey(basePreset.provider, env, {
+        const resolved = callbacks.resolveConnectionKey ? null : resolveProviderApiKey(basePreset.provider, env, {
           startupProvider: startup,
           sameProvider: false,
+          endpoint: basePreset.endpoint,
+          currentProvider,
+          currentEndpoint: options.currentEndpoint,
         });
-        if (basePreset.requiresApiKey && resolved.refused) {
+        const apiKey = callbacks.resolveConnectionKey
+          ? await callbacks.resolveConnectionKey(basePreset.provider, basePreset.endpoint)
+          : resolved!.refused ? null : resolved!.apiKey;
+        if (apiKey === null) {
+          if (!resolved) return;
           callbacks.writeError(`❌ ${resolved.message}`);
           return;
         }
@@ -191,7 +209,7 @@ export function buildGroupedModelPickerSpec(options: BuildGroupedModelPickerOpti
           provider: basePreset.provider,
           endpoint: basePreset.endpoint,
           model: entry.model || basePreset.model,
-          apiKey: resolved.apiKey,
+          apiKey,
         });
         callbacks.writeNotice(
           `已切换至 ${basePreset.displayName} (${basePreset.provider}) · ${entry.model || basePreset.model}`

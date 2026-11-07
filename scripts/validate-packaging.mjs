@@ -1,29 +1,37 @@
 #!/usr/bin/env node
 /**
- * Validate Scoop / winget manifests align with package.json version.
- * Usage: node scripts/validate-packaging.mjs
+ * Validate source and published installer state separately; --release requires equality.
+ * Usage: node scripts/validate-packaging.mjs [--release]
  */
 import { readFile } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
+import YAML from "yaml";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const defaultRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+export async function validatePackaging(root = defaultRoot, { release = false } = {}) {
 const errors = [];
 
 const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-const version = pkg.version;
+const sourceVersion = pkg.version;
 
 const scoopRaw = await readFile(join(root, "packaging", "scoop", "qling.json"), "utf8");
 const scoop = JSON.parse(scoopRaw);
-if (scoop.version !== version) {
-  errors.push(`scoop version ${scoop.version} != package ${version}`);
+const version = scoop.version;
+const semver = /^\d+\.\d+\.\d+$/;
+if (!semver.test(sourceVersion) || !semver.test(version)) errors.push("invalid source/published semantic version");
+else {
+  const a = sourceVersion.split('.').map(Number), b = version.split('.').map(Number);
+  const comparison = a[0]-b[0] || a[1]-b[1] || a[2]-b[2];
+  if (comparison < 0) errors.push(`source ${sourceVersion} is older than published installer ${version}`);
 }
+if (release && version !== sourceVersion) errors.push(`release pending: source ${sourceVersion} != published installer ${version}`);
 const scoopUrl =
   scoop.architecture?.["64bit"]?.url || scoop.url || "";
 const scoopHash =
   scoop.architecture?.["64bit"]?.hash || scoop.hash || "";
-if (!String(scoopUrl).includes(version)) {
+if (scoopUrl !== `https://github.com/Zzy-min/qling/releases/download/v${version}/qling-win-x64.zip`) {
   errors.push(`scoop url does not pin ${version}: ${scoopUrl}`);
 }
 if (!scoop.architecture?.["64bit"]) {
@@ -65,6 +73,7 @@ const multiInstaller = join(
   version,
   "Zzy-min.qling.installer.yaml"
 );
+if (!existsSync(multiInstaller)) errors.push("missing published multi-file winget installer");
 if (existsSync(multiInstaller)) {
   const mi = await readFile(multiInstaller, "utf8");
   if (/InstallerSha256:\s*(0{64}|PLACEHOLDER)/i.test(mi)) {
@@ -79,17 +88,43 @@ const bucket = join(root, "packaging", "scoop-bucket", "qling.json");
 if (existsSync(bucket)) {
   const b = JSON.parse(await readFile(bucket, "utf8"));
   if (b.version !== version) errors.push("scoop-bucket version mismatch");
+  if ((b.architecture?.["64bit"]?.url || b.url) !== scoopUrl) errors.push("scoop-bucket url mismatch");
   const bHash = b.architecture?.["64bit"]?.hash || b.hash;
   if (bHash !== scoopHash) errors.push("scoop-bucket hash out of sync with scoop/qling.json");
+} else errors.push("missing scoop-bucket manifest");
+
+const checkWinget = (raw, label, installerRequired) => {
+  const manifest = YAML.parse(raw);
+  if (manifest.PackageVersion !== version || manifest.PackageIdentifier !== 'Zzy-min.qling') errors.push(`${label} identity/version mismatch`);
+  if (installerRequired && !manifest.Installers?.length) errors.push(`${label} missing installers`);
+  for (const installer of manifest.Installers ?? []) {
+    if (installer.InstallerUrl !== scoopUrl) errors.push(`${label} URL differs from Scoop published artifact`);
+    if (String(installer.InstallerSha256).toLowerCase() !== String(scoopHash).toLowerCase()) errors.push(`${label} hash differs from Scoop published artifact`);
+  }
+};
+checkWinget(winget, 'winget singleton', true);
+if (existsSync(multiInstaller)) {
+  checkWinget(await readFile(multiInstaller, 'utf8'), 'winget installer', true);
+  for (const name of ['Zzy-min.qling.yaml', 'Zzy-min.qling.locale.en-US.yaml']) {
+    const file = join(dirname(multiInstaller), name);
+    if (!existsSync(file)) errors.push(`missing ${name}`);
+    else checkWinget(await readFile(file, 'utf8'), name, false);
+  }
+}
+return { errors, sourceVersion, publishedVersion: version, scoopUrl, scoopHash };
 }
 
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const { errors, sourceVersion, publishedVersion: version, scoopUrl, scoopHash } = await validatePackaging(defaultRoot, {release: process.argv.includes('--release')});
 if (errors.length) {
   console.error("validate-packaging FAILED:");
   for (const e of errors) console.error(" -", e);
   process.exit(1);
 }
 
-console.log(`validate-packaging OK (version ${version})`);
+console.log(`validate-packaging OK (source ${sourceVersion}; published installer ${version}; mode ${process.argv.includes("--release") ? "release" : "source"})`);
 console.log("  scoop:", scoopUrl);
 console.log("  scoop.hash:", String(scoopHash).slice(0, 20) + "…");
 console.log("  winget: Zzy-min.qling @", version);
+
+}
