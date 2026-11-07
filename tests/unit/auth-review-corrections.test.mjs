@@ -159,3 +159,18 @@ test('plaintext all-provider output shares exact active endpoint and readiness e
   const {formatGroupedModelPickerLines}=await import('../../dist/tui/model-picker.js');
   const text=formatGroupedModelPickerLines('chatgpt','gpt-4o',{}, {currentEndpoint:account.endpoint,connection:{profile:account,status:'ready'}}).join('\n');assert.match(text,/本地账号就绪/);
 });
+
+test('reselecting exact saved none connection wins over leftover session/env keys on actual wire',async t=>{
+  const preset=getProviderPreset('ollama');
+  cleanEnv(t,{QLING_LLM_PROVIDER:'ollama',QLING_LLM_STARTUP_PROVIDER:'ollama',QLING_LLM_ENDPOINT:preset.endpoint,QLING_LLM_API_KEY:'LEFTOVER-GENERIC-KEY',QLING_MEMORY_WAL_ENABLED:'false'});
+  selected={id:'none',provider:'ollama',method:'none',endpoint:preset.endpoint,model:preset.model};status='ready';
+  const {AgentLoop}=await import('../../dist/agent-loop.js');
+  for(const initialKey of ['local','LEFTOVER-LIVE-KEY']) {
+    const dir=await mkdtemp(join(tmpdir(),'qling-none-reselect-'));
+    const agent=new AgentLoop({provider:'ollama',endpoint:preset.endpoint,apiKey:initialKey,model:preset.model,runtime:{fileStateDir:dir}});t.after(()=>agent.shutdown());
+    const errors=[];await modelCommand.execute(['use','ollama'],{agentLoop:agent,writeLine(){},writeError:s=>errors.push(s)});assert.deepEqual(errors,[]);
+    const headers=[];agent.llmClient.client.defaults.adapter=async config=>{headers.push(config.headers.get('Authorization'));return {status:200,headers:{},config,data:{choices:[{message:{content:'ok'}}]}};};
+    await agent.llmClient.chatCompletions({model:preset.model,systemPrompt:'test',messages:[{role:'user',content:'test'}],tools:[]});
+    assert.deepEqual(headers,[undefined]);
+  }
+});

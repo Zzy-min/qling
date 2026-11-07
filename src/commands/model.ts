@@ -67,6 +67,8 @@ export const modelCommand: SlashCommand = {
     const resolveConnectionKey = async (provider: string, endpoint: string): Promise<string | null> => {
       const latest = stateDir ? await inspectActiveConnection(stateDir) : undefined;
       const profile = latest?.profile;
+      if (profile?.method === "none" && latest?.status === "ready" && profile.provider === provider &&
+        normalizeLlmEndpoint(profile.endpoint) === normalizeLlmEndpoint(endpoint)) return "";
       const sameTarget = provider === currentProvider && normalizeLlmEndpoint(endpoint) === normalizeLlmEndpoint(currentEndpoint);
       const managed = provider === "chatgpt" || provider === "grok-account";
       if (!managed && sameTarget && isUsableApiKey(sessionKey)) return sessionKey;
@@ -77,7 +79,6 @@ export const modelCommand: SlashCommand = {
       if (!managed && !resolved.refused && isUsableApiKey(resolved.apiKey)) return resolved.apiKey;
       if (profile?.provider === provider && normalizeLlmEndpoint(profile.endpoint) === normalizeLlmEndpoint(endpoint) && latest?.status === "ready") {
         if (profile.method === "chatgpt_oauth" || profile.method === "grok_cli_session") return AUTH_MARKER_PREFIX + profile.id;
-        if (profile.method === "none") return "";
         try {
           const key = await resolveProfileCredential(stateDir, profile);
           if (isUsableApiKey(key)) return key;
