@@ -25,7 +25,7 @@ export async function extractDreamMemoriesLLM(
   turnCount: number,
   config: LLMDreamConfig
 ): Promise<string[]> {
-  if (!config.enabled || !config.apiKey) {
+  if (!config.enabled || !config.apiKey || config.apiKey.startsWith("qling-auth:")) {
     return extractDreamMemories(
       { turnCount, transcript },
       { enabled: true, turnThreshold: 24, transcriptWindow: 4 }

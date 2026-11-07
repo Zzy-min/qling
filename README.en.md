@@ -111,9 +111,11 @@ npm run bootstrap -- --with-browser
 qling setup
 ```
 
-Run `qling` in an interactive terminal: a missing connection opens an account-first wizard (ChatGPT, Grok, API key, or local model). Saving continues into chat in the same process. `qling setup` reopens it. Keys use hidden input and are stored under the configured state directory's `auth/`: Windows uses current-user DPAPI; macOS/Linux use a private directory and 0600 files, not an OS keychain. Existing `.env` and advanced settings are preserved.
+Run `qling` in an interactive terminal: a missing connection opens an account-first wizard (ChatGPT, Grok, API key, or local model). Saving continues into chat in the same process. `qling setup` reopens it. Keys use hidden input. Qling-owned API keys and ChatGPT credentials are stored under the configured state directory's `auth/`: Windows uses current-user DPAPI; macOS/Linux use a private directory and 0600 files, not an OS keychain. Grok credentials remain in the official CLI store; Qling saves only a connection reference. Existing `.env` and advanced settings are preserved.
 
 Use `qling login [chatgpt|grok]` or `/login` to authorize again. Grok account mode requires the user-installed [official CLI](https://x.ai/cli); Qling does not install it. `qling logout [provider]` or `/logout` signs out Qling only, leaving the official Grok session intact. Detached account metadata remains selected to prevent automatic API billing fallback after restart. `qling auth status` or `/authstatus` checks local readiness without refresh or inference. Model catalogs can fail; manual models and inference remain explicitly unverified. Account mode never falls back to API billing.
+
+The default Goal Evaluator follows the current connection, including switches and logout; a dedicated evaluator service requires its own key. In account mode, memory dreams and session graph summaries use local fallbacks. Embeddings require independent `QLING_MEMORY_SEMANTIC_ENDPOINT` and `QLING_MEMORY_SEMANTIC_API_KEY` settings; vision requires an independent `QLING_VISION_PROVIDER` and `QLING_VISION_API_KEY`. These helpers never send an account reference as a bearer token or reuse retired API credentials.
 
 Pipes, non-TTY input, and `run --json` never prompt; missing credentials return `LLM_CONNECTION_REQUIRED` with setup guidance. Existing provider-specific environment variables remain supported and take precedence over stored API keys. Optional manual environment configuration:
 

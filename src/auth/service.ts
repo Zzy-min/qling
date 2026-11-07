@@ -115,8 +115,21 @@ export function createAuthService(deps: Dependencies = {}) {
     await locked(resolve(dir), async () => {
       await privateDir(authPath(dir));
       const s = await read(dir);
+      let connectionId = p.id;
+      if (!s.entries[connectionId]) {
+        for (const entry of Object.values(s.entries)) {
+          if (entry.profile.provider !== p.provider || entry.profile.method !== p.method) continue;
+          if (p.method === "chatgpt_oauth" && c?.subject && c.issuer && entry.credentialFile) {
+            const previous = await secret(dir, entry);
+            if (previous.subject === c.subject && previous.issuer === c.issuer) {
+              connectionId = entry.profile.id;
+              break;
+            }
+          }
+        }
+      }
       const clean: AuthProfile = {
-        id: p.id,
+        id: connectionId,
         provider: p.provider,
         method: p.method,
         endpoint: p.endpoint,
@@ -125,15 +138,16 @@ export function createAuthService(deps: Dependencies = {}) {
       if (p.method !== "none" && !c && p.method !== "grok_cli_session")
         throw Error("Missing connection credential");
       const credentialFile = c ? await writeSecret(dir, c) : undefined;
-      const retired = s.entries[p.id]?.credentialFile;
-      s.entries[p.id] = { profile: clean, credentialFile };
-      s.activeId = p.id;
+      const retired = s.entries[connectionId]?.credentialFile;
+      s.entries[connectionId] = { profile: clean, credentialFile };
+      s.activeId = connectionId;
       try {
         await persist(dir, s);
       } catch (error) {
         await retireSecret(dir, credentialFile);
         throw error;
       }
+      p.id = connectionId;
       await retireSecret(dir, retired);
     });
   };
@@ -253,9 +267,10 @@ export function createAuthService(deps: Dependencies = {}) {
       : runOfficialGrokLogin(options.signal));
     options.signal?.throwIfAborted();
     await (deps.readGrokCredential || readGrokCredential)();
+    const selected = await loadActiveProfile(options.stateDir);
     return {
       profile: {
-        id: randomUUID(),
+        id: selected?.method === "grok_cli_session" ? selected.id : randomUUID(),
         provider: "grok-account",
         method: "grok_cli_session" as const,
         endpoint: GROK_ENDPOINT,

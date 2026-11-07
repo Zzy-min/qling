@@ -310,3 +310,36 @@ test(
     assert.equal(await s.loadActiveProfile(dir), null);
   },
 );
+
+test('fresh authorization permits B after A without inheriting A scopes or refresh token', async () => {
+  const dir=await mkdtemp(join(tmpdir(),'qling-fresh-grant-'));
+  const old={accessToken:'A',refreshToken:'A-REFRESH',clientId:'client',subject:'A',issuer:ISSUER,scopes:['resource.invoke','chatgpt.tokens.use.direct'],expiresAt:Date.now()+3600000};
+  const p={id:'A',provider:'chatgpt',method:'chatgpt_oauth',endpoint:'https://api.openai.com/v1',model:'m'};
+  let requested, omitScope=false;
+  const mock=async(url,init)=>{
+    if(url===TOKEN_URL){
+      assert.equal(init.body.get('grant_type'),'authorization_code');
+      const id=await new SignJWT({nonce:requested.searchParams.get('nonce')}).setProtectedHeader({alg:'RS256',kid:'key'}).setSubject('B').setIssuer(ISSUER).setAudience('client').setIssuedAt().setExpirationTime('1h').sign(privateKey);
+      return response({access_token:'B',id_token:id,token_type:'Bearer',expires_in:3600,...(!omitScope?{scope:'resource.invoke chatgpt.tokens.use.direct'}:{})});
+    }
+    return http(url,init);
+  };
+  const service=createAuthService({cipher,http:mock});
+  await service.saveConnection(dir,p,old);
+  const login=()=>service.loginChatGpt({stateDir:dir,onUrl:url=>{
+    requested=new URL(url);
+    assert.equal(requested.searchParams.get('client_id'),'client');
+    const callback=new URL(requested.searchParams.get('redirect_uri'));
+    callback.search=new URLSearchParams({state:requested.searchParams.get('state'),code:'code',client_id:'client'});
+    void fetch(callback);
+  }});
+  const fresh=await login();
+  assert.equal(fresh.credential.subject,'B');
+  assert.equal(fresh.credential.refreshToken,undefined);
+  assert.equal(await service.resolveProfileCredential(dir,p),'A');
+  omitScope=true;
+  await assert.rejects(login(),/Insufficient.*scopes/);
+  assert.equal(await service.resolveProfileCredential(dir,p),'A');
+  const tokenB=await new SignJWT({}).setProtectedHeader({alg:'RS256',kid:'key'}).setSubject('B').setIssuer(ISSUER).setAudience('client').setIssuedAt().setExpirationTime('1h').sign(privateKey);
+  await assert.rejects(tokenCredential(http,{access_token:'B',id_token:tokenB,token_type:'Bearer',expires_in:3600,scope:'resource.invoke chatgpt.tokens.use.direct'},'client',undefined,old),/identity mismatch/);
+});

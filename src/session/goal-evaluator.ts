@@ -1,5 +1,6 @@
-import { getProviderPreset } from "../providers/presets.js";
-import { resolveActiveLlm, resolveProviderApiKey } from "../providers/resolve-llm.js";
+import { LlmHttpClient } from "../providers/llm-client.js";
+import { apiKeyRequiredForEndpoint, getProviderPreset } from "../providers/presets.js";
+import { resolveActiveLlm } from "../providers/resolve-llm.js";
 
 type GoalFetch = typeof fetch;
 
@@ -18,6 +19,8 @@ export interface GoalEvaluatorOptions {
   model?: string;
   timeoutMs?: number;
   fetchImpl?: GoalFetch;
+  currentSession?: () => { client: Pick<LlmHttpClient, "chatCompletions">; provider: string; endpoint: string; apiKey: string; model: string };
+
 }
 
 const GOAL_EVALUATION_PROMPT = `你是轻灵的 Goal Evaluator。
@@ -45,6 +48,9 @@ function stripCodeFences(text: string): string {
 }
 
 export class GoalEvaluator {
+  private readonly currentSession?: GoalEvaluatorOptions["currentSession"];
+  private readonly dedicated: boolean;
+  private readonly sessionModel?: string;
   private readonly provider: string;
   private readonly endpoint: string;
   private readonly apiKey: string;
@@ -53,6 +59,11 @@ export class GoalEvaluator {
   private readonly fetchImpl: GoalFetch;
 
   constructor(options: GoalEvaluatorOptions = {}) {
+    this.currentSession = options.currentSession;
+    this.sessionModel = options.model ?? process.env.QLING_GOAL_EVALUATOR_MODEL;
+    this.dedicated = [options.provider, options.endpoint, options.apiKey, options.fetchImpl,
+      process.env.QLING_GOAL_EVALUATOR_PROVIDER, process.env.QLING_GOAL_EVALUATOR_ENDPOINT,
+      process.env.QLING_GOAL_EVALUATOR_API_KEY].some(v => v !== undefined);
     const active = resolveActiveLlm(process.env);
     this.provider = options.provider ?? process.env.QLING_GOAL_EVALUATOR_PROVIDER ?? active.provider;
     const sameProvider = this.provider === active.provider;
@@ -61,14 +72,8 @@ export class GoalEvaluator {
       process.env.QLING_GOAL_EVALUATOR_ENDPOINT ??
       (sameProvider ? active.endpoint : getProviderPreset(this.provider)?.endpoint || active.endpoint);
     this.endpoint = resolveChatEndpoint(endpoint);
-    this.apiKey =
-      options.apiKey ??
-      process.env.QLING_GOAL_EVALUATOR_API_KEY ??
-      (sameProvider
-        ? active.apiKey
-        : resolveProviderApiKey(this.provider, process.env, {
-            startupProvider: process.env.QLING_LLM_STARTUP_PROVIDER || active.provider,
-          }).apiKey);
+    // A dedicated service must supply its own credential; never cache the active session key.
+    this.apiKey = options.apiKey ?? process.env.QLING_GOAL_EVALUATOR_API_KEY ?? "";
     this.model =
       options.model ??
       process.env.QLING_GOAL_EVALUATOR_MODEL ??
@@ -81,7 +86,8 @@ export class GoalEvaluator {
     condition: string;
     transcript: string;
   }): Promise<GoalEvaluationResult> {
-    if (!this.apiKey && this.provider !== "local") {
+    if (this.dedicated && (["chatgpt", "grok-account"].includes(this.provider) ||
+        ((!this.apiKey || this.apiKey.startsWith("qling-auth:")) && apiKeyRequiredForEndpoint(this.endpoint, this.provider)))) {
       return {
         done: false,
         reason: "goal evaluator 缺少 API key，无法确认条件达成",
@@ -101,6 +107,20 @@ ${input.transcript.slice(-12_000)}`;
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
+      if (!this.dedicated) {
+        const active = this.currentSession?.() ?? resolveActiveLlm(process.env);
+        if (!active.apiKey && apiKeyRequiredForEndpoint(active.endpoint, active.provider)) {
+          return { done: false, reason: "goal evaluator 当前连接已退出或缺少凭据；请 /login 后继续", error: "no_key" };
+        }
+        const client = "client" in active ? active.client : new LlmHttpClient({
+          provider: active.provider, endpoint: active.endpoint, apiKey: active.apiKey,
+          authStateDir: process.env.QLING_FILE_STATE_DIR, timeoutMs: this.timeoutMs,
+        });
+        const result = await client.chatCompletions({ model: this.sessionModel || active.model, systemPrompt: GOAL_EVALUATION_PROMPT,
+          messages: [{role:"user", content:prompt}], tools: [], signal:controller.signal,
+          overrides: {temperature:0, max_tokens:120} });
+        return this.parse(result.content);
+      }
       const response = await this.fetchImpl(this.endpoint, {
         method: "POST",
         headers: {

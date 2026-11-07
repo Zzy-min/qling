@@ -8,7 +8,9 @@ export async function listPendingAccountModels(profile: AuthProfile, credential?
   if (!["chatgpt_oauth", "grok_cli_session"].includes(profile.method)) return { ok: false, models: [] };
   const signal = AbortSignal.any([AbortSignal.timeout(5000), ...(options.signal ? [options.signal] : [])]);
   try {
+    options.signal?.throwIfAborted();
     const c = profile.method === "grok_cli_session" ? await (options.readGrok ?? readGrokCredential)() : credential;
+    options.signal?.throwIfAborted();
     if (!c?.accessToken) return { ok: false, models: [] };
     const headers: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${c.accessToken}` };
     if (profile.method === "grok_cli_session") { headers["X-XAI-Token-Auth"] = "xai-grok-cli"; headers["x-grok-model-override"] = profile.model; }
@@ -19,6 +21,7 @@ export async function listPendingAccountModels(profile: AuthProfile, credential?
       ? body.models.filter(m => m.visibility === "list").map(m => m.slug)
       : (body.data ?? []).map(m => m.id);
     const models = [...new Set(ids.filter((m): m is string => typeof m === "string" && Boolean(m.trim())).map(m => m.trim()))];
+    options.signal?.throwIfAborted();
     return { ok: models.length > 0, models };
-  } catch { return { ok: false, models: [] }; }
+  } catch { options.signal?.throwIfAborted(); return { ok: false, models: [] }; }
 }

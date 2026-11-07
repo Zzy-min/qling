@@ -80,8 +80,10 @@ export async function tokenCredential(
   previous?: AuthCredential,
   signal?: AbortSignal,
 ): Promise<AuthCredential> {
+  // A nonce identifies a fresh code grant, even if a caller supplies prior client metadata.
+  const inherited = nonce ? undefined : previous;
   const scopes =
-    typeof data.scope === "string" ? data.scope.split(/\s+/) : previous?.scopes;
+    typeof data.scope === "string" ? data.scope.split(/\s+/) : inherited?.scopes;
   if (
     !scopes?.includes("chatgpt.tokens.use.direct") ||
     !scopes.includes("resource.invoke")
@@ -96,8 +98,8 @@ export async function tokenCredential(
     data.expires_in <= 0
   )
     throw Error("Invalid ChatGPT token response");
-  let identity = previous
-    ? { subject: previous.subject, issuer: previous.issuer }
+  let identity = inherited
+    ? { subject: inherited.subject, issuer: inherited.issuer }
     : undefined;
   if (typeof data.id_token === "string")
     identity = await verifyIdentity(
@@ -110,7 +112,7 @@ export async function tokenCredential(
   else if (nonce) throw Error("Missing ChatGPT ID token");
   if (
     !identity?.subject ||
-    (previous?.subject && previous.subject !== identity.subject)
+    (inherited?.subject && inherited.subject !== identity.subject)
   )
     throw Error("ChatGPT identity mismatch");
   signal?.throwIfAborted();
@@ -119,9 +121,9 @@ export async function tokenCredential(
     refreshToken:
       typeof data.refresh_token === "string"
         ? data.refresh_token
-        : previous?.refreshToken,
+        : inherited?.refreshToken,
     idToken:
-      typeof data.id_token === "string" ? data.id_token : previous?.idToken,
+      typeof data.id_token === "string" ? data.id_token : inherited?.idToken,
     clientId,
     expiresAt: Date.now() + data.expires_in * 1000,
     scopes,
@@ -284,7 +286,7 @@ export async function authorizeChatGpt(
       data,
       issued,
       nonce,
-      previous,
+      undefined, // Fresh authorization never inherits a previous grant.
       signal,
     );
     signal.throwIfAborted();

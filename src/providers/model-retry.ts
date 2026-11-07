@@ -186,6 +186,12 @@ export function classifyModelError(error: unknown): ModelErrorClassification {
   ) {
     return { ...base, kind: "stream_interrupted", retryable: true };
   }
+  if (/insufficient_quota|quota_exceeded|usage_limit_reached|billing_hard_limit|subscription_(?:quota|limit|exhausted)|credits_exhausted/.test(blob)) {
+    return { ...base, kind: "bad_request", retryable: false };
+  }
+  if (record?.retriable === false) {
+    return { ...base, kind: "bad_request", retryable: false };
+  }
   if (status === 429 || /rate[_ ]limit|too many requests/.test(blob)) {
     return { ...base, kind: "rate_limited", retryable: true, status: status ?? 429 };
   }

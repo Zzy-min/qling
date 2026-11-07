@@ -87,10 +87,16 @@ export function resolveVisionLlmConfig(
   const resolvedProviderKey = resolveProviderApiKey(provider, env as NodeJS.ProcessEnv, {
     startupProvider: String(env.QLING_LLM_STARTUP_PROVIDER || active.provider),
   }).apiKey.trim();
-  const apiKey =
+  const candidateKey =
     explicitVisionKey ||
     (activeMatchesProvider && active.apiKey.trim() ? active.apiKey.trim() : "") ||
     resolvedProviderKey;
+
+  const accountActive = ["chatgpt", "grok-account"].includes(active.provider);
+  const accountProvider = ["chatgpt", "grok-account"].includes(provider);
+  const independent = Boolean(explicitVisionKey && rawProvider && !accountProvider);
+  const apiKey = candidateKey.startsWith("qling-auth:") || accountProvider || (accountActive && !independent)
+    ? "" : candidateKey;
 
   let endpoint =
     env.QLING_VISION_ENDPOINT?.trim() ||
@@ -223,7 +229,8 @@ export async function runVisionAnalyze(
   const maxTokens = internalArgs._retry_max_tokens ?? resolved.maxTokens;
 
   // 只有非本地提供商才强制要求 API Key
-  if (!apiKey && provider !== "local" && provider !== "ollama") {
+  if (!apiKey && ((provider !== "local" && provider !== "ollama") ||
+      ["chatgpt", "grok-account"].includes(resolveActiveLlm(env).provider))) {
     return {
       tool_call_id: "",
       output: `Error: Missing API Key for vision analysis (${provider}). Please check your configuration.`,

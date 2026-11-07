@@ -394,7 +394,7 @@ export function resolveActiveLlm(env: EnvLike = process.env): ResolvedLlmSetting
         provider: "session",
         endpoint: "session",
         model: "session",
-        apiKey: apiKey ? "session" : "default",
+        apiKey: "session",
       },
       warnings: [],
       contextWindow: known?.contextWindow ?? null,

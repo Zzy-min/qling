@@ -17,7 +17,7 @@ import { markOnboardingComplete } from "../onboarding/tutorial.js";
 import { isHttpEndpoint, validateModelName } from "../providers/resolve-llm.js";
 import * as os from "os";
 import { getLocalizedText } from "../i18n/index.js";
-import { getProviderPreset, listProviderPresets } from "../providers/presets.js";
+import { apiKeyRequiredForEndpoint, listProviderPresets } from "../providers/presets.js";
 
 export interface SetupEnvInput {
   provider: string;
@@ -57,20 +57,26 @@ export function createTerminalPrompt(
   stream: NodeJS.ReadStream = input,
   writer: Pick<NodeJS.WriteStream, "write"> = output,
 ): SetupPrompt {
+  const initiallyFlowing = stream.readableFlowing === true;
   let cancelPending: (() => void) | undefined;
   return {
     write: (line) => { writer.write(line + "\n"); },
-    close: () => cancelPending?.(),
+    close: () => {
+      cancelPending?.();
+      // stdin may start with readableFlowing=null (not explicitly paused).
+      // Stop our native read handle while keeping stdin reusable for the TUI.
+      if (!initiallyFlowing) stream.pause();
+    },
     ask: (label, options = {}) => new Promise((resolve) => {
       if (!stream.isTTY || typeof stream.setRawMode !== "function") { resolve(null); return; }
-      const previousRaw = stream.isRaw, wasPaused = stream.isPaused();
+      const previousRaw = stream.isRaw, wasFlowing = stream.readableFlowing === true;
       let value = "", finished = false;
       const finish = (answer: string | null) => {
         if (finished) return;
         finished = true;
         stream.off("data", onData); stream.off("end", onEnd); stream.off("error", onEnd);
         stream.setRawMode(previousRaw);
-        if (wasPaused) stream.pause();
+        if (!wasFlowing) stream.pause();
         cancelPending = undefined;
         writer.write("\n"); resolve(answer);
       };
@@ -103,11 +109,10 @@ export async function shouldRunFirstRunSetup(
     const status = await auth.inspectActiveConnection(config.runtime.file_state_dir);
     return status.profile?.provider !== config.llm.provider || status.status !== "ready";
   }
-  const preset = getProviderPreset(config.llm.provider);
-  if (preset?.requiresApiKey === false || ["ollama", "local"].includes(config.llm.provider)) return false;
-  return !config.llm.api_key?.trim();
+  return apiKeyRequiredForEndpoint(config.llm.endpoint, config.llm.provider) && !config.llm.api_key?.trim();
 }
 interface WizardServices {
+  loadActiveProfile?: typeof auth.loadActiveProfile;
   loginChatGpt?: typeof auth.loginChatGpt;
   loginGrok?: typeof auth.loginGrok;
   saveConnection?: typeof auth.saveConnection;
@@ -129,7 +134,9 @@ export async function runConnectionWizard(options: {
   const onInterrupt = () => { controller.abort(); prompt.close(); };
   process.once("SIGINT", onInterrupt);
   const ask = async (label: string, secret = false) => {
+    controller.signal.throwIfAborted();
     const answer = await prompt.ask(label, { secret });
+    controller.signal.throwIfAborted();
     if (answer === null || answer.trim() === "/cancel") throw new CancelSetup();
     if (answer.trim() === "/back") throw new BackSetup();
     return answer.trim();
@@ -147,6 +154,7 @@ export async function runConnectionWizard(options: {
           const session = choice === "1"
             ? await (services.loginChatGpt ?? auth.loginChatGpt)({ stateDir: options.stateDir, signal: controller.signal, onUrl: url => prompt.write(`请在浏览器授权：${url}`), openBrowser: services.openBrowser ?? openAuthorizationBrowser })
             : await (services.loginGrok ?? auth.loginGrok)({ stateDir: options.stateDir, signal: controller.signal });
+          controller.signal.throwIfAborted();
           profile = { ...session.profile }; credential = "credential" in session ? session.credential : undefined;
         } else if (choice === "3" || choice === "4") {
           let provider = "ollama", endpoint = "http://localhost:11434/v1", model = "llama3", requiresKey = false;
@@ -166,14 +174,19 @@ export async function runConnectionWizard(options: {
           if (!isHttpEndpoint(endpoint)) { prompt.write("Endpoint 必须是无凭据的 http(s) URL。"); continue; }
           const url = new URL(endpoint);
           if (url.username || url.password || url.search || url.hash) { prompt.write("Endpoint 不能包含凭据、查询参数或片段。"); continue; }
-          if (choice === "4" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) { prompt.write("本地免 Key 模式仅接受 loopback 地址。"); continue; }
+          if (!requiresKey && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) { prompt.write("本地免 Key 模式仅接受 loopback 地址。"); continue; }
           if (requiresKey) { const apiKey = await ask("API Key（隐藏输入）: ", true); if (!apiKey) { prompt.write("API Key 不能为空。"); continue; } credential = { apiKey }; }
-          profile = { id: randomUUID(), provider, endpoint, model, method: requiresKey ? "api_key" : "none" };
+          const method = requiresKey ? "api_key" : "none";
+          const selected = await (services.loadActiveProfile ?? auth.loadActiveProfile)(options.stateDir);
+          controller.signal.throwIfAborted();
+          const replacingSelected = selected?.provider === provider && selected.method === method && selected.endpoint === endpoint;
+          profile = { id: replacingSelected ? selected.id : randomUUID(), provider, endpoint, model, method };
         } else { prompt.write("请选择 1–5。"); continue; }
         let models: string[] = [];
         if (["chatgpt_oauth", "grok_cli_session"].includes(profile.method)) {
           prompt.write("读取所选账号的模型目录（不发送推理请求）…");
           const catalog = await (services.listModels ?? listPendingAccountModels)(profile, credential, { signal: controller.signal });
+          controller.signal.throwIfAborted();
           if (catalog.ok) models = catalog.models;
           else prompt.write("账号模型目录不可用；可手动填写，尚未验证。");
         }
@@ -184,10 +197,17 @@ export async function runConnectionWizard(options: {
         const invalid = validateModelName(profile.model);
         if (!profile.model || invalid) { prompt.write(invalid || "模型 ID 不能为空。"); continue; }
         const credentialCopy = profile.method === "none" ? ""
+          : profile.method === "grok_cli_session" ? "凭据由官方 Grok Build CLI 存储和管理；Qling 仅保存本地连接引用"
           : process.platform === "win32" ? "当前 Windows 用户 DPAPI 加密"
           : "私有目录、0600 文件权限保护；并非系统钥匙串加密";
         prompt.write(`Provider: ${profile.provider}\n数据发送至: ${profile.endpoint}\nModel: ${profile.model}（尚未验证）\n认证方式: ${profile.method}${credentialCopy ? `\n凭据: ${credentialCopy}` : ""}\n连接保存至: ${path.join(options.stateDir, "auth")}；保留现有 .env 和高级设置。`);
-        if ((await ask("保存并使用此连接？[Y/n]: ")).toLowerCase() === "n") throw new CancelSetup();
+        while (true) {
+          const confirmation = (await ask("保存并使用此连接？[Y/n]: ")).toLowerCase();
+          if (["n", "no"].includes(confirmation)) throw new CancelSetup();
+          if (["", "y", "yes"].includes(confirmation)) break;
+          prompt.write("请输入 yes / y 或 no / n。");
+        }
+        controller.signal.throwIfAborted();
         try { await (services.saveConnection ?? auth.saveConnection)(options.stateDir, profile, credential); }
         catch { throw Error("连接保存失败；请检查本地认证状态和目录权限后重试 qling setup。"); }
         try { await (services.markComplete ?? markOnboardingComplete)(options.stateDir); }

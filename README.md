@@ -115,9 +115,11 @@ npm run bootstrap -- --with-browser
 qling setup
 ```
 
-直接运行 `qling`：交互式终端缺少当前连接时，自动选择 ChatGPT 账号、Grok 账号、API Key 或本地模型。保存后在同一进程进入对话；`qling setup` 可重新配置。API Key 隐藏输入，非敏感连接档案和凭据引用保存在状态目录的 `auth/`，Windows 凭据使用当前用户 DPAPI 加密，macOS/Linux 使用私有目录和 0600 文件权限保护（并非系统钥匙串加密）。现有 `.env` 和高级设置不会被替换。
+直接运行 `qling`：交互式终端缺少当前连接时，自动选择 ChatGPT 账号、Grok 账号、API Key 或本地模型。保存后在同一进程进入对话；`qling setup` 可重新配置。API Key 隐藏输入，非敏感连接档案和凭据引用保存在状态目录的 `auth/`，Qling 保存的 API Key 和 ChatGPT 凭据在 Windows 使用当前用户 DPAPI 加密，macOS/Linux 使用私有目录和 0600 文件权限保护（并非系统钥匙串加密）；Grok 凭据由官方 CLI 存储和管理，Qling 仅保存连接引用。现有 `.env` 和高级设置不会被替换。
 
 `qling login [chatgpt|grok]` / `/login` 重新授权；`qling logout [provider]` / `/logout` 只退出 Qling 连接，不退出 Grok 官方 CLI 的全局会话；保留已退出的账号选择元数据，防止重启后自动改用 API 计费。Grok 账号需自行安装 [官方 Grok Build CLI](https://x.ai/cli)，Qling 不会自动安装。`qling auth status` / `/authstatus` 只检查本地状态，不刷新或发送模型请求。账号目录失败时可手填模型并标记尚未验证；登录成功不代表订阅权限或推理已验证。
+
+默认 Goal Evaluator 跟随当前连接，切换和退出立即生效；独立评估服务必须配置自己的 Key。账号模式下，梦想整理和会话图谱摘要使用本地降级；语义向量需独立的 `QLING_MEMORY_SEMANTIC_ENDPOINT` 和 `QLING_MEMORY_SEMANTIC_API_KEY`，视觉需独立的 `QLING_VISION_PROVIDER` 和 `QLING_VISION_API_KEY`。这些辅助路径不会复用旧连接的 Key 或把账号引用当作 token 发送。
 
 无 TTY、管道和 `run --json` 不弹向导；缺连接返回 `LLM_CONNECTION_REQUIRED` 和 `qling setup` 指引。已有环境变量仍兼容，供应商变量优先于档案中的 API Key；账号模式不会回退到 API 计费。也可手动设置环境变量：
 

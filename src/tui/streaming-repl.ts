@@ -771,6 +771,7 @@ export class StreamingREPL {
     });
     this.goalController = new SessionGoalController({
       manager: goalManager,
+      evaluator: this.agent.createGoalEvaluator(),
       runner: "session",
     });
     await this.goalController.init();

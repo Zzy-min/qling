@@ -83,6 +83,7 @@ import { SessionActor } from "./runtime/session-actor.js";
 import { SessionLease } from "./runtime/session-lease.js";
 import { getBackgroundTaskRegistry } from "./runtime/background-tasks.js";
 import { resolveAgentRuntimeMode, type AgentRuntimeMode } from "./runtime/mode.js";
+import { GoalEvaluator } from "./session/goal-evaluator.js";
 import type { PromptExecutionResult, SessionSnapshot } from "./runtime/types.js";
 import { projectSessionEvents } from "./runtime/session-projector.js";
 import { redactPromptDiagnostics } from "./harness/prompt-envelope.js";
@@ -400,7 +401,7 @@ export class AgentLoop extends AgentEventEmitter {
     }
     this.llmSources = resolved.sources;
     if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
-      process.env.QLING_LLM_STARTUP_PROVIDER = provider;
+      process.env.QLING_LLM_STARTUP_PROVIDER = process.env.QLING_LLM_PROVIDER || provider;
     }
     this.startupProvider = process.env.QLING_LLM_STARTUP_PROVIDER || provider;
     this.requestedFileStateDir =
@@ -633,6 +634,18 @@ export class AgentLoop extends AgentEventEmitter {
             embedEndpoint = embedEndpoint.replace(/\/$/, "") + "/v1";
           }
           const embeddingClient = new EmbeddingClient({
+            getConnection: () => {
+              const independentKey = process.env.QLING_MEMORY_SEMANTIC_API_KEY?.trim();
+              const independentEndpoint = process.env.QLING_MEMORY_SEMANTIC_ENDPOINT?.trim();
+              const account = ["chatgpt", "grok-account"].includes(this.config.provider ?? "");
+              if (account && !(independentKey && independentEndpoint)) return null;
+              const key = independentKey || this.config.apiKey;
+              if (!key || key === "local" || key.startsWith("qling-auth:")) return null;
+              let endpoint = independentEndpoint || this.config.endpoint || "";
+              if (!endpoint) return null;
+              if (!/\/v1\/?$/.test(endpoint)) endpoint = endpoint.replace(/\/$/, "") + "/v1";
+              return { apiKey: key, endpoint };
+            },
             apiKey: process.env.QLING_MEMORY_SEMANTIC_API_KEY || this.config.apiKey,
             endpoint: embedEndpoint,
             model: process.env.QLING_MEMORY_SEMANTIC_MODEL || "text-embedding-3-small",
@@ -1279,6 +1292,13 @@ export class AgentLoop extends AgentEventEmitter {
     return this.llmActivityNotice;
   }
 
+  createGoalEvaluator(): GoalEvaluator {
+    return new GoalEvaluator({ currentSession: () => ({
+      client: this.llmClient, model: this.config.model,
+      provider: this.config.provider ?? "unknown", endpoint: this.config.endpoint ?? "", apiKey: this.config.apiKey,
+    }) });
+  }
+
   setModel(model: string): void {
     this.applyLlmSession({ model });
   }
@@ -1656,7 +1676,8 @@ export class AgentLoop extends AgentEventEmitter {
 
       const sessionId = this.sessionId;
       let summary = "无摘要会话";
-      if (this.memoryDreamLLMEnabled && this.messages.length > 0 && this.config.apiKey) {
+      if (this.memoryDreamLLMEnabled && this.messages.length > 0 && this.config.apiKey &&
+          !["chatgpt", "grok-account"].includes(this.config.provider ?? "") && !this.config.apiKey.startsWith("qling-auth:")) {
         try {
           const axios = (await import("axios")).default;
           const userMessages = this.messages.filter(m => m.role === "user").map(m => m.content);

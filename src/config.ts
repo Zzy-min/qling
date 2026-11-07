@@ -572,7 +572,7 @@ export async function applyActiveAuthProfile(
   sources.provider=cli.provider?'cli':'session';
   sources.endpoint=cli.endpoint?'cli':'session';
   sources.model=cli.model?'cli':'session';
-  config.llm.api_key=''; sources.apiKey='default';
+  config.llm.api_key=''; sources.apiKey='session';
   if (isManagedProvider(profile.provider)) {
     config.llm.api_key=AUTH_MARKER_PREFIX+profile.id;sources.apiKey='session';
   } else if(profile.method==='api_key') {
@@ -657,16 +657,16 @@ async function mergeLocalMcpStore(config: QlingConfig, warnings: string[]): Prom
 }
 
 export function applyConfigToProcessEnv(config: QlingConfig): void {
+  const startupProvider = process.env.QLING_LLM_STARTUP_PROVIDER || process.env.QLING_LLM_PROVIDER || config.llm.provider;
   process.env.QLING_LLM_PROVIDER = config.llm.provider;
   process.env.QLING_LLM_MODEL = config.llm.model;
   process.env.QLING_LLM_ENDPOINT = config.llm.endpoint;
   process.env.QLING_LLM_REQUEST_TIMEOUT_MS = String(config.llm.request_timeout_ms);
   process.env.QLING_LLM_MAX_RETRIES = String(config.llm.max_retries ?? 3);
-  if (config.llm.api_key) {
-    process.env.QLING_LLM_API_KEY = config.llm.api_key;
-  }
+  // Generic/provider key variables remain user inputs. Derived session secrets are
+  // published only through the scoped QLING_LLM_SESSION_* snapshot by AgentLoop.
   if (!process.env.QLING_LLM_STARTUP_PROVIDER) {
-    process.env.QLING_LLM_STARTUP_PROVIDER = config.llm.provider;
+    process.env.QLING_LLM_STARTUP_PROVIDER = startupProvider;
   }
 
   if (config.runtime.workspace_dir) {

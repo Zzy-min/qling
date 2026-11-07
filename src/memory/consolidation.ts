@@ -43,7 +43,7 @@ export async function consolidateMemoriesLLM(
   config: { apiKey: string; endpoint: string; model: string }
 ): Promise<MemoryOperation[]> {
   if (newCandidates.length === 0) return [];
-  if (!config.apiKey) {
+  if (!config.apiKey || config.apiKey.startsWith("qling-auth:")) {
     // If no API key, default to ADD for all new candidates that are not exact matches.
     const existingContents = new Set(existingMemories.map(e => e.content));
     return newCandidates

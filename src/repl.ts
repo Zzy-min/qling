@@ -422,6 +422,7 @@ export class Repl {
     const goalManager = new SessionGoalManager({ stateDir, sessionId });
     this.goalController = new SessionGoalController({
       manager: goalManager,
+      evaluator: this.agent.createGoalEvaluator(),
       runner: "session",
     });
     await this.goalController.init();

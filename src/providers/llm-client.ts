@@ -162,7 +162,17 @@ export class LlmHttpClient {
           if (error instanceof Error && error.name === "AgentRunCanceledError") throw error;
           // Only an HTTP rejection before SSE delivery can be retried. Never replay partial turns.
           const rejected = error as {response?:{status?:number;data?:{destroy?:()=>void}};config?:{headers?:{Authorization?:string}}};
-          rejected.response?.data?.destroy?.();
+          const body = rejected.response?.data;
+          if (body && typeof body === "object" && Symbol.asyncIterator in body) {
+            let detail = "";
+            try { detail = await readResponseStream(body as unknown as AsyncIterable<Uint8Array>, 4 * 1024, input.signal); }
+            catch {
+              if (input.signal?.aborted) throw canceledRequestError();
+              // A stalled error body must not hide the original HTTP status.
+            }
+            try { (rejected.response as {data?:unknown}).data = JSON.parse(detail); }
+            catch { (rejected.response as {data?:unknown}).data = detail; }
+          }
           const authorization = rejected.config?.headers?.Authorization;
           if (attempt===0 && rejected.response?.status===401 && authorization?.startsWith("Bearer ")) {
             try { await managedRequestHeaders(this.options,input.signal,authorization.slice(7)); }
@@ -250,7 +260,7 @@ export class LlmHttpClient {
 
     const status = Number(resp.status ?? 0);
     if (status < 200 || status >= 300) {
-      const detail = await readResponseStream(resp.data, 4 * 1024);
+      const detail = await readResponseStream(resp.data, 4 * 1024, input.signal);
       const error = this.providerErrorFromResponse(status, resp.headers ?? {}, detail);
       const unsupported = status === 415 || status === 501 ||
         ([400, 404, 405, 422].includes(status) && /stream|sse|not\s+support|unsupported/i.test(detail));
@@ -489,6 +499,7 @@ export class LlmHttpClient {
   ): ProviderHttpError {
     return new ProviderHttpError({
       ...options,
+      ...(options.code && /insufficient_quota|quota_exceeded|usage_limit_reached|billing_hard_limit|subscription_(?:quota|limit|exhausted)|credits_exhausted/.test(options.code) ? {retriable:false} : {}),
       ...(isManagedProvider(this.provider) ? {
         cause: undefined,
         detail: options.detail ? [...this.accountSecrets].reduce((detail,secret)=>detail.split(secret).join("[REDACTED]"),options.detail) : undefined,
@@ -503,7 +514,7 @@ export class LlmHttpClient {
     const client = axios.create({
       baseURL: options.endpoint,
       headers: {
-        ...(options.apiKey && !options.apiKey.startsWith("qling-auth:") && !isManagedProvider(options.provider) ? {Authorization: "Bearer " + options.apiKey} : {}),
+        ...(options.apiKey && options.apiKey !== "local" && !options.apiKey.startsWith("qling-auth:") && !isManagedProvider(options.provider) ? {Authorization: "Bearer " + options.apiKey} : {}),
         "Content-Type": "application/json",
       },
       timeout: options.timeoutMs,
@@ -578,17 +589,22 @@ async function readNextStreamChunk(
   });
 }
 
-async function readResponseStream(stream: AsyncIterable<Uint8Array>, maxBytes: number): Promise<string> {
+async function readResponseStream(stream: AsyncIterable<Uint8Array> & {destroy?: () => void}, maxBytes: number, signal?: AbortSignal): Promise<string> {
   const decoder = new TextDecoder();
-  let bytes = 0;
-  let output = "";
-  for await (const chunk of stream) {
-    const remaining = maxBytes - bytes;
-    if (remaining <= 0) break;
-    const slice = chunk.byteLength > remaining ? chunk.slice(0, remaining) : chunk;
-    bytes += slice.byteLength;
-    output += decoder.decode(slice, { stream: true });
-  }
-  output += decoder.decode();
-  return output;
+  let bytes = 0, output = "";
+  const iterator = stream[Symbol.asyncIterator]();
+  const deadline = Date.now() + 5000;
+  try {
+    while (bytes < maxBytes) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      const next = await readNextStreamChunk(iterator, remainingMs, signal, stream);
+      if (next.done) break;
+      const chunk = typeof next.value === "string" ? Buffer.from(next.value) : next.value;
+      const slice = chunk.subarray(0, maxBytes - bytes);
+      bytes += slice.byteLength;
+      output += decoder.decode(slice, {stream:true});
+    }
+    return output + decoder.decode();
+  } finally { stream.destroy?.(); }
 }

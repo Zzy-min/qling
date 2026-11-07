@@ -10,17 +10,27 @@ export interface EmbeddingOptions {
   endpoint: string;
   model: string;
   dimensions?: number;
+  /** Resolve inherited credentials at request time; null means offline fallback. */
+  getConnection?: () => { apiKey: string; endpoint: string } | null;
 }
 
 export class EmbeddingClient {
-  private client: any;
+  private options: EmbeddingOptions;
   private model: string;
   private dimensions?: number;
 
   constructor(options: EmbeddingOptions) {
+    this.options = options;
     this.model = options.model;
     this.dimensions = options.dimensions;
-    this.client = axios.create({
+  }
+
+  private currentClient() {
+    const options = this.options.getConnection ? this.options.getConnection() : this.options;
+    if (!options?.apiKey || options.apiKey.startsWith("qling-auth:")) {
+      throw Error("Account embeddings unsupported; configure an independent embedding service credential");
+    }
+    return axios.create({
       baseURL: options.endpoint,
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
@@ -31,7 +41,7 @@ export class EmbeddingClient {
 
   async getEmbedding(text: string): Promise<number[]> {
     try {
-      const resp = await this.client.post("/embeddings", {
+      const resp = await this.currentClient().post("/embeddings", {
         model: this.model,
         input: text,
         dimensions: this.dimensions, // 仅部分模型支持
@@ -51,7 +61,7 @@ export class EmbeddingClient {
   async getEmbeddings(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
     try {
-      const resp = await this.client.post("/embeddings", {
+      const resp = await this.currentClient().post("/embeddings", {
         model: this.model,
         input: texts,
         dimensions: this.dimensions,

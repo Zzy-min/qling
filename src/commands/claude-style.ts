@@ -298,6 +298,8 @@ export const modelCommand: SlashCommand = {
       const remote = await listRemoteModels({
         endpoint: currentEndpoint,
         apiKey: sessionKey,
+        provider: currentProvider,
+        authStateDir: loop.getRuntimeRootDir?.(),
         timeoutMs: 5000,
       });
       if (remote.ok) {
