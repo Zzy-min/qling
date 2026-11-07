@@ -22,9 +22,18 @@ const cipher = { encrypt: async (s) => s, decrypt: async (s) => s };
 const account = { id: 'account', provider: 'chatgpt', method: 'chatgpt_oauth', endpoint: 'https://api.openai.com/v1', model: 'account-model' };
 function wizard(answers) {
     const writes = [], saved = [];
-    return { writes, saved, options: { stateDir: '/unused', isTTY: true, prompt: { ask: async () => answers.shift() ?? null, write: s => writes.push(s), close() {
-                } }, services: { saveConnection: async (...a) => saved.push(a), markComplete: async () => {
-                }, listModels: async () => ({ ok: false, models: [] }) } } };
+    return {
+        writes, saved,
+        options: {
+            stateDir: '/unused', isTTY: true,
+            prompt: { ask: async () => answers.shift() ?? null, write: s => writes.push(s), close() {} },
+            services: {
+                saveConnection: async (...args) => saved.push(args),
+                markComplete: async () => {},
+                listModels: async () => ({ ok: false, models: [] })
+            }
+        }
+    };
 }
 const call = { model: 'model', systemPrompt: 'system', messages: [{ role: 'user', content: 'test' }], tools: [] };
 function preserveEnv(t) {

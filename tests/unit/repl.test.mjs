@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { Repl } from "../../dist/repl.js";
+import { GoalEvaluator } from "../../dist/session/goal-evaluator.js";
 
 function createAgent(overrides = {}) {
   const calls = [];
   return {
     calls,
+    // Keep real evaluator behavior (including managed transport); goal tests configure its dedicated local service.
+    createGoalEvaluator: () => new GoalEvaluator(),
     addUserMessage: (input) => {
       calls.push(["addUserMessage", input]);
     },
