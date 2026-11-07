@@ -57,7 +57,7 @@ test('setup wizard lists relevant models for API key providers and allows number
   // 2. '1' -> Provider index 1 (DeepSeek)
   // 3. ''  -> Default Endpoint
   // 4. 'secret-key' -> API key
-  // 5. '2' -> Model index 2 (deepseek-chat)
+  // 5. '2' -> Model index 2 (deepseek-v4-pro)
   // 6. 'y' -> Confirm
   const f = createWizardFixture(['3', '1', '', 'secret-key', '2', 'y']);
   const result = await runConnectionWizard(f.options);
@@ -65,14 +65,15 @@ test('setup wizard lists relevant models for API key providers and allows number
   assert.equal(result.status, 'saved');
   if (result.status === 'saved') {
     assert.equal(result.profile.provider, 'deepseek');
-    assert.equal(result.profile.model, 'deepseek-chat');
+    assert.equal(result.profile.model, 'deepseek-v4-pro');
   }
 
   const allOutput = f.output.join('\n');
   // Check that candidate models were actively listed
   assert.match(allOutput, /可选模型列表 \[deepseek\]/);
-  assert.match(allOutput, /deepseek-chat/);
-  assert.match(allOutput, /deepseek-reasoner/);
+  assert.match(allOutput, /deepseek-flash/);
+  assert.match(allOutput, /deepseek-v4-pro/);
+  assert.match(allOutput, /deepseek-v4-flash/);
   // Check that styled summary card was rendered
   assert.match(allOutput, /连接配置摘要/);
 });
@@ -83,7 +84,7 @@ test('setup wizard supports provider shorthand alias like ds', async () => {
   // 2. 'ds' -> Shorthand for DeepSeek
   // 3. ''   -> Default Endpoint
   // 4. 'secret-key' -> API key
-  // 5. ''   -> Default model (deepseek-chat)
+  // 5. ''   -> Default model (deepseek-flash)
   // 6. 'y'  -> Confirm
   const f = createWizardFixture(['3', 'ds', '', 'secret-key', '', 'y']);
   const result = await runConnectionWizard(f.options);
