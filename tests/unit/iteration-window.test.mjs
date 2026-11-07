@@ -29,6 +29,9 @@ async function fixture(options, action) {
     knowledgeAdapter: { onToolCall() {}, onToolResult() {}, onAssistantMessage() {}, async onTurnEnd() {} },
     memoryStore: { link() {}, addConversationTurn() {}, addPractice() {} },
     workspaceDir: state, fileStateDir: state, workflowRuntime: {},
+    // This fixture exercises turn windows and model budgets, not the no-progress
+    // halt (which intentionally stops long runs of pure reads in production).
+    efficiencyOptions: { noProgressHaltLimit: 1000 },
     executionEventBus: bus, recoveryController: recovery, verifier: {},
     buildSystemPrompt: async () => 'system',
     chat: async () => {

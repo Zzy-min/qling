@@ -36,7 +36,7 @@ import { findLastUserMessageContent } from "./system-prompt.js";
 import type { UsageLedger } from "../usage-ledger.js";
 import type { RunCheckpoint, RunCheckpointStore } from "../runtime/run-checkpoint.js";
 import type { ToolDispatcher } from "../tools/index.js";
-import { RunEfficiencyGuard } from "./run-efficiency.js";
+import { RunEfficiencyGuard, type RunEfficiencyOptions } from "./run-efficiency.js";
 import type { ProgressState } from "./run-efficiency.js";
 import type { ProjectProfile } from "../runtime/project-profile.js";
 import { upsertSyntheticMessage } from "./synthetic-messages.js";
@@ -227,6 +227,8 @@ export interface InnerLoopHost {
   recordRuntimeTool?: import("../agent/tool-orchestrator.js").ToolOrchestratorDeps["recordRuntimeTool"];
   checkpointStore?: RunCheckpointStore;
   initialProgressState?: ProgressState;
+  /** Optional guard tuning for hosts that own their own iteration bounds (SDK/tests). */
+  efficiencyOptions?: Partial<RunEfficiencyOptions>;
   deterministicVerificationAvailable?: boolean;
   requireWorkspaceMutation?: boolean;
   projectProfile?: ProjectProfile;
@@ -392,7 +394,7 @@ export type InnerLoopOutcome =
 
 export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerLoopOutcome> {
   const toolSignatureCounts = new Map<string, number>();
-  const efficiency = new RunEfficiencyGuard({ initialState: host.initialProgressState });
+  const efficiency = new RunEfficiencyGuard({ initialState: host.initialProgressState, ...host.efficiencyOptions });
   let autoCompactSuppressed = false;
   let compactionBudgetNotified = false;
   const checkpointStateDir = host.checkpointStateDir ?? host.fileStateDir;
