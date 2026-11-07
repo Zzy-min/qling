@@ -28,8 +28,8 @@ export interface ToolExecutionObservation {
 }
 
 export interface EfficiencySignal {
-  code: "SAME_FAILURE_LIMIT" | "TOTAL_FAILURE_LIMIT" | "PROGRESS_PHASE";
-  disposition: "redirect";
+  code: "SAME_FAILURE_LIMIT" | "TOTAL_FAILURE_LIMIT" | "PROGRESS_PHASE" | "NO_PROGRESS_HALT";
+  disposition: "redirect" | "pause";
   reason: string;
   phase?: ProgressPhase;
   tool?: string;
@@ -217,6 +217,7 @@ export interface RunEfficiencyOptions {
   compactionCooldownTurns?: number;
   noProgressReplanLimit?: number;
   noProgressNarrowLimit?: number;
+  noProgressHaltLimit?: number;
   initialState?: ProgressState;
 }
 
@@ -303,6 +304,7 @@ export class RunEfficiencyGuard {
   private readonly compactionCooldownTurns: number;
   private readonly noProgressReplanLimit: number;
   private readonly noProgressNarrowLimit: number;
+  private readonly noProgressHaltLimit: number;
   private lastFailureKey: string | null = null;
   private consecutiveFailureCount = 0;
   private readonly sideEffects = new Map<string, "created" | "updated" | "created_then_updated">();
@@ -330,6 +332,7 @@ export class RunEfficiencyGuard {
     this.compactionCooldownTurns = Math.max(0, options.compactionCooldownTurns ?? 4);
     this.noProgressReplanLimit = Math.max(1, options.noProgressReplanLimit ?? 4);
     this.noProgressNarrowLimit = Math.max(this.noProgressReplanLimit + 1, options.noProgressNarrowLimit ?? 8);
+    this.noProgressHaltLimit = Math.max(this.noProgressNarrowLimit + 1, options.noProgressHaltLimit ?? 12);
     if (options.initialState) {
       this.progressState = structuredClone(options.initialState);
       this.phase = options.initialState.phase;
@@ -553,32 +556,52 @@ export class RunEfficiencyGuard {
       return null;
     }
     this.noProgressActions++;
-    if (this.noProgressActions === this.noProgressNarrowLimit) {
-      const allowedTools = this.activeMutationId
-        ? ["repo_query", "impact_analysis", "read", "patch", "write", "bash"]
-        : ["repo_map", "repo_query", "impact_analysis", "read", "search", "bash"];
-      this.recoveryAllowedTools = new Set(allowedTools);
-      this.phase = this.activeMutationId ? "repair" : "diagnose";
-      this.progressState = reduceProgressState(this.progressState, {
-        type: "start_recovery",
-        reason: "no_new_evidence",
-        preferredCapabilities: allowedTools,
-        rootCauseId: this.activeRootCauseId ?? undefined,
-      });
+
+    if (this.noProgressActions >= this.noProgressHaltLimit) {
       return {
-        code: "TOTAL_FAILURE_LIMIT",
-        disposition: "redirect",
-        reason: this.activeMutationId
-          ? `连续 ${this.noProgressActions} 个动作没有产生新证据；保留最近修改，只允许定位、修正并验证该修改。`
-          : `连续 ${this.noProgressActions} 个动作没有产生新证据；保留现有成果并切换到环境、仓库索引和验证恢复工具。`,
+        code: "NO_PROGRESS_HALT",
+        disposition: "pause",
+        reason: `连续 ${this.noProgressActions} 个动作没有产生新证据，触发效率守卫硬熔断；任务自动暂停以避免无限循环与无谓消耗。使用 /recover 或补充上下文以继续。`,
         fingerprint: signal.fingerprint,
         phase: this.phase,
         directive: {
-          action: "narrow_recovery",
-          allowedTools,
+          action: "checkpoint",
+          reason: "no_progress_halt",
         },
       };
     }
+
+    if (this.noProgressActions >= this.noProgressNarrowLimit) {
+      if (this.noProgressActions === this.noProgressNarrowLimit || this.noProgressActions % 2 === 0) {
+        const allowedTools = this.activeMutationId
+          ? ["repo_query", "impact_analysis", "read", "patch", "write", "bash"]
+          : ["repo_map", "repo_query", "impact_analysis", "read", "search", "bash"];
+        this.recoveryAllowedTools = new Set(allowedTools);
+        this.phase = this.activeMutationId ? "repair" : "diagnose";
+        this.progressState = reduceProgressState(this.progressState, {
+          type: "start_recovery",
+          reason: "no_new_evidence",
+          preferredCapabilities: allowedTools,
+          rootCauseId: this.activeRootCauseId ?? undefined,
+        });
+        const remainingToHalt = this.noProgressHaltLimit - this.noProgressActions;
+        const haltNotice = remainingToHalt > 0 ? `（将在 ${remainingToHalt} 步后触发硬熔断暂停）` : "";
+        return {
+          code: "TOTAL_FAILURE_LIMIT",
+          disposition: "redirect",
+          reason: this.activeMutationId
+            ? `连续 ${this.noProgressActions} 个动作没有产生新证据${haltNotice}；保留最近修改，只允许定位、修正并验证该修改。`
+            : `连续 ${this.noProgressActions} 个动作没有产生新证据${haltNotice}；保留现有成果并切换到环境、仓库索引和验证恢复工具。`,
+          fingerprint: signal.fingerprint,
+          phase: this.phase,
+          directive: {
+            action: "narrow_recovery",
+            allowedTools,
+          },
+        };
+      }
+    }
+
     if (this.noProgressActions === this.noProgressReplanLimit) {
       return {
         code: "TOTAL_FAILURE_LIMIT",

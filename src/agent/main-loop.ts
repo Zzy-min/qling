@@ -783,6 +783,27 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     const failureSignal = efficiency.recordTools(observations);
     const progressSignal = efficiency.recordObservationProgress(observations);
     const efficiencyStop = failureSignal ?? progressSignal;
+    if (efficiencyStop?.disposition === "pause") {
+      host.recoveryController.pauseActiveRun();
+      host.executionEventBus.completeAttempt(runId, "recovering");
+      host.executionEventBus.emit({
+        runId,
+        sessionId: host.sessionId,
+        attemptId,
+        tool: efficiencyStop.tool,
+        type: "efficiency_guard",
+        status: "recovering",
+        stage: "tool",
+        category: "repeated_action",
+        fingerprint: efficiencyStop.fingerprint,
+        recoveryAction: efficiencyStop.directive.action,
+      });
+      host.emit("efficiency_guard", efficiencyStop);
+      return {
+        status: "paused",
+        text: efficiencyStop.reason,
+      };
+    }
     if (efficiencyStop?.disposition === "redirect") {
       const recoveryInstruction = (() => {
         switch (efficiencyStop.directive.action) {

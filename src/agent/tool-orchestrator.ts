@@ -275,7 +275,30 @@ export function fingerprintToolAction(call: Pick<ToolCall, "name" | "arguments">
   return `${call.name}:${argumentsHash}`;
 }
 
+export function normalizeCommandForSignature(rawCommand: string): string {
+  return rawCommand
+    .replace(/[a-zA-Z]:[\\/](?:users[\\/][^\\/\s"'>|;]+[\\/])?appdata[\\/]local[\\/]temp[\\/][^\s"'>|;]+/gi, "<temp-path>")
+    .replace(/(?:\/tmp|\/var\/tmp)\/[^\s"'>|;]+/gi, "<temp-path>")
+    .replace(/%(?:TEMP|TMP)%[\\/][^\s"'>|;]+/gi, "<temp-path>")
+    .replace(/\$(?:TEMP|TMP)[\\/][^\s"'>|;]+/gi, "<temp-path>")
+    .replace(/>\s*(?:[^\s"'>|;]*[/\\])?g\d+\.txt\b/gi, "> <temp-redirect>")
+    .replace(/>\s*<temp-path>/gi, "> <temp-redirect>")
+    .replace(/>\s*(?:[^\s"'>|;]*[/\\])?[a-zA-Z0-9_\-.]+\.tmp\b/gi, "> <temp-redirect>")
+    .replace(/\\/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function buildToolSignature(name: string, args: Record<string, unknown>): string {
+  if (name === "bash" && typeof (args.command ?? args.cmd) === "string") {
+    const raw = String(args.command ?? args.cmd);
+    const normalizedArgs = {
+      ...args,
+      ...(args.command !== undefined ? { command: normalizeCommandForSignature(raw) } : {}),
+      ...(args.cmd !== undefined ? { cmd: normalizeCommandForSignature(raw) } : {}),
+    };
+    return `${name}:${stableStringify(normalizedArgs)}`;
+  }
   return `${name}:${stableStringify(args)}`;
 }
 
