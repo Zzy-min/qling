@@ -396,3 +396,45 @@ test('derived provider publication preserves original generic-key ownership acro
     assert.equal((await resolveSavedLlmSession(dir)).apiKey, 'XAI-VAULT');
     assert.equal(process.env.QLING_LLM_STARTUP_PROVIDER, 'openai');
 });
+
+test('ordinary streaming compatibility accepts successful JSON slower than five seconds', {timeout:6500}, async () => {
+    const client=new LlmHttpClient({provider:'fake',endpoint:'http://127.0.0.1:1234',apiKey:'',timeoutMs:30000});
+    const body=Readable.from((async function*(){
+        yield Buffer.from('{"choices":[{"message":{"content":');
+        await new Promise(resolve=>setTimeout(resolve,5250));
+        yield Buffer.from('"slow success"}}]}');
+    })());
+    client.client={post:async()=>({status:200,headers:{'content-type':'application/json'},data:body})};
+    assert.equal((await client.chatCompletions({...call,stream:true})).content,'slow success');
+});
+
+test('successful JSON compatibility honors cancellation when both idle limits are disabled', async t => {
+    preserveEnv(t);
+    process.env.QLING_LLM_STREAM_IDLE_MS='0';
+    let destroyed=false;
+    const body={destroy(){destroyed=true;},[Symbol.asyncIterator](){return {next:()=>new Promise(()=>{})};}};
+    const client=new LlmHttpClient({provider:'fake',endpoint:'http://127.0.0.1:1234',apiKey:'',timeoutMs:0});
+    client.client={post:async()=>({status:200,headers:{'content-type':'application/json'},data:body})};
+    const controller=new AbortController();
+    const pending=client.chatCompletions({...call,stream:true,signal:controller.signal});
+    setImmediate(()=>controller.abort());
+    await assert.rejects(pending,error=>error.name==='AgentRunCanceledError');
+    assert.equal(destroyed,true);
+});
+
+test('successful JSON compatibility respects the normal configured request idle limit', async t => {
+    preserveEnv(t);
+    process.env.QLING_LLM_STREAM_IDLE_MS='0';
+    let destroyed=false;
+    const body={destroy(){destroyed=true;},[Symbol.asyncIterator](){return {next:()=>new Promise(()=>{})};}};
+    const client=new LlmHttpClient({provider:'fake',endpoint:'http://127.0.0.1:1234',apiKey:'',timeoutMs:20});
+    client.client={post:async()=>({status:200,headers:{'content-type':'application/json'},data:body})};
+    let deadline;
+    try {
+        await assert.rejects(Promise.race([
+            client.chatCompletions({...call,stream:true}),
+            new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('configured timeout ignored')),500);})
+        ]),error=>error.code==='stream_interrupted');
+        assert.equal(destroyed,true);
+    } finally {clearTimeout(deadline);}
+});

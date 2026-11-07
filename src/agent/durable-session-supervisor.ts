@@ -207,7 +207,7 @@ export class DurableSessionSupervisor {
   }
 
   private async createAgent(): Promise<AgentLoop> {
-    const { config } = await loadQlingConfig({});
+    const { config, llmSources } = await loadQlingConfig({});
     applyConfigToProcessEnv(config);
 
     const staticEnabled: Record<string, boolean> = {};
@@ -217,7 +217,8 @@ export class DurableSessionSupervisor {
     const tools = buildToolRegistry({ staticEnabled });
 
     const agent = new AgentLoop({
-      apiKey: config.llm.api_key || process.env.QLING_LLM_API_KEY || "",
+      apiKey: config.llm.api_key,
+      llmSources,
       provider: config.llm.provider,
       endpoint: config.llm.endpoint,
       model: config.llm.model,

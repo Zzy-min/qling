@@ -312,7 +312,7 @@ async function executeMissionInBackground(
     await manager.appendLog(id, "使命开始执行", { source: "daemon" });
 
     // 重新加载配置
-    const { config: loadedConfig } = await loadQlingConfig({});
+    const { config: loadedConfig, llmSources } = await loadQlingConfig({});
     const { buildToolRegistry } = await import("./tools/index.js");
 
     const staticEnabled: Record<string, boolean> = {};
@@ -322,7 +322,8 @@ async function executeMissionInBackground(
     const tools = buildToolRegistry({ staticEnabled });
 
     const agentConfig: any = {
-      apiKey: loadedConfig.llm.api_key || process.env.QLING_LLM_API_KEY || "",
+      apiKey: loadedConfig.llm.api_key,
+      llmSources,
       provider: loadedConfig.llm.provider,
       endpoint: loadedConfig.llm.endpoint,
       model: loadedConfig.llm.model,

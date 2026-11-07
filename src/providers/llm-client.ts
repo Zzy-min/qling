@@ -165,7 +165,7 @@ export class LlmHttpClient {
           const body = rejected.response?.data;
           if (body && typeof body === "object" && Symbol.asyncIterator in body) {
             let detail = "";
-            try { detail = await readResponseStream(body as unknown as AsyncIterable<Uint8Array>, 4 * 1024, input.signal); }
+            try { detail = await readResponseStream(body as unknown as AsyncIterable<Uint8Array>, 4 * 1024, input.signal, { maxDurationMs: 5000 }); }
             catch {
               if (input.signal?.aborted) throw canceledRequestError();
               // A stalled error body must not hide the original HTTP status.
@@ -260,7 +260,7 @@ export class LlmHttpClient {
 
     const status = Number(resp.status ?? 0);
     if (status < 200 || status >= 300) {
-      const detail = await readResponseStream(resp.data, 4 * 1024, input.signal);
+      const detail = await readResponseStream(resp.data, 4 * 1024, input.signal, { maxDurationMs: 5000 });
       const error = this.providerErrorFromResponse(status, resp.headers ?? {}, detail);
       const unsupported = status === 415 || status === 501 ||
         ([400, 404, 405, 422].includes(status) && /stream|sse|not\s+support|unsupported/i.test(detail));
@@ -274,7 +274,11 @@ export class LlmHttpClient {
     const contentType = String(resp.headers?.["content-type"] ?? "").toLowerCase();
     if (!contentType.includes("text/event-stream")) {
       if (isManagedProvider(this.provider)) throw this.providerError({code:"invalid_stream",retriable:false,detail:"Account endpoint requires SSE"});
-      const raw = await readResponseStream(resp.data, 8 * 1024 * 1024);
+      // Successful JSON compatibility uses the ordinary request/socket idle policy,
+      // not the short absolute deadline reserved for HTTP error inspection.
+      const idleMs = Math.min(resolveStreamIdleMs() || Infinity, this.options.timeoutMs || Infinity);
+      const raw = await readResponseStream(resp.data, 8 * 1024 * 1024, input.signal,
+        { idleMs: Number.isFinite(idleMs) ? idleMs : 0 });
       try {
         return this.parseChatResponse(JSON.parse(raw), false);
       } catch (error) {
@@ -555,7 +559,7 @@ async function readNextStreamChunk(
   stream: { destroy?: () => void },
 ): Promise<IteratorResult<Uint8Array>> {
   if (signal?.aborted) throw canceledRequestError();
-  if (!idleMs) return iterator.next();
+  if (!idleMs && !signal) return iterator.next();
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -572,7 +576,7 @@ async function readNextStreamChunk(
         reject(canceledRequestError());
       });
     };
-    timer = setTimeout(() => {
+    if (idleMs) timer = setTimeout(() => {
       finish(() => {
         try { stream.destroy?.(); } catch { /* already closed */ }
         const idle = new Error("stream idle timeout");
@@ -580,7 +584,7 @@ async function readNextStreamChunk(
         reject(idle);
       });
     }, idleMs);
-    timer.unref?.();
+    timer?.unref?.();
     if (signal) signal.addEventListener("abort", onAbort, { once: true });
     iterator.next().then(
       (result) => finish(() => resolve(result)),
@@ -589,16 +593,20 @@ async function readNextStreamChunk(
   });
 }
 
-async function readResponseStream(stream: AsyncIterable<Uint8Array> & {destroy?: () => void}, maxBytes: number, signal?: AbortSignal): Promise<string> {
+async function readResponseStream(
+  stream: AsyncIterable<Uint8Array> & {destroy?: () => void}, maxBytes: number, signal?: AbortSignal,
+  policy: { maxDurationMs?: number; idleMs?: number } = {},
+): Promise<string> {
   const decoder = new TextDecoder();
   let bytes = 0, output = "";
   const iterator = stream[Symbol.asyncIterator]();
-  const deadline = Date.now() + 5000;
+  const deadline = policy.maxDurationMs === undefined ? Infinity : Date.now() + policy.maxDurationMs;
   try {
     while (bytes < maxBytes) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) break;
-      const next = await readNextStreamChunk(iterator, remainingMs, signal, stream);
+      const waitMs = Math.min(remainingMs, policy.idleMs || Infinity);
+      const next = await readNextStreamChunk(iterator, Number.isFinite(waitMs) ? waitMs : 0, signal, stream);
       if (next.done) break;
       const chunk = typeof next.value === "string" ? Buffer.from(next.value) : next.value;
       const slice = chunk.subarray(0, maxBytes - bytes);
