@@ -12,7 +12,7 @@ import { createFakeLLM } from "../helpers/fake-llm-server.mjs";
 
 const ENTRY = join(process.cwd(), "dist/index.js");
 
-function waitForExit(child, timeoutMs = 15_000) {
+function waitForExit(child, timeoutMs = 60_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill();

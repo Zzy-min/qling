@@ -20,7 +20,14 @@ import type { ContextCompactor } from "../context-compactor.js";
 import type { VerificationAgent } from "../pipeline/verification.js";
 import type { ExecutionEventBus } from "../execution/event-bus.js";
 import type { RecoveryController } from "../execution/recovery-controller.js";
-import type { FailureClassification, RecoveryState, RunOutcome } from "../execution/types.js";
+import type {
+  DecisionRecord,
+  ExecutionStrategyTier,
+  FailureClassification,
+  RecoveryState,
+  RunOutcome,
+  TaskCompletionStatus,
+} from "../execution/types.js";
 import { classifyFailure } from "../execution/failure-classifier.js";
 import { formatModelCallFailure, isModelRetryTerminal } from "../providers/model-retry.js";
 import {
@@ -43,6 +50,18 @@ import { upsertSyntheticMessage } from "./synthetic-messages.js";
 import { repairHistory } from "../context-history-repair.js";
 import { resolveCostBudgetSignal } from "../cost-budget.js";
 import { stopHookMaxContinuations } from "../hooks/json-hooks.js";
+import {
+  assessTaskComplexity,
+  analyzeStallAndStrategyShift,
+  DecisionLedger,
+} from "./decision-engine.js";
+import {
+  evaluateTaskResult,
+  hasHonestPartialOrBlockedReport,
+  type ToolExecutionEvidenceItem,
+} from "../session/outcome-evidence.js";
+import { formatTaskPlanMarkdown, loadWorkspaceTaskPlan } from "../plan/task-plan.js";
+import { loadWorkspaceTodoState } from "../tools/todo.js";
 
 export interface TurnTelemetry {
   turn: number;
@@ -231,6 +250,8 @@ export interface InnerLoopHost {
   efficiencyOptions?: Partial<RunEfficiencyOptions>;
   deterministicVerificationAvailable?: boolean;
   requireWorkspaceMutation?: boolean;
+  /** Hosts that own their own completion policy can turn the result evaluator off. */
+  enforceResultEvaluation?: boolean;
   projectProfile?: ProjectProfile;
 
   buildSystemPrompt: () => Promise<string>;
@@ -388,9 +409,29 @@ async function resolveStopHookGate(
  * Mutates host.messages / counters / turnCount in place.
  */
 export type InnerLoopOutcome =
-  | { status: "succeeded"; text: string }
-  | { status: "paused"; text: string }
-  | { status: "exhausted"; text: string; iterations: number };
+  | {
+      status: "succeeded";
+      text: string;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+      verificationEvidence?: string[];
+    }
+  | {
+      status: "paused";
+      text: string;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+    }
+  | {
+      status: "exhausted";
+      text: string;
+      iterations: number;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+    };
 
 export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerLoopOutcome> {
   const toolSignatureCounts = new Map<string, number>();
@@ -406,6 +447,43 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     : null;
   if (host.checkpointSession && !checkpointScheduler) noteMidTurnCheckpointSkipped(checkpointStateDir);
   let stopContinuations = 0;
+  let selfCheckNudgesUsed = 0;
+  const maxSelfCheckNudges = 1;
+  const toolEvidenceItems: ToolExecutionEvidenceItem[] = [];
+  const initialTaskPrompt = findLastUserMessageContent(host.messages);
+  const initialPlan = host.workspaceDir ? await loadWorkspaceTaskPlan(host.workspaceDir) : null;
+  const complexityProfile = assessTaskComplexity(initialTaskPrompt, {
+    availableTools: host.tools.map((t) => t.name),
+    hasActivePlan: Boolean(initialPlan),
+    sessionTurnCount: host.turnCount,
+    requireWorkspaceMutation: host.requireWorkspaceMutation,
+  });
+  const decisionLedger = new DecisionLedger({
+    goal: initialTaskPrompt,
+    strategyTier: complexityProfile.strategyTier,
+  });
+  decisionLedger.recordDecision({
+    turn: host.turnCount,
+    stage: "understand",
+    selectedAction: `评估任务复杂度并路由策略 (${complexityProfile.strategyTier})`,
+    rationaleSummary: complexityProfile.rationale,
+    expectedOutcome: `按 [${complexityProfile.recommendedStages.join(" -> ")}] 推进任务`,
+    actualOutcome: `初始化策略=${complexityProfile.strategyTier}`,
+    verificationStatus: "unverified",
+    nextStep: "continue",
+  });
+  if (complexityProfile.conflictingConstraints.length > 0) {
+    decisionLedger.recordDecision({
+      turn: host.turnCount,
+      stage: "analyze",
+      selectedAction: "检测到冲突指令约束，优先遵循安全与只读边界",
+      rationaleSummary: complexityProfile.conflictingConstraints.join("；"),
+      expectedOutcome: "拒绝越权副作用操作并向用户明确说明冲突约束",
+      actualOutcome: `冲突约束数=${complexityProfile.conflictingConstraints.length}`,
+      verificationStatus: "unverified",
+      nextStep: "request_user_input",
+    });
+  }
   const continuous = host.iterationPolicy === "continuous";
   const windowSize = Number.isFinite(host.maxIterations) && host.maxIterations >= 1
     ? Math.floor(host.maxIterations) : 50;
@@ -446,6 +524,9 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       return {
         status: "paused",
         text: `模型轮次预算暂停：已完成 ${budget.modelTurns} 次模型响应、${host.toolCallTotal - budget.initialToolCalls} 次工具调用。任务未被标记失败；可用 /recover retry 续接下一执行窗口。`,
+        completionStatus: "incomplete",
+        strategyTier: decisionLedger.getStrategyTier(),
+        decisionLedger: decisionLedger.getRecords(),
       };
     }
     if (continuous && budget.modelTurns > 0 && budget.modelTurns % windowSize === 0 && budget.checkpointedTurns !== budget.modelTurns) {
@@ -474,6 +555,31 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         sideEffectLedger,
         "run-side-effects-v1"
       );
+    }
+    const activeWorkspacePlan = host.workspaceDir
+      ? await loadWorkspaceTaskPlan(host.workspaceDir)
+      : null;
+    if (activeWorkspacePlan) {
+      upsertSyntheticMessage(
+        host.messages,
+        "plan_state",
+        `<plan_state>\n${formatTaskPlanMarkdown(activeWorkspacePlan)}\n</plan_state>`,
+        "workspace-plan-state-v1",
+      );
+    }
+    if (
+      decisionLedger.getRecords().length > 1 &&
+      (decisionLedger.getStrategyTier() !== "fast_path" || complexityProfile.conflictingConstraints.length > 0)
+    ) {
+      const ledgerBlock = decisionLedger.formatDecisionLedgerBlock(4);
+      if (ledgerBlock) {
+        upsertSyntheticMessage(
+          host.messages,
+          "decision_ledger",
+          ledgerBlock,
+          "decision-ledger-v1",
+        );
+      }
     }
 
     // 默认自动压缩：上下文估计超阈值时摘要旧消息并保留最近轮
@@ -664,8 +770,114 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
           text:
             "模型返回空响应：本轮既没有文本，也没有工具调用。已暂停以避免连续空转；" +
             "检查模型/网络后可使用 /recover retry 继续。",
+          completionStatus: "incomplete",
+          strategyTier: decisionLedger.getStrategyTier(),
+          decisionLedger: decisionLedger.getRecords(),
         };
       }
+      const todoState = host.workspaceDir
+        ? loadWorkspaceTodoState(host.workspaceDir)
+        : null;
+      const resultEvaluation = evaluateTaskResult({
+        userPrompt: initialTaskPrompt || lastUserMsg,
+        finalText,
+        workspaceDir: host.workspaceDir,
+        toolExecutions: toolEvidenceItems,
+        activeMutationId: progressState.activeMutationId,
+        latestVerificationVerdict: progressState.latestVerificationVerdict,
+        activePlan: activeWorkspacePlan,
+        todoState,
+        enforce: host.enforceResultEvaluation !== false,
+      });
+      const hasFalsePositiveClaim = resultEvaluation.claimAuditFindings.some(
+        (d) =>
+          d.kind === "unbacked_file_mutation_claim" ||
+          d.kind === "missing_target_file_on_disk" ||
+          d.kind === "empty_target_file_on_disk" ||
+          d.kind === "invalid_file_format_on_disk" ||
+          d.kind === "unbacked_verification_claim",
+      );
+      const hasPrematureStop = resultEvaluation.prematureStop !== null;
+      const hasUnfinishedActivePlan = Boolean(
+        activeWorkspacePlan &&
+          activeWorkspacePlan.steps.some(
+            (s) => s.status !== "completed" && s.status !== "skipped",
+          ) &&
+          !hasHonestPartialOrBlockedReport(finalText),
+      );
+      const hasUnfinishedTodos = Boolean(
+        todoState &&
+          todoState.pending + todoState.inProgress > 0 &&
+          !hasHonestPartialOrBlockedReport(finalText),
+      );
+      if (
+        (hasFalsePositiveClaim || hasPrematureStop || hasUnfinishedActivePlan || hasUnfinishedTodos ||
+          (!resultEvaluation.allowFinish && resultEvaluation.completionStatus !== "failed" && !hasHonestPartialOrBlockedReport(finalText))) &&
+        resultEvaluation.remediationPrompt &&
+        selfCheckNudgesUsed < maxSelfCheckNudges &&
+        (continuous || i < host.maxIterations - 1)
+      ) {
+        selfCheckNudgesUsed++;
+        decisionLedger.recordDecision({
+          turn: host.turnCount,
+          stage: "verify",
+          selectedAction: "ResultEvaluator 终态自检拦截",
+          rationaleSummary: resultEvaluation.summary,
+          expectedOutcome: "补齐缺失证据或完成剩余计划步骤",
+          actualOutcome: `拦截状态=${resultEvaluation.completionStatus}`,
+          verificationStatus: "fail",
+          nextStep: "verify",
+        });
+        upsertSyntheticMessage(
+          host.messages,
+          "verification_audit",
+          resultEvaluation.remediationPrompt,
+          "pre-final-self-check-v1",
+        );
+        host.executionEventBus.emit({
+          runId,
+          sessionId: host.sessionId,
+          attemptId,
+          type: "result_evaluation_nudge",
+          status: "recovering",
+          stage: "verify",
+          decisionStage: "verify",
+          strategyTier: decisionLedger.getStrategyTier(),
+          completionStatus: resultEvaluation.completionStatus,
+          recoveryAction: "self_check_nudge",
+        });
+        host.emit("result_evaluation_nudge", resultEvaluation);
+        host.executionEventBus.completeAttempt(runId, "recovering");
+        continue;
+      }
+      const effectiveCompletionStatus = resultEvaluation.completionStatus;
+      const finished = resultEvaluation.allowFinish;
+      if (!finished) {
+        const honestDetail = !hasFalsePositiveClaim && hasHonestPartialOrBlockedReport(finalText) ? `\n\n${finalText}` : "";
+        finalText = `任务未完成 (${effectiveCompletionStatus})，已暂停。\n${resultEvaluation.summary}${honestDetail}`;
+        // Persist the adjudicated response, so later turns cannot replay a rejected completion claim as fact.
+        const lastMessage = host.messages[host.messages.length - 1];
+        if (lastMessage?.role === "assistant") lastMessage.content = finalText;
+        host.recoveryController.pauseActiveRun();
+      }
+      decisionLedger.recordDecision({
+        turn: host.turnCount,
+        stage: "finish",
+        selectedAction: "输出最终响应并完成结果判定",
+        rationaleSummary: resultEvaluation.summary,
+        expectedOutcome: "交付经过验证或如实标注状态的最终结果",
+        actualOutcome: `completionStatus=${effectiveCompletionStatus}`,
+        verificationStatus:
+          effectiveCompletionStatus === "completed_verified"
+            ? "pass"
+            : effectiveCompletionStatus === "partially_completed"
+              ? "partial"
+              : effectiveCompletionStatus === "failed" ||
+                  effectiveCompletionStatus === "incomplete"
+                ? "fail"
+                : "unverified",
+        nextStep: finished ? "finish" : "pause",
+      });
       host.knowledgeAdapter.onAssistantMessage(finalText);
       await host.checkAutoDream();
       await host.knowledgeAdapter.onTurnEnd(host.turnCount);
@@ -681,8 +893,33 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       );
       host.toolCallTotal = totals.toolCallTotal;
       host.toolFailureTotal = totals.toolFailureTotal;
-      host.executionEventBus.completeAttempt(runId, "succeeded");
-      return { status: "succeeded", text: finalText };
+      host.executionEventBus.emit({
+        runId,
+        sessionId: host.sessionId,
+        attemptId,
+        type: "result_evaluated",
+        status: finished ? "succeeded" : "recovering",
+        stage: "finish",
+        decisionStage: "finish",
+        strategyTier: decisionLedger.getStrategyTier(),
+        completionStatus: effectiveCompletionStatus,
+      });
+      host.executionEventBus.completeAttempt(runId, finished ? "succeeded" : "recovering");
+      if (!finished) return {
+        status: "paused",
+        text: finalText,
+        completionStatus: effectiveCompletionStatus,
+        strategyTier: decisionLedger.getStrategyTier(),
+        decisionLedger: decisionLedger.getRecords(),
+      };
+      return {
+        status: "succeeded",
+        text: finalText,
+        completionStatus: effectiveCompletionStatus,
+        strategyTier: decisionLedger.getStrategyTier(),
+        decisionLedger: decisionLedger.getRecords(),
+        verificationEvidence: resultEvaluation.evidence,
+      };
     }
 
     console.error("\n🔧 执行 " + tool_calls.length + " 个工具...\n");
@@ -782,9 +1019,36 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     host.toolCallTotal = totals.toolCallTotal;
     host.toolFailureTotal = totals.toolFailureTotal;
     checkpointScheduler?.afterToolBatch();
+    for (const obs of observations) {
+      toolEvidenceItems.push({
+        tool: obs.tool,
+        failed: obs.failed,
+        ...(obs.blocked ? { blocked: true } : {}),
+        targetPath: obs.targetPath,
+        ...(obs.changedPaths ? { changedPaths: obs.changedPaths } : {}),
+        mutation: obs.mutation,
+        isVerification: obs.tool === "verify" || obs.progressKind === "verification_delta",
+        verificationVerdict: obs.verificationResultVerdict ?? obs.verificationVerdict,
+        ...(obs.command !== undefined ? { command: obs.command } : {}),
+        ...(obs.exitCode !== undefined ? { exitCode: obs.exitCode } : {}),
+        ...(obs.output !== undefined ? { output: obs.output } : {}),
+        verificationBaseFingerprint: obs.verificationBaseFingerprint,
+        workspaceFingerprint: obs.workspaceFingerprint,
+      });
+    }
     const failureSignal = efficiency.recordTools(observations);
     const progressSignal = efficiency.recordObservationProgress(observations);
     const efficiencyStop = failureSignal ?? progressSignal;
+    decisionLedger.recordTurnObservations({
+      turn: host.turnCount,
+      observations,
+      verificationVerdict: efficiency.getProgressState().latestVerificationVerdict === "pass"
+        ? "pass"
+        : efficiency.getProgressState().latestVerificationVerdict === "fail"
+          ? "fail"
+          : "unverified",
+      strategyShifted: Boolean(efficiencyStop),
+    });
     if (efficiencyStop?.disposition === "pause") {
       host.recoveryController.pauseActiveRun();
       host.executionEventBus.completeAttempt(runId, "recovering");
@@ -796,6 +1060,8 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         type: "efficiency_guard",
         status: "recovering",
         stage: "tool",
+        decisionStage: "update_replan",
+        strategyTier: decisionLedger.getStrategyTier(),
         category: "repeated_action",
         fingerprint: efficiencyStop.fingerprint,
         recoveryAction: efficiencyStop.directive.action,
@@ -804,19 +1070,34 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       return {
         status: "paused",
         text: efficiencyStop.reason,
+        completionStatus: "incomplete",
+        strategyTier: decisionLedger.getStrategyTier(),
+        decisionLedger: decisionLedger.getRecords(),
       };
     }
     if (efficiencyStop?.disposition === "redirect") {
+      const currentProgressState = efficiency.getProgressState();
+      const noProgressTurns = currentProgressState.recoveryEpisode
+        ? Math.max(1, currentProgressState.sequence - currentProgressState.recoveryEpisode.lastProgressSequence)
+        : 2;
+      const stallAnalysis = analyzeStallAndStrategyShift({
+        failedTool: efficiencyStop.tool,
+        failureFingerprint: efficiencyStop.fingerprint,
+        consecutiveFailures: turnToolFailures,
+        noProgressTurns,
+        hasActivePlan: Boolean(activeWorkspacePlan),
+      });
+      const stallGuidance = `\n${stallAnalysis.formattedGuidanceBlock}`;
       const recoveryInstruction = (() => {
         switch (efficiencyStop.directive.action) {
           case "correct_parameters":
             return efficiencyStop.directive.suggestedTools?.length
-              ? `结构化编辑参数无效；不要创建或执行临时修复脚本。先用 ${efficiencyStop.directive.suggestedTools.join(" → ")} 直接修改交付文件；原工具仍可在修正参数后使用。`
-              : `参数指纹 ${efficiencyStop.directive.blockedFingerprint} 已暂时禁止；先读取错误并修改参数，不得原样重试。`;
+              ? `结构化编辑参数无效；不要创建或执行临时修复脚本。先用 ${efficiencyStop.directive.suggestedTools.join(" → ")} 直接修改交付文件；原工具仍可在修正参数后使用。${stallGuidance}`
+              : `参数指纹 ${efficiencyStop.directive.blockedFingerprint} 已暂时禁止；先读取错误并修改参数，不得原样重试。${stallGuidance}`;
           case "replan_repository":
-            return `停止随机浏览；用 repo_map/repo_query/impact_analysis 重新定位根因，并保留已有变更与验证证据。${efficiencyStop.directive.rootCauseId ? ` 查询当前根因时传入 root_cause_id=${efficiencyStop.directive.rootCauseId}。` : ""}`;
+            return `停止随机浏览；用 repo_map/repo_query/impact_analysis 重新定位根因，并保留已有变更与验证证据。${efficiencyStop.directive.rootCauseId ? ` 查询当前根因时传入 root_cause_id=${efficiencyStop.directive.rootCauseId}。` : ""}${stallGuidance}`;
           case "narrow_recovery":
-            return `当前仅使用窄恢复工具集：${efficiencyStop.directive.allowedTools.join(", ")}。先检查环境、工作树和最近修改。`;
+            return `当前仅使用窄恢复工具集：${efficiencyStop.directive.allowedTools.join(", ")}。先检查环境、工作树和最近修改。${stallGuidance}`;
           case "verify_or_finish":
             return `修改 ${efficiencyStop.directive.mutationId} 已进入验证阶段；先重新对照原始用户任务，检查同一输入语义的所有解析/转换分支和哨兵值，再运行确定性验证。诊断辅助文件不属于交付成果，结束前应删除；只修正当前失败或完成必要交付检查。`;
           case "checkpoint":
@@ -837,6 +1118,8 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
         type: "efficiency_guard",
         status: "recovering",
         stage: "tool",
+        decisionStage: "update_replan",
+        strategyTier: decisionLedger.getStrategyTier(),
         category: "repeated_action",
         fingerprint: efficiencyStop.fingerprint,
         recoveryAction: efficiencyStop.directive.action,
@@ -982,6 +1265,12 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
       continue;
     }
     if (verifyOutcome.kind === "pass") {
+      for (const item of verifyOutcome.commandEvidence ?? []) toolEvidenceItems.push({
+        tool: "verify", command: item.command, exitCode: item.exitCode, output: item.output,
+        failed: false, isVerification: true, verificationVerdict: "pass",
+        verificationBaseFingerprint: verifyOutcome.verificationBaseFingerprint,
+        workspaceFingerprint: verifyOutcome.workspaceFingerprint,
+      });
       const auditIndex = host.messages.findIndex(
         (message) => message.synthetic_reason === "verification_audit",
       );
@@ -1029,6 +1318,9 @@ export async function runInnerIterationLoop(host: InnerLoopHost): Promise<InnerL
     status: "exhausted",
     text: "⚠️ 达到最大迭代次数，任务未完成。",
     iterations: host.maxIterations,
+    completionStatus: "incomplete",
+    strategyTier: decisionLedger.getStrategyTier(),
+    decisionLedger: decisionLedger.getRecords(),
   };
 }
 
@@ -1087,7 +1379,15 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
     try {
       const response = await host.executeInner();
       if (response.status === "paused") {
-        return { status: "paused", runId, text: response.text, recovery: host.getRecoveryState() };
+        return {
+          status: "paused",
+          runId,
+          text: response.text,
+          recovery: host.getRecoveryState(),
+          ...(response.completionStatus ? { completionStatus: response.completionStatus } : {}),
+          ...(response.strategyTier ? { strategyTier: response.strategyTier } : {}),
+          ...(response.decisionLedger ? { decisionLedger: response.decisionLedger } : {}),
+        };
       }
       if (host.getRecoveryState()?.status === "paused") {
         host.executionEventBus.completeAttempt(runId, "recovering");
@@ -1115,7 +1415,15 @@ export async function runOuterAgentLoop(host: OuterLoopHost): Promise<RunOutcome
       host.executionEventBus.completeRun(runId, "succeeded");
       host.recoveryController.completeRun("succeeded");
       host.setActiveRun(null);
-      return { status: "succeeded", runId, text: response.text };
+      return {
+        status: "succeeded",
+        runId,
+        text: response.text,
+        ...(response.completionStatus ? { completionStatus: response.completionStatus } : {}),
+        ...(response.strategyTier ? { strategyTier: response.strategyTier } : {}),
+        ...(response.decisionLedger ? { decisionLedger: response.decisionLedger } : {}),
+        ...(response.verificationEvidence ? { verificationEvidence: response.verificationEvidence } : {}),
+      };
     } catch (error) {
       if (host.getRecoveryState()?.status === "paused") {
         host.executionEventBus.completeAttempt(runId, "recovering");

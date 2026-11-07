@@ -56,6 +56,8 @@ export type SyntheticReason =
   | "date_reminder"
   | "state_snapshot"
   | "run_side_effects"
+  | "plan_state"
+  | "decision_ledger"
   | "history_repair"
   | "interrupted_run";
 
@@ -72,6 +74,8 @@ export interface AgentConfig {
   iterationPolicy?: "fixed" | "continuous";
   /** Optional hard model-response budget in continuous mode; 0 means no turn-count cap. */
   maxModelTurns?: number;
+  /** Turn the terminal result evaluator off for hosts that own completion (SDK/tests). */
+  enforceResultEvaluation?: boolean;
   tools: ToolDefinition[];
   // v2 新增
   sections?: PromptSectionRegistry;

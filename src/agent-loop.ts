@@ -293,6 +293,9 @@ export class AgentLoop extends AgentEventEmitter {
     this.verificationCommand = cmd;
     await this.persistVerificationCommand();
   }
+  private lastStrategyTier?: string;
+  private lastCompletionStatus?: string;
+
   getSessionStats(): {
     sessionId: string;
     turnCount: number;
@@ -304,6 +307,8 @@ export class AgentLoop extends AgentEventEmitter {
     costUsd?: string;
     costIsPartial: boolean;
     usageIsIncomplete: boolean;
+    strategyTier?: string;
+    completionStatus?: string;
   } {
     const usage = this.usageLedger.snapshot();
     return {
@@ -317,6 +322,8 @@ export class AgentLoop extends AgentEventEmitter {
       ...(usage.costUsd ? { costUsd: usage.costUsd } : {}),
       costIsPartial: usage.costIsPartial,
       usageIsIncomplete: usage.usageIsIncomplete,
+      ...(this.lastStrategyTier ? { strategyTier: this.lastStrategyTier } : {}),
+      ...(this.lastCompletionStatus ? { completionStatus: this.lastCompletionStatus } : {}),
     };
   }
   getUsageSnapshot(): UsageLedgerSnapshot {
@@ -439,6 +446,7 @@ export class AgentLoop extends AgentEventEmitter {
       maxIterations: config.maxIterations ?? 50,
       iterationPolicy: config.iterationPolicy ?? "fixed",
       maxModelTurns: config.maxModelTurns ?? 0,
+      enforceResultEvaluation: config.enforceResultEvaluation,
       tools: (config.tools ?? buildToolRegistry()).map((tool) => ({ ...tool })),
       runtime: {
         workspaceDir: config.runtime?.workspaceDir ?? process.env.QLING_WORKSPACE_DIR ?? process.cwd(),
@@ -1169,6 +1177,7 @@ export class AgentLoop extends AgentEventEmitter {
       pipeline: this.pipeline,
       tools: this.config.tools,
       guardConfig: this.guardConfig,
+      enforceResultEvaluation: this.config.enforceResultEvaluation,
       channel: this.channel,
       approvalGate: this.approvalGate,
       knowledgeAdapter: this.knowledgeAdapter,
@@ -1233,7 +1242,12 @@ export class AgentLoop extends AgentEventEmitter {
       this.toolCallTotal = host.toolCallTotal;
       this.toolFailureTotal = host.toolFailureTotal;
     };
-    try { return await runInnerIterationLoop(host); }
+    try {
+      const outcome = await runInnerIterationLoop(host);
+      if (outcome.strategyTier) this.lastStrategyTier = outcome.strategyTier;
+      if (outcome.completionStatus) this.lastCompletionStatus = outcome.completionStatus;
+      return outcome;
+    }
     finally { syncCounters(); }
   }
 

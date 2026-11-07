@@ -5,8 +5,14 @@ export type FileMutation = "created" | "updated";
 export interface ToolExecutionObservation {
   tool: string;
   failed: boolean;
+  command?: string;
+  exitCode?: number | null;
+  output?: string;
+  verificationResultVerdict?: "pass" | "fail" | "blocked";
   /** The call was rejected by the efficiency policy before tool execution. */
   redirected?: boolean;
+  /** Permission/approval refusal: never executed, so not an execution failure. */
+  blocked?: boolean;
   actionFingerprint?: string;
   progressKind?: Exclude<ProgressSignal["kind"], "no_progress">;
   evidenceFingerprint?: string;

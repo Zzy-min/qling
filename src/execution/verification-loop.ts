@@ -169,7 +169,7 @@ export async function runAdvisoryVerification(options: {
 
 export type WriteVerificationOutcome =
   | { kind: "noop" }
-  | { kind: "pass"; summary: string; verificationBaseFingerprint: string; workspaceFingerprint: string }
+  | { kind: "pass"; summary: string; commandEvidence?: Array<{ command: string; exitCode: number; output: string }>; verificationBaseFingerprint: string; workspaceFingerprint: string }
   | { kind: "advisory" }
   | { kind: "deliverable" }
   | { kind: "audit"; text: string }
@@ -295,13 +295,16 @@ export async function runWriteToolVerification(
   }
 
   const beforeIdentity = deps.workspaceDir ? await resolveProjectProfileIdentity(deps.workspaceDir) : null;
+  const commandEvidence: Array<{ command: string; exitCode: number; output: string }> = [];
   const stagedVerifier = new StagedVerifier({ execute: async (command) => {
     const result = projectCommand?.executable
       ? await runManagedCommand({ executable: projectCommand.executable, args: projectCommand.args, command, cwd: deps.workspaceDir!, runtime: projectRuntime, env: buildSafeEnv([], {}), timeoutMs: 600_000 })
       : await deps.runCommand(command, projectRuntime);
-    return result.timedOut || result.terminationConfirmed === false
+    const settled = result.timedOut || result.terminationConfirmed === false
       ? { ...result, code: 1, stderr: `${result.stderr}\nverification process tree outcome is unknown` }
       : result;
+    commandEvidence.push({ command, exitCode: settled.code, output: `${settled.stdout}\n${settled.stderr}` });
+    return settled;
   } });
   const verification = await stagedVerifier.run(stages);
   const afterIdentity = deps.workspaceDir ? await resolveProjectProfileIdentity(deps.workspaceDir) : null;
@@ -323,7 +326,7 @@ export async function runWriteToolVerification(
   if (verification.ok) {
     const summary = formatVerificationStagesSummary(stages);
     deps.emit("verification", "PASS", `验证通过: ${summary}`);
-    return { kind: "pass", summary, verificationBaseFingerprint: `${beforeIdentity!.revision}:${beforeIdentity!.dirtyFingerprint}`, workspaceFingerprint: `${afterIdentity!.revision}:${afterIdentity!.dirtyFingerprint}` };
+    return { kind: "pass", summary, commandEvidence, verificationBaseFingerprint: `${beforeIdentity!.revision}:${beforeIdentity!.dirtyFingerprint}`, workspaceFingerprint: `${afterIdentity!.revision}:${afterIdentity!.dirtyFingerprint}` };
   }
 
 

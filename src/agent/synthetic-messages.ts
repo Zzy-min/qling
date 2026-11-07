@@ -31,7 +31,11 @@ export function upsertSyntheticMessage(
     const existingIndex = messages.findIndex((message) => message.synthetic_reason === reason);
     if (existingIndex >= 0) {
       const existing = messages[existingIndex];
-      if (existingIndex === messages.length - 1 && existing.synthetic_key === key) {
+      if (
+        existingIndex === messages.length - 1 &&
+        existing.synthetic_key === key &&
+        existing.content === content
+      ) {
         return existing;
       }
       messages.splice(existingIndex, 1);
@@ -41,7 +45,10 @@ export function upsertSyntheticMessage(
   }
 
   const exact = messages.find(
-    (message) => message.synthetic_reason === reason && message.synthetic_key === key
+    (message) =>
+      message.synthetic_reason === reason &&
+      message.synthetic_key === key &&
+      message.content === content
   );
   if (exact) return exact;
 

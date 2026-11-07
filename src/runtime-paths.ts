@@ -200,6 +200,13 @@ function pickDefaultRoot(kind: DefaultRootKind, roots: RuntimeRoots): string {
   return roots.workspaceDir ?? roots.fileCacheDir;
 }
 
+/** Workspace-local runtime state must stay inside its root even when the write sandbox is off. */
+export function resolveWorkspaceStatePath(workspaceDir: string, ...parts: string[]): string {
+  const target = path.resolve(workspaceDir, ...parts);
+  if (!isSubPath(target, workspaceDir)) throw new Error("Task state path escapes the authorized workspace");
+  return target;
+}
+
 function isSubPath(target: string, base: string): boolean {
   const rel = path.relative(base, target);
   if (rel !== "" && (rel.startsWith("..") || path.isAbsolute(rel))) return false;

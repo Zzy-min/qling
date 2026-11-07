@@ -317,15 +317,15 @@ export async function runBash(args: {
           ? `stdout:\n${stdout}${stdoutSuffix}\nstderr:\n${stderr}${stderrSuffix}`
           : `${stdout || "(no output)"}${stdoutSuffix}`;
 
-      if ((code ?? 0) !== 0) {
-        resolve(toolError("BASH_EXIT_NON_ZERO", `exit code: ${code ?? "null"}\n${combined}`));
+      if (code !== 0 || signal) {
+        resolve({ ...toolError("BASH_EXIT_NON_ZERO", `exit code: ${code ?? "null"}\n${combined}`), meta: { command, exitCode: code, signal } });
         return;
       }
 
       if (stderr.trim()) {
-        resolve(toolSuccess(combined));
+        resolve({ ...toolSuccess(combined), meta: { command, exitCode: code } });
       } else {
-        resolve(toolSuccess(combined));
+        resolve({ ...toolSuccess(combined), meta: { command, exitCode: code } });
       }
     };
 

@@ -1,5 +1,5 @@
 import type { LocalSessionTask } from "../session-task-report.js";
-import type { Mission, MissionStatus } from "../mission/types.js";
+import { missionStatusToLifecyclePhase, type Mission, type MissionStatus } from "../mission/types.js";
 import type { WorkflowCheckpoint } from "../workflow-types.js";
 import type {
   DashboardTask,
@@ -45,6 +45,12 @@ function missionTask(mission: Mission, daemonHealthy: boolean): DashboardTask {
     description: summarize(mission.description),
     status: mission.status,
     rawStatus: mission.status,
+    lifecyclePhase:
+      mission.lifecyclePhase ??
+      missionStatusToLifecyclePhase(mission.status, mission.completionStatus),
+    ...(mission.completionStatus ? { completionStatus: mission.completionStatus } : {}),
+    ...(mission.strategyTier ? { strategyTier: mission.strategyTier } : {}),
+    ...(mission.planProgress ? { planProgress: mission.planProgress } : {}),
     source: daemonHealthy ? "daemon" : "local",
     sessionId: mission.sessionId,
     createdAt: mission.createdAt,

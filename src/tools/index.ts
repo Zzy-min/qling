@@ -287,7 +287,9 @@ export function createToolDispatcher(options: ToolDispatcherOptions = {}): ToolD
       return { ...toolError("TOOL_NOT_FOUND", `unknown tool '${toolCall.name}'`), tool_call_id: toolCall.id };
     }
     try {
-      const result = await handler(toolCall.arguments);
+      // Root selection is host-owned. Built-ins resolve their workspace from RuntimeServices' scope.
+      const { workspaceDir: _workspace, __qling_workspace_dir: _internalWorkspace, ...args } = toolCall.arguments;
+      const result = await handler(args);
       return {
         ...result,
         tool_call_id: toolCall.id,

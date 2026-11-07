@@ -1,8 +1,9 @@
 import type { MetricEvent } from "../metrics/types.js";
-import type { MissionStatus } from "../mission/types.js";
+import type { MissionLifecyclePhase, MissionStatus } from "../mission/types.js";
 import type { SessionTaskStatus } from "../session/session-scheduler.js";
 import type { WorkflowCheckpoint } from "../workflow-types.js";
 import type { SessionBudgetSnapshot, SessionState } from "../runtime/types.js";
+import type { ExecutionStrategyTier, TaskCompletionStatus } from "../execution/types.js";
 
 export type DashboardTaskKind = "mission" | "loop" | "workflow";
 export type DashboardTaskStatus =
@@ -23,6 +24,16 @@ export interface DashboardTask {
   description: string;
   status: DashboardTaskStatus;
   rawStatus: MissionStatus | SessionTaskStatus | WorkflowCheckpoint["status"];
+  lifecyclePhase?: MissionLifecyclePhase;
+  completionStatus?: TaskCompletionStatus;
+  strategyTier?: ExecutionStrategyTier;
+  planProgress?: {
+    planId?: string;
+    totalSteps: number;
+    completedSteps: number;
+    failedSteps?: number;
+    replanCount?: number;
+  };
   source: "daemon" | "local" | "session";
   sessionId?: string;
   createdAt: number;

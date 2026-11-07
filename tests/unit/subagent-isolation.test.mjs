@@ -497,6 +497,8 @@ test("05 isolation: subagent still runs PreToolUse and a deny blocks the tool", 
 
     agent = new AgentLoop({
       apiKey: "test-key",
+      // Hook isolation test: the denied read is the expected outcome, not a failed task.
+      enforceResultEvaluation: false,
       provider: "openai",
       endpoint: "http://127.0.0.1:9",
       model: "test-model",

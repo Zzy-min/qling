@@ -46,6 +46,47 @@ export interface FailureClassification {
   fingerprint?: string;
 }
 
+export type TaskCompletionStatus =
+  | "completed_verified"
+  | "completed_unverified"
+  | "partially_completed"
+  | "incomplete"
+  | "failed"
+  | "unknown";
+
+export type ExecutionStrategyTier =
+  | "fast_path"
+  | "light_plan"
+  | "full_plan"
+  | "high_risk";
+
+export type DecisionStage =
+  | "understand"
+  | "gather"
+  | "analyze"
+  | "plan_decide"
+  | "act"
+  | "observe"
+  | "verify"
+  | "update_replan"
+  | "finish";
+
+export interface DecisionRecord {
+  turn: number;
+  stage: DecisionStage;
+  strategy: ExecutionStrategyTier;
+  goal: string;
+  knownFacts: string[];
+  constraints: string[];
+  selectedAction: string;
+  rationaleSummary: string;
+  expectedOutcome: string;
+  actualOutcome: string;
+  verificationStatus: "unverified" | "pass" | "fail" | "partial" | "skipped";
+  nextStep: "continue" | "verify" | "replan" | "switch_strategy" | "request_user_input" | "finish" | "pause";
+  timestamp: number;
+}
+
 export interface ExecutionEvent {
   eventId: string;
   runId: string;
@@ -55,6 +96,9 @@ export interface ExecutionEvent {
   type: string;
   timestamp: number;
   stage?: string;
+  decisionStage?: DecisionStage;
+  strategyTier?: ExecutionStrategyTier;
+  completionStatus?: TaskCompletionStatus;
   status?: ExecutionRunStatus;
   tool?: string;
   /** Workspace-relative target for file tools; absolute paths are never emitted. */
@@ -106,8 +150,48 @@ export interface RecoveryState {
 }
 
 export type RunOutcome =
-  | { status: "succeeded"; runId: string; text: string }
-  | { status: "paused"; runId: string; text: string; recovery: RecoveryState | null }
-  | { status: "exhausted"; runId: string; text: string; iterations: number }
-  | { status: "failed"; runId: string; text: string; failure: FailureClassification }
-  | { status: "canceled"; runId: string; text: string; reason: string };
+  | {
+      status: "succeeded";
+      runId: string;
+      text: string;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+      verificationEvidence?: string[];
+    }
+  | {
+      status: "paused";
+      runId: string;
+      text: string;
+      recovery: RecoveryState | null;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+    }
+  | {
+      status: "exhausted";
+      runId: string;
+      text: string;
+      iterations: number;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+    }
+  | {
+      status: "failed";
+      runId: string;
+      text: string;
+      failure: FailureClassification;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+    }
+  | {
+      status: "canceled";
+      runId: string;
+      text: string;
+      reason: string;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      decisionLedger?: DecisionRecord[];
+    };

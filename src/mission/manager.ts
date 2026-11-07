@@ -6,7 +6,15 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { existsSync } from "fs";
-import { Mission, MissionStatus, MissionEvent } from "./types.js";
+import {
+  Mission,
+  MissionStatus,
+  MissionEvent,
+  MissionLifecyclePhase,
+  lifecyclePhaseToMissionStatus,
+  missionStatusToLifecyclePhase,
+} from "./types.js";
+import type { ExecutionStrategyTier, TaskCompletionStatus } from "../execution/types.js";
 import { notifyMissionLog, notifyMissionProgress } from "./progress-notify.js";
 import {
   atomicWriteJson,
@@ -58,13 +66,15 @@ export class MissionManager {
     name: string,
     description: string,
     sessionId: string,
-    options: { sourceMissionId?: string } = {}
+    options: { sourceMissionId?: string; strategyTier?: ExecutionStrategyTier } = {}
   ): Promise<Mission> {
     const mission: Mission = {
       id: `msn_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name,
       description,
       status: "queued",
+      lifecyclePhase: "pending",
+      ...(options.strategyTier ? { strategyTier: options.strategyTier } : {}),
       sessionId,
       sourceMissionId: options.sourceMissionId,
       lastContext: [],
@@ -87,6 +97,7 @@ export class MissionManager {
       data: {
         from: null,
         to: "queued",
+        lifecyclePhase: "pending",
         reason: "mission_created",
         sourceMissionId: options.sourceMissionId ?? null,
       },
@@ -102,8 +113,17 @@ export class MissionManager {
   ): Promise<Mission> {
     const mission = this.getMissionOrThrow(id);
     const previousStatus = mission.status;
+    const previousPhase = mission.lifecyclePhase ?? missionStatusToLifecyclePhase(previousStatus, mission.completionStatus);
 
     mission.status = status;
+    if (typeof meta.completionStatus === "string") {
+      mission.completionStatus = meta.completionStatus as TaskCompletionStatus;
+    }
+    if (typeof meta.lifecyclePhase === "string") {
+      mission.lifecyclePhase = meta.lifecyclePhase as MissionLifecyclePhase;
+    } else {
+      mission.lifecyclePhase = missionStatusToLifecyclePhase(status, mission.completionStatus);
+    }
     if (status === "running") mission.ownerPid = process.pid;
     if (error) mission.error = error;
     else if (status !== "failed") delete mission.error;
@@ -120,6 +140,8 @@ export class MissionManager {
       data: {
         from: previousStatus,
         to: status,
+        fromPhase: previousPhase,
+        toPhase: mission.lifecyclePhase,
         error: error ? { ...error } : null,
         ...meta,
       },
@@ -127,6 +149,29 @@ export class MissionManager {
     // Phase 3.5: 可选 Telegram/Slack 进度推送（失败不阻断使命）
     void notifyMissionProgress(mission, previousStatus, status).catch(() => undefined);
     return mission;
+  }
+
+  async transitionLifecyclePhase(
+    id: string,
+    phase: MissionLifecyclePhase,
+    options: {
+      reason?: string;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      planProgress?: Mission["planProgress"];
+      error?: Mission["error"];
+    } = {}
+  ): Promise<Mission> {
+    const mission = this.getMissionOrThrow(id);
+    if (options.strategyTier) mission.strategyTier = options.strategyTier;
+    if (options.planProgress) mission.planProgress = { ...options.planProgress };
+    if (options.completionStatus) mission.completionStatus = options.completionStatus;
+    const mappedStatus = lifecyclePhaseToMissionStatus(phase);
+    return this.updateStatus(id, mappedStatus, options.error, {
+      lifecyclePhase: phase,
+      ...(options.completionStatus ? { completionStatus: options.completionStatus } : {}),
+      ...(options.reason ? { reason: options.reason } : {}),
+    });
   }
 
   getMission(id: string): Mission | undefined {
@@ -153,6 +198,10 @@ export class MissionManager {
       workflowRunId?: string;
       lastContext?: Mission["lastContext"];
       metrics?: Partial<Mission["metrics"]>;
+      lifecyclePhase?: MissionLifecyclePhase;
+      completionStatus?: TaskCompletionStatus;
+      strategyTier?: ExecutionStrategyTier;
+      planProgress?: Mission["planProgress"];
     }
   ): Promise<Mission> {
     const mission = this.getMissionOrThrow(id);
@@ -160,6 +209,10 @@ export class MissionManager {
     if (snapshot.workflowRunId) mission.workflowRunId = snapshot.workflowRunId;
     if (snapshot.lastContext) mission.lastContext = snapshot.lastContext.map((message) => ({ ...message }));
     if (snapshot.metrics) mission.metrics = { ...mission.metrics, ...snapshot.metrics };
+    if (snapshot.lifecyclePhase) mission.lifecyclePhase = snapshot.lifecyclePhase;
+    if (snapshot.completionStatus) mission.completionStatus = snapshot.completionStatus;
+    if (snapshot.strategyTier) mission.strategyTier = snapshot.strategyTier;
+    if (snapshot.planProgress) mission.planProgress = { ...snapshot.planProgress };
     mission.updatedAt = Date.now();
     await this.saveMission(mission);
     return mission;

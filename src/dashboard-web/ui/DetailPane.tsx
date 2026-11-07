@@ -180,6 +180,18 @@ export function DetailPane({
               ["轮次", String(task.progress?.turns ?? "—")],
               ["Token", String(task.progress?.tokens ?? "—")],
               ["下次运行", formatTime(task.nextRunAt)],
+              ...(task.lifecyclePhase ? [["阶段", task.lifecyclePhase]] : []),
+              ...(task.strategyTier ? [["推理策略", task.strategyTier]] : []),
+              ...(task.completionStatus ? [["完成判定", task.completionStatus]] : []),
+              ...(task.planProgress
+                ? [[
+                    "计划进度",
+                    `${task.planProgress.completedSteps}/${task.planProgress.totalSteps}` +
+                      ((task.planProgress.failedSteps ?? 0) > 0
+                        ? ` (失败 ${task.planProgress.failedSteps})`
+                        : ""),
+                  ]]
+                : []),
             ].map(([label, value]) => (
               <div key={label}>
                 <dt>{label}</dt>

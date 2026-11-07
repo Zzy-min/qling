@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Message } from "../types.js";
-import { GoalEvaluator, type GoalEvaluationResult, type GoalEvaluatorError } from "./goal-evaluator.js";
+import { boundedGoalTranscript, GoalEvaluator, type GoalEvaluationResult, type GoalEvaluatorError } from "./goal-evaluator.js";
 import {
   SessionGoalManager,
   type SessionGoalRunner,
@@ -219,6 +219,20 @@ export class SessionGoalController extends EventEmitter {
       return this.recordEvaluatorFailure(active, reason);
     }
 
+    if (evaluation.decision === "blocked") {
+      const blockedReason = evaluation.blockerKey
+        ? `[${evaluation.blockerKey}] ${evaluation.reason}`
+        : evaluation.reason;
+      const blocked = await this.manager.markBlocked({
+        reason: blockedReason,
+      });
+      return {
+        status: "blocked",
+        reason: blocked.lastReason,
+        continuePrompt: null,
+      };
+    }
+
     if (evaluation.done) {
       const updated = await this.manager.markEvaluation({
         done: true,
@@ -236,14 +250,15 @@ export class SessionGoalController extends EventEmitter {
       };
     }
 
-    return this.finishUnmet(active, evaluation.reason, input.stats, input.transcript);
+    const reasonWithNext =
+      evaluation.nextStep && !evaluation.reason.includes(evaluation.nextStep)
+        ? `${evaluation.reason}（建议下一步：${evaluation.nextStep}）`
+        : evaluation.reason;
+    return this.finishUnmet(active, reasonWithNext, input.stats, input.transcript);
   }
 
   static messagesToTranscript(messages: Message[]): string {
-    return messages
-      .slice(-40)
-      .map((message) => `${message.role}: ${message.content}`)
-      .join("\n\n");
+    return boundedGoalTranscript(messages);
   }
 
   private evidenceGoalsEnabled(): boolean {

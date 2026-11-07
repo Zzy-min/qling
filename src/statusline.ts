@@ -25,6 +25,8 @@ export interface StatusLineSnapshot {
   costUsd?: string | null;
   costIsPartial?: boolean;
   usageIsIncomplete?: boolean;
+  strategyTier?: string | null;
+  completionStatus?: string | null;
   inputQueue?: StatusLineInputQueueSnapshot;
 }
 
@@ -188,6 +190,12 @@ export function formatStatusLine(snapshot: StatusLineSnapshot): string {
   if (queue) {
     parts.push(`队列=${queue}`);
   }
+  if (snapshot.strategyTier) {
+    parts.push(`策略=${snapshot.strategyTier}`);
+  }
+  if (snapshot.completionStatus) {
+    parts.push(`判定=${snapshot.completionStatus}`);
+  }
   return parts.join("  ");
 }
 
@@ -263,6 +271,8 @@ export async function collectStatusLineSnapshot(context: SlashCommandContext): P
     costUsd: stats.costUsd ?? null,
     costIsPartial: Boolean(stats.costIsPartial),
     usageIsIncomplete: Boolean(stats.usageIsIncomplete),
+    strategyTier: stats.strategyTier ?? (agentLoop.lastStrategyTier ?? null),
+    completionStatus: stats.completionStatus ?? (agentLoop.lastCompletionStatus ?? null),
     inputQueue,
   };
 }

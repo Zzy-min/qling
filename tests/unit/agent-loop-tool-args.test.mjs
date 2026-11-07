@@ -44,6 +44,8 @@ test("agent-loop: tool arguments tolerate loose json within parse retries", asyn
 
   const agent = new AgentLoop({
     apiKey: "test-key",
+    // These fixtures exercise tool-call parsing, not terminal result adjudication.
+    enforceResultEvaluation: false,
     maxIterations: 3,
     runtime: {
       workspaceDir: process.cwd(),
@@ -107,6 +109,8 @@ test("agent-loop: invalid tool arguments become tool error instead of crashing",
 
   const agent = new AgentLoop({
     apiKey: "test-key",
+    // These fixtures exercise tool-call parsing, not terminal result adjudication.
+    enforceResultEvaluation: false,
     maxIterations: 3,
     runtime: {
       workspaceDir: process.cwd(),
@@ -169,6 +173,8 @@ test("agent-loop: tool repeat limit returns a structured error and allows recove
 
   const agent = new AgentLoop({
     apiKey: "test-key",
+    // These fixtures exercise tool-call parsing, not terminal result adjudication.
+    enforceResultEvaluation: false,
     maxIterations: 3,
     runtime: {
       workspaceDir: process.cwd(),
@@ -248,6 +254,8 @@ test("agent-loop: llm request timeout uses QLING_LLM_REQUEST_TIMEOUT_MS", async 
 
   const agent = new AgentLoop({
     apiKey: "test-key",
+    // These fixtures exercise tool-call parsing, not terminal result adjudication.
+    enforceResultEvaluation: false,
   });
 
   try {
@@ -266,6 +274,8 @@ test("agent-loop: session token stats prefer provider usage total tokens", async
 
   const agent = new AgentLoop({
     apiKey: "test-key",
+    // These fixtures exercise tool-call parsing, not terminal result adjudication.
+    enforceResultEvaluation: false,
     maxIterations: 1,
     runtime: {
       workspaceDir: process.cwd(),
@@ -311,6 +321,8 @@ test("agent-loop: session token stats stay unknown when provider usage is missin
 
   const agent = new AgentLoop({
     apiKey: "test-key",
+    // These fixtures exercise tool-call parsing, not terminal result adjudication.
+    enforceResultEvaluation: false,
     maxIterations: 1,
     runtime: {
       workspaceDir: process.cwd(),

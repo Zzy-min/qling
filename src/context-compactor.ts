@@ -348,7 +348,7 @@ export class ContextCompactor {
         message.synthetic_reason === "dynamic_context" ||
         message.synthetic_reason === "state_snapshot" ||
         message.synthetic_reason === "run_side_effects" ||
-        message.synthetic_reason === "verification_audit" ||
+        message.synthetic_reason === "plan_state" || message.synthetic_reason === "decision_ledger" || message.synthetic_reason === "verification_audit" ||
         message.synthetic_reason === "interrupted_run"
     );
     for (const message of deterministic) {
@@ -761,6 +761,13 @@ export function validateCompactionCandidate(
 ): CompactionValidation {
   if (candidate.length === 0 && original.length > 0) {
     return { ok: false, reason: "candidate is empty" };
+  }
+
+  for (const requiredReason of ["plan_state", "decision_ledger"] as const) {
+    const hadReason = original.some((m) => m.synthetic_reason === requiredReason);
+    if (hadReason && !candidate.some((m) => m.synthetic_reason === requiredReason)) {
+      return { ok: false, reason: `active ${requiredReason} was dropped` };
+    }
   }
 
   const lastRealUser = [...original]

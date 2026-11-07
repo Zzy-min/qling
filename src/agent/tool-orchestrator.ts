@@ -73,11 +73,14 @@ async function captureWorkspaceMutationSnapshot(workspaceDir: string): Promise<W
         ["-c", "core.quotepath=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         { cwd: workspaceDir, windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 },
       ),
-      execFileAsync("git", ["rev-parse", "HEAD"], {
+      execFileAsync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], {
         cwd: workspaceDir,
         windowsHide: true,
         timeout: 10_000,
         maxBuffer: 1024 * 1024,
+      }).catch((error: { code?: number }) => {
+        if (error.code === 1) return { stdout: "" }; // Unborn HEAD still has a usable working tree.
+        throw error;
       }),
     ]);
     const files = new Map<string, { hash: string; created: boolean }>();
@@ -596,7 +599,12 @@ export async function executePreparedTools(
     };
 
     if (!preflightResult) {
-      if (tc.name === "write" || tc.name === "patch") {
+      if (
+        tc.name === "write" ||
+        tc.name === "patch" ||
+        tc.name === "planner" ||
+        tc.name === "todo"
+      ) {
         tc.arguments = { ...tc.arguments, __qling_workspace_dir: deps.workspaceDir };
       }
       try {
@@ -897,7 +905,15 @@ export async function executePreparedTools(
     }
     observations.push({
       tool: tc.name,
+      ...(tc.name === "bash" || tc.name === "verify" ? {
+        ...(typeof result.meta?.command === "string" ? { command: result.meta.command }
+          : tc.name === "bash" && typeof (tc.arguments.command ?? tc.arguments.cmd) === "string" ? { command: String(tc.arguments.command ?? tc.arguments.cmd) } : {}),
+        ...(typeof result.meta?.exitCode === "number" || result.meta?.exitCode === null ? { exitCode: result.meta.exitCode } : {}),
+        output: result.output,
+        ...(result.meta?.verdict === "pass" || result.meta?.verdict === "fail" || result.meta?.verdict === "blocked" ? { verificationResultVerdict: result.meta.verdict } : {}),
+      } : {}),
       failed: Boolean(result.is_error) && !efficiencyRedirect,
+      ...(result.error?.category === "permission" || String(result.output ?? "").startsWith("[Approval Denied]") ? { blocked: true } : {}),
       ...(efficiencyRedirect ? { redirected: true } : {}),
       actionFingerprint,
       ...(progressKind
