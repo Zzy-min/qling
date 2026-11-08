@@ -17,7 +17,7 @@ import { toolError } from "./error-utils.js";
 export const plannerTool: ToolDefinition = {
   name: "planner",
   description:
-    "任务规划与动态重规划工具。支持创建可执行结构化计划（含子任务、依赖、所需工具、预期产出、验收标准、失败恢复策略）、更新步骤验证状态及在失败时动态重规划（保留已完成步骤）。",
+    "任务规划与动态重规划工具。支持结构化计划、依赖检查、步骤进度报告及动态重规划（保留报告完成步骤）。完成状态和 verificationEvidence 字符串仅记录报告/备注，不代表运行时验证；verify/verify_step 兼容操作同样不能授予 verified 状态。",
   parameters: {
     type: "object",
     properties: {
@@ -67,7 +67,7 @@ export const plannerTool: ToolDefinition = {
       },
       verificationEvidence: {
         type: "string",
-        description: "步骤完成时的验证证据摘要（update_step 时可选）",
+        description: "完成报告或备注（update_step 时可选；verify_step 时必须非空）。仅记录调用者的说明，不构成运行时验证证据。",
       },
       failureReason: {
         type: "string",
@@ -246,7 +246,7 @@ export async function runPlanner(args: {
           tool_call_id: "",
           output: [
             `✅ 已更新计划步骤 [${args.stepId}] -> ${args.status}`,
-            `当前计划进度: ${summary.completedSteps}/${summary.totalSteps} 已完成 (状态: ${summary.status})`,
+            `当前计划进度: ${summary.completedSteps}/${summary.totalSteps} 报告完成或跳过 (状态: ${summary.status}；运行时步骤验证: unverified)`,
             `下一步可执行步骤: ${summary.readyStepIds.join(", ") || "无"}`,
           ].join("\n"),
         };
@@ -261,11 +261,25 @@ export async function runPlanner(args: {
             { category: "validation" }
           );
         }
+        if (action === "verify_step" && !args.stepId) {
+          return toolError(
+            "PLANNER_MISSING_STEP_ID",
+            "verify_step requires a stepId. Use action='verify' without a stepId to read the plan's unverified status.",
+            { category: "validation" },
+          );
+        }
         if (args.stepId) {
+          if (!args.verificationEvidence?.trim()) {
+            return toolError(
+              "PLANNER_MISSING_EVIDENCE",
+              "verify_step requires non-empty verificationEvidence as a completion report/note. Planner has no trusted per-step verifier and cannot grant verified status. Run the relevant checks with available tools, then record a note here or use action='update_step', status='completed' for reported completion only (unverified). Do not retry with invented evidence or verifier IDs.",
+              { category: "validation" },
+            );
+          }
           const targetStatus: TaskPlanStepStatus = args.status ?? "completed";
           const updated = updatePlanStepStatus(existing, args.stepId, {
             status: targetStatus,
-            verificationEvidence: args.verificationEvidence ?? "verified via planner",
+            verificationEvidence: args.verificationEvidence.trim(),
             failureReason: args.failureReason,
           });
           saveWorkspaceTaskPlan(workspaceDir, updated);
@@ -273,8 +287,8 @@ export async function runPlanner(args: {
           return {
             tool_call_id: "",
             output: [
-              `✅ 已验证计划步骤 [${args.stepId}] -> ${targetStatus}`,
-              `当前计划进度: ${summary.completedSteps}/${summary.totalSteps} 已完成 (已验证 ${summary.verifiedSteps} 步, 状态: ${summary.status})`,
+              `📋 已记录计划步骤报告 [${args.stepId}] -> ${targetStatus}（未验证 / unverified）`,
+              `当前计划进度: ${summary.completedSteps}/${summary.totalSteps} 报告完成或跳过 (运行时验证 ${summary.verifiedSteps} 步, 状态: ${summary.status})`,
               `下一步可执行步骤: ${summary.readyStepIds.join(", ") || "无"}`,
             ].join("\n"),
           };
@@ -283,10 +297,10 @@ export async function runPlanner(args: {
         return {
           tool_call_id: "",
           output: [
-            `🔍 计划验证状态: ${summary.status} (${summary.completedSteps}/${summary.totalSteps} 已完成, 已绑定证据 ${summary.verifiedSteps} 步)`,
+            `🔍 计划报告状态: ${summary.status} (${summary.completedSteps}/${summary.totalSteps} 报告完成或跳过, 运行时验证 ${summary.verifiedSteps} 步；未验证 / unverified)`,
             summary.unmetStepIds.length > 0
               ? `未完成步骤: ${summary.unmetStepIds.join(", ")}`
-              : "所有计划步骤已完成。",
+              : "所有计划步骤已报告完成或跳过；当前未关联可信的步骤验证器。",
           ].join("\n"),
         };
       }
@@ -314,7 +328,7 @@ export async function runPlanner(args: {
         return {
           tool_call_id: "",
           output: [
-            `🔄 已完成动态重规划 (第 ${replanned.replanCount} 次重规划，已完成验证步骤已保留)`,
+            `🔄 已完成动态重规划 (第 ${replanned.replanCount} 次重规划，报告完成步骤已保留；运行时步骤验证: unverified)`,
             "",
             formatTaskPlanMarkdown(replanned),
           ].join("\n"),

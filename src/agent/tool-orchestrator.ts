@@ -29,6 +29,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import {
   classifyToolProgressKind,
+  commandVerificationKind,
   normalizeEvidenceOutput,
   normalizeFailureFingerprint,
   type ToolExecutionObservation,
@@ -45,7 +46,7 @@ import { createHash } from "node:crypto";
 import { classifyToolInvocation } from "../harness/tool-capability.js";
 import type { RuntimeToolCallRecord } from "../runtime/types.js";
 import { ContentAddressedArtifactStore } from "../harness/artifact-store.js";
-import { getRuntimeRootsFromEnv, resolveToolPath } from "../runtime-paths.js";
+import { getRuntimeRootsFromEnv, resolveToolPath, runWithRuntimeRoots } from "../runtime-paths.js";
 import { assertOwnedMutationPath } from "../agents/ownership.js";
 import { authorizeActionIntent, deriveUserActionIntent } from "../harness/action-intent.js";
 import { checkFileSyntax } from "../repo-index/syntax-check.js";
@@ -422,6 +423,18 @@ export async function executePreparedTools(
   deps: ToolOrchestratorDeps,
   context: ExecuteToolsContext
 ): Promise<ExecuteToolsResult> {
+  const roots = getRuntimeRootsFromEnv();
+  return runWithRuntimeRoots({
+    ...roots,
+    workspaceDir: deps.workspaceDir || roots.workspaceDir || process.cwd(),
+    fileStateDir: deps.fileStateDir || roots.fileStateDir,
+  }, () => executePreparedToolsScoped(deps, context));
+}
+
+async function executePreparedToolsScoped(
+  deps: ToolOrchestratorDeps,
+  context: ExecuteToolsContext
+): Promise<ExecuteToolsResult> {
   const dispatchTool = deps.dispatchTool ?? dispatch;
   let turnToolCalls = 0;
   let turnToolFailures = 0;
@@ -444,13 +457,28 @@ export async function executePreparedTools(
     const argumentsHash = actionFingerprint.slice(actionFingerprint.indexOf(":") + 1);
     const mutationArgs = tc.arguments as { path?: string; file?: string; dry_run?: boolean };
     const mutationTargetRaw =
-      tc.name === "write" || tc.name === "patch"
+      tc.name === "write" || tc.name === "patch" || tc.name === "patch_anchored"
         ? String(mutationArgs.path || mutationArgs.file || "").trim()
         : "";
     const mutationTarget = mutationTargetRaw
-      ? path.resolve(deps.workspaceDir || process.cwd(), mutationTargetRaw)
+      ? resolveToolPath(mutationTargetRaw, getRuntimeRootsFromEnv(), "workspace")
       : "";
     const mutationExistedBefore = mutationTarget ? existsSync(mutationTarget) : false;
+    const bashVerificationKind = tc.name === "bash"
+      ? commandVerificationKind(String(tc.arguments.command ?? tc.arguments.cmd ?? ""))
+      : undefined;
+    const bashVerificationCwd = bashVerificationKind
+      ? resolveToolPath(String(tc.arguments.cwd ?? "."), getRuntimeRootsFromEnv(), "workspace")
+      : undefined;
+    const normalizeScope = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+    const bashVerifiesHostWorkspace = bashVerificationCwd !== undefined
+      && normalizeScope(bashVerificationCwd) === normalizeScope(deps.workspaceDir || process.cwd());
+    const bashVerificationBase = bashVerificationKind
+      ? await resolveProjectProfileIdentity(deps.workspaceDir || process.cwd())
+      : undefined;
+    const bashVerificationBaseFingerprint = bashVerificationBase
+      ? `${bashVerificationBase.revision}:${bashVerificationBase.dirtyFingerprint}`
+      : undefined;
     const reliabilityEnabled = process.env.QLING_FEATURES_RELIABILITY_V2 === "true";
     const backgroundWaitId = tc.name === "bg_wait" || tc.name === "bg_kill" || tc.name === "bg_reconcile" ? String(tc.arguments.task_id ?? "").trim() : "";
     const backgroundRegistry = getBackgroundTaskRegistry(deps.fileStateDir);
@@ -720,7 +748,7 @@ export async function executePreparedTools(
       !directDiagnosticArtifact &&
       Boolean(mutationTarget) &&
       !mutationArgs.dry_run &&
-      (tc.name === "write" || tc.name === "patch");
+      (tc.name === "write" || tc.name === "patch" || tc.name === "patch_anchored");
     let mutationSucceeded = workspaceMutationApplied;
     let indirectMutation: { changedPaths: string[]; mutation?: "created" | "updated" } = { changedPaths: [] };
     if (bashSnapshotBefore) {
@@ -891,7 +919,22 @@ export async function executePreparedTools(
       completedAt: Date.now(),
     });
     const progressKind = classifyToolProgressKind(tc.name, tc.arguments);
-    const verificationMeta = tc.name === "verify" ? result.meta : undefined;
+    const bashVerificationAfter = bashVerificationKind
+      ? await resolveProjectProfileIdentity(deps.workspaceDir || process.cwd())
+      : undefined;
+    const bashVerificationAfterFingerprint = bashVerificationAfter
+      ? `${bashVerificationAfter.revision}:${bashVerificationAfter.dirtyFingerprint}`
+      : undefined;
+    // A successful shell exit alone is insufficient if the check changed its inputs.
+    const bashVerificationVerdict = bashVerificationKind && typeof result.meta?.exitCode === "number"
+      ? result.is_error || result.meta.exitCode !== 0 ? "fail"
+        : bashVerifiesHostWorkspace && bashVerificationBaseFingerprint === bashVerificationAfterFingerprint ? "pass" : "blocked"
+      : undefined;
+    const verificationMeta = tc.name === "verify" ? result.meta : bashVerificationKind ? {
+      verdict: bashVerificationVerdict,
+      verificationBaseFingerprint: bashVerificationBaseFingerprint,
+      workspaceFingerprint: bashVerificationAfterFingerprint,
+    } : undefined;
     const observationMutation = workspaceMutationApplied ? (mutationExistedBefore ? "updated" : "created") : indirectMutation.mutation;
     let observationWorkspaceFingerprint: string | undefined;
     if (observationMutation) {
@@ -911,6 +954,9 @@ export async function executePreparedTools(
         ...(typeof result.meta?.exitCode === "number" || result.meta?.exitCode === null ? { exitCode: result.meta.exitCode } : {}),
         output: result.output,
         ...(result.meta?.verdict === "pass" || result.meta?.verdict === "fail" || result.meta?.verdict === "blocked" ? { verificationResultVerdict: result.meta.verdict } : {}),
+        ...(bashVerificationVerdict ? { verificationResultVerdict: bashVerificationVerdict } : {}),
+        ...(bashVerificationKind ? { verificationKind: bashVerificationKind } : {}),
+        ...(bashVerificationCwd ? { verificationCwd: bashVerificationCwd } : {}),
       } : {}),
       failed: Boolean(result.is_error) && !efficiencyRedirect,
       ...(result.error?.category === "permission" || String(result.output ?? "").startsWith("[Approval Denied]") ? { blocked: true } : {}),
@@ -931,7 +977,8 @@ export async function executePreparedTools(
                   mutationId: typeof verificationMeta?.mutationId === "string" ? verificationMeta.mutationId : undefined,
                   verificationBaseFingerprint: typeof verificationMeta?.verificationBaseFingerprint === "string" ? verificationMeta.verificationBaseFingerprint : undefined,
                   workspaceFingerprint: typeof verificationMeta?.workspaceFingerprint === "string" ? verificationMeta.workspaceFingerprint : undefined,
-                  verificationVerdict: verificationMeta?.verdict === "pass" ? "pass" as const : "fail" as const,
+                  ...(verificationMeta?.verdict === "pass" || verificationMeta?.verdict === "fail" || verificationMeta?.verdict === "blocked"
+                    ? { verificationVerdict: verificationMeta.verdict } : {}),
                 }
               : {}),
           }

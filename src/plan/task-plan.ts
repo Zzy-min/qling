@@ -36,6 +36,7 @@ export interface TaskPlanStepInput {
   acceptanceCriteria?: string;
   status?: TaskPlanStepStatus;
   recoveryStrategy?: string;
+  /** Caller-reported notes only; not proof of runtime verification. */
   verificationEvidence?: string;
   failureReason?: string;
 }
@@ -50,6 +51,7 @@ export interface TaskPlanStep {
   acceptanceCriteria: string;
   status: TaskPlanStepStatus;
   recoveryStrategy: string;
+  /** Legacy field name for caller-reported notes, never a trusted verification result. */
   verificationEvidence?: string;
   failureReason?: string;
   updatedAt: number;
@@ -83,13 +85,16 @@ export interface TaskPlanSummary {
   strategyTier: ExecutionStrategyTier;
   totalSteps: number;
   completedSteps: number;
+  /** No trusted per-step verifier is connected yet; caller strings cannot increment this. */
   verifiedSteps: number;
+  verificationStatus: "unverified";
   pendingSteps: number;
   inProgressSteps: number;
   failedSteps: number;
   blockedSteps: number;
   readyStepIds: string[];
   unmetStepIds: string[];
+  /** All steps are reported completed or explicitly skipped; does not mean verified. */
   isComplete: boolean;
   isPartiallyComplete: boolean;
   replanCount: number;
@@ -205,6 +210,29 @@ function normalizeSteps(inputs: (TaskPlanStepInput | string)[], now: number): Ta
   });
 }
 
+/** Validate the whole proposed state, including dependents of a reopened prerequisite. */
+function assertPlanStepState(steps: ReadonlyArray<TaskPlanStep>): void {
+  const validStatuses = new Set<TaskPlanStepStatus>([
+    "pending", "in_progress", "verifying", "completed", "failed", "skipped", "blocked",
+  ]);
+  const statusById = new Map(steps.map((step) => [step.id, step.status]));
+  for (const step of steps) {
+    if (!validStatuses.has(step.status)) {
+      throw new Error(`Invalid plan step status for "${step.id}": ${String(step.status)}`);
+    }
+    if (step.status !== "in_progress" && step.status !== "verifying" && step.status !== "completed") continue;
+    const unmet = step.dependsOn.filter((id) => {
+      const status = statusById.get(id);
+      return status !== "completed" && status !== "skipped";
+    });
+    if (unmet.length > 0) {
+      throw new Error(
+        `Cannot set plan step "${step.id}" to ${step.status}: dependencies must be completed or explicitly skipped first: ${unmet.join(", ")}`,
+      );
+    }
+  }
+}
+
 export function derivePlanStatus(
   steps: ReadonlyArray<TaskPlanStep>,
   currentStatus: TaskPlanStatus = "pending"
@@ -270,6 +298,7 @@ export function createStructuredTaskPlan(input: {
   if (!validation.ok) {
     throw new Error(`Invalid task plan dependencies: ${validation.error}`);
   }
+  assertPlanStepState(steps);
   const rankMap = new Map(validation.topologicalOrder.map((id, index) => [id, index + 1]));
   for (const step of steps) {
     step.order = rankMap.get(step.id) ?? step.order;
@@ -340,6 +369,12 @@ export function updatePlanStepStatus(
     };
   });
 
+  const validation = validatePlanDependencies(nextSteps);
+  if (!validation.ok) {
+    throw new Error(`Invalid task plan dependencies: ${validation.error}`);
+  }
+  assertPlanStepState(nextSteps);
+
   const nextStatus = derivePlanStatus(nextSteps, plan.status === "waiting_approval" ? "running" : plan.status);
   return {
     ...plan,
@@ -392,16 +427,22 @@ export function replanStructuredTaskPlan(
 
   const combinedSteps: TaskPlanStep[] = [...preservedSteps, ...candidateIncoming];
   const validIds = new Set(combinedSteps.map((s) => s.id));
+  const oldStatusById = new Map(plan.steps.map((step) => [step.id, step.status]));
   for (const step of combinedSteps) {
-    // Only prune dependencies that existed in the previous plan and were removed during replanning;
-    // keep genuinely unknown dependency IDs so validatePlanDependencies can reject typos.
-    step.dependsOn = step.dependsOn.filter((depId) => validIds.has(depId) || !oldPlanIds.has(depId));
+    // Pending replacements may drop old removed dependencies. Active/completed steps must
+    // never become valid merely because an unresolved prerequisite was silently removed.
+    step.dependsOn = step.dependsOn.filter((depId) => {
+      if (validIds.has(depId) || !oldPlanIds.has(depId)) return true;
+      if (oldStatusById.get(depId) === "skipped") return false; // Explicitly waived prerequisite.
+      return step.status === "in_progress" || step.status === "verifying" || step.status === "completed";
+    });
   }
 
   const validation = validatePlanDependencies(combinedSteps);
   if (!validation.ok) {
     throw new Error(`Invalid replanned task dependencies: ${validation.error}`);
   }
+  assertPlanStepState(combinedSteps);
   const rankMap = new Map(validation.topologicalOrder.map((id, index) => [id, index + 1]));
   for (const step of combinedSteps) {
     step.order = rankMap.get(step.id) ?? step.order;
@@ -432,7 +473,9 @@ export const replanTaskPlan = replanStructuredTaskPlan;
 
 export function summarizeTaskPlan(plan: StructuredTaskPlan): TaskPlanSummary {
   let completedSteps = 0;
-  let verifiedSteps = 0;
+  // No trusted per-step verifier is connected. Persisted/model-supplied strings,
+  // completed statuses and explicit skips are bookkeeping, not deterministic evidence.
+  const verifiedSteps = 0;
   let pendingSteps = 0;
   let inProgressSteps = 0;
   let failedSteps = 0;
@@ -442,9 +485,6 @@ export function summarizeTaskPlan(plan: StructuredTaskPlan): TaskPlanSummary {
   for (const step of plan.steps) {
     if (step.status === "completed" || step.status === "skipped") {
       completedSteps++;
-      if (step.verificationEvidence || step.status === "skipped") {
-        verifiedSteps++;
-      }
     } else if (step.status === "pending") {
       pendingSteps++;
       unmetStepIds.push(step.id);
@@ -473,6 +513,7 @@ export function summarizeTaskPlan(plan: StructuredTaskPlan): TaskPlanSummary {
     totalSteps,
     completedSteps,
     verifiedSteps,
+    verificationStatus: "unverified",
     pendingSteps,
     inProgressSteps,
     failedSteps,
@@ -492,7 +533,8 @@ export function formatTaskPlanMarkdown(plan: StructuredTaskPlan): string {
     "",
     `- **目标**: ${plan.objective}`,
     `- **策略层级**: ${plan.strategyTier}`,
-    `- **计划状态**: ${summary.status} (${summary.completedSteps}/${summary.totalSteps} 已完成, 重规划 ${plan.replanCount} 次)`,
+    `- **计划状态**: ${summary.status} (${summary.completedSteps}/${summary.totalSteps} 报告完成或跳过, 重规划 ${plan.replanCount} 次)`,
+    "- **运行时步骤验证**: 未验证 (unverified；当前未关联可信的步骤验证器，完成状态和备注仅为报告)",
     `- **可执行下一步**: ${summary.readyStepIds.length > 0 ? summary.readyStepIds.join(", ") : "(无待执行步骤)"}`,
     "",
     "## 子任务列表",
@@ -508,7 +550,7 @@ export function formatTaskPlanMarkdown(plan: StructuredTaskPlan): string {
       `   - 恢复策略: ${step.recoveryStrategy}`
     );
     if (step.verificationEvidence) {
-      lines.push(`   - 验证证据: ${step.verificationEvidence}`);
+      lines.push(`   - 完成报告/备注（未验证）: ${step.verificationEvidence}`);
     }
     if (step.failureReason) {
       lines.push(`   - 失败原因: ${step.failureReason}`);
@@ -519,7 +561,7 @@ export function formatTaskPlanMarkdown(plan: StructuredTaskPlan): string {
     lines.push("", "## 动态重规划记录");
     for (const entry of plan.replanHistory.slice(-5)) {
       lines.push(
-        `- 原因: ${entry.reason} (保留已验证步骤: ${entry.preservedStepIds.join(", ") || "无"}; 更新步骤: ${entry.updatedStepIds.join(", ") || "无"})`
+        `- 原因: ${entry.reason} (保留报告完成步骤: ${entry.preservedStepIds.join(", ") || "无"}; 更新步骤: ${entry.updatedStepIds.join(", ") || "无"})`
       );
     }
   }

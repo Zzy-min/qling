@@ -1,6 +1,10 @@
 import path from "node:path";
+import { commandVerificationKind } from "../session/outcome-evidence.js";
 
 export type FileMutation = "created" | "updated";
+export type CommandVerificationKind = "test" | "build" | "lint" | "typecheck" | "general";
+
+export { commandVerificationKind } from "../session/outcome-evidence.js";
 
 export interface ToolExecutionObservation {
   tool: string;
@@ -9,6 +13,8 @@ export interface ToolExecutionObservation {
   exitCode?: number | null;
   output?: string;
   verificationResultVerdict?: "pass" | "fail" | "blocked";
+  verificationKind?: CommandVerificationKind;
+  verificationCwd?: string;
   /** The call was rejected by the efficiency policy before tool execution. */
   redirected?: boolean;
   /** Permission/approval refusal: never executed, so not an execution failure. */
@@ -19,7 +25,7 @@ export interface ToolExecutionObservation {
   rootCauseId?: string;
   mutationId?: string;
   verifierId?: string;
-  verificationVerdict?: "pass" | "fail";
+  verificationVerdict?: "pass" | "fail" | "blocked";
   workspaceFingerprint?: string;
   verificationBaseFingerprint?: string;
   failureFingerprint?: string;
@@ -83,6 +89,7 @@ export interface ProgressState {
   activeMutationPaths?: string[];
   activeMutationWorkspaceFingerprint?: string;
   latestVerificationVerdict?: "pass" | "fail" | "blocked";
+  unresolvedVerificationFamilies?: string[];
   pendingSideEffectIds?: string[];
   reconciledSideEffectIds?: string[];
   recoveryEpisode?: RecoveryEpisode;
@@ -239,7 +246,7 @@ export function classifyToolProgressKind(
 
   const command = String(args.command ?? args.cmd ?? "").trim().toLowerCase();
   if (!command) return undefined;
-  if (/(?:^|[;&|\s])(?:pytest|py\.test|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+test|cargo\s+test|go\s+test|mvn(?:w)?\s+test|gradle(?:w)?\s+test|tsc|eslint|ruff|mypy)(?:\s|$)/i.test(command)) {
+  if (commandVerificationKind(command)) {
     return "verification_delta";
   }
   if (/(?:^|[;&|\s])(?:where|which)(?:\s|$)|(?:node|python|python3|npm|pnpm|yarn|cargo|go|java)\s+--?version(?:\s|$)/i.test(command)) {
@@ -330,6 +337,7 @@ export class RunEfficiencyGuard {
   private activeMutationWorkspaceFingerprint: string | null = null;
   private readonly pendingSideEffectIds = new Set<string>();
   private readonly reconciledSideEffectIds = new Set<string>();
+  private readonly unresolvedVerificationFamilies = new Set<string>();
 
   constructor(options: RunEfficiencyOptions = {}) {
     this.sameFailureLimit = Math.max(1, options.sameFailureLimit ?? 2);
@@ -350,6 +358,10 @@ export class RunEfficiencyGuard {
       }
       for (const taskId of options.initialState.pendingSideEffectIds ?? []) this.pendingSideEffectIds.add(taskId);
       for (const taskId of options.initialState.reconciledSideEffectIds ?? []) this.reconciledSideEffectIds.add(taskId);
+      for (const family of options.initialState.unresolvedVerificationFamilies ?? []) this.unresolvedVerificationFamilies.add(family);
+      if (options.initialState.latestVerificationVerdict === "fail" && this.unresolvedVerificationFamilies.size === 0) {
+        this.unresolvedVerificationFamilies.add("<unknown-legacy-verification-family>");
+      }
     }
   }
 
@@ -438,6 +450,7 @@ export class RunEfficiencyGuard {
       }
 
       if (observation.progressKind === "verification_delta") {
+        this.unresolvedVerificationFamilies.add(observation.verificationKind ?? commandVerificationKind(observation.command) ?? observation.verifierId ?? observation.tool);
         this.phase = "repair";
         this.progressState = reduceProgressState(this.progressState, {
           type: "verification_finished",
@@ -631,13 +644,32 @@ export class RunEfficiencyGuard {
     const actionable = observations.filter((item) => !item.redirected);
     if (actionable.length === 0) return null;
     if (actionable.some((item) => !item.failed && item.mutation)) return null;
-    const verification = actionable.find(
+    const passes = actionable.filter(item => !item.failed
+      && item.progressKind === "verification_delta"
+      && item.verificationVerdict === "pass"
+      && item.evidenceFingerprint
+      && Boolean(item.workspaceFingerprint)
+      && Boolean(item.verificationBaseFingerprint)
+      && item.workspaceFingerprint === item.verificationBaseFingerprint
+      && (item.tool === "verify" || (item.tool === "bash" && commandVerificationKind(item.command) && item.exitCode === 0)));
+    for (const item of passes) {
+      if (this.activeMutationId && item.verificationBaseFingerprint !== this.activeMutationWorkspaceFingerprint) continue;
+      this.unresolvedVerificationFamilies.delete(item.verificationKind ?? commandVerificationKind(item.command) ?? item.verifierId ?? item.tool);
+    }
+    if (passes.length > 0 && this.unresolvedVerificationFamilies.has("<unknown-legacy-verification-family>")) {
+      return {
+        code: "PROGRESS_PHASE", disposition: "redirect", phase: "repair",
+        reason: "本次检查命令成功退出。恢复快照缺少失败检查类型；请人工核对历史未解决的检查项后开始新 run，当前快照不能自动判定全部恢复。",
+        directive: { action: "narrow_recovery", allowedTools: ["read", "verify", "bash"] },
+      };
+    }
+    const verification = passes.find(
       (item) => !item.failed
-        && item.tool === "verify"
+        && this.unresolvedVerificationFamilies.size === 0
         && item.progressKind === "verification_delta"
         && item.evidenceFingerprint
         && item.verificationVerdict === "pass"
-        && item.mutationId === this.activeMutationId
+        && (item.tool === "bash" || item.mutationId === this.activeMutationId)
         && Boolean(item.workspaceFingerprint)
         && Boolean(this.activeMutationWorkspaceFingerprint)
         && item.verificationBaseFingerprint === this.activeMutationWorkspaceFingerprint
@@ -663,24 +695,28 @@ export class RunEfficiencyGuard {
         directive: { action: "verify_or_finish", mutationId: this.activeMutationId },
       };
     }
-    const staleVerification = actionable.find((item) => !item.failed
-      && item.tool === "verify"
+    const staleVerification = passes.find((item) => !item.failed
       && item.progressKind === "verification_delta"
       && item.verificationVerdict === "pass"
-      && item.mutationId === this.activeMutationId
+      && (item.tool === "bash" || item.mutationId === this.activeMutationId)
       && Boolean(item.verificationBaseFingerprint)
       && Boolean(this.activeMutationWorkspaceFingerprint)
       && item.verificationBaseFingerprint !== this.activeMutationWorkspaceFingerprint);
     if (staleVerification?.workspaceFingerprint && this.activeMutationId) {
       this.phase = "repair";
-      this.activeMutationWorkspaceFingerprint = staleVerification.workspaceFingerprint;
-      this.mutationPaths.set(this.activeMutationId, []);
+      // A delayed shell observation must never roll the active workspace back to an old fingerprint.
+      if (staleVerification.tool === "verify") {
+        this.activeMutationWorkspaceFingerprint = staleVerification.workspaceFingerprint;
+        this.mutationPaths.set(this.activeMutationId, []);
+      }
       this.progressState = {
         ...this.progressState,
         sequence: this.progressState.sequence + 1,
         phase: "repair",
-        activeMutationPaths: [],
-        activeMutationWorkspaceFingerprint: staleVerification.workspaceFingerprint,
+        ...(staleVerification.tool === "verify" ? {
+          activeMutationPaths: [],
+          activeMutationWorkspaceFingerprint: staleVerification.workspaceFingerprint,
+        } : {}),
         latestVerificationVerdict: "blocked",
       };
       return {
@@ -691,6 +727,17 @@ export class RunEfficiencyGuard {
         tool: staleVerification.tool,
         directive: { action: "verify_or_finish", mutationId: this.activeMutationId },
       };
+    }
+    if (!this.activeMutationId && passes.length > 0 && this.unresolvedVerificationFamilies.size === 0) {
+      const passed = passes[passes.length - 1]!;
+      this.phase = "finalize";
+      this.noProgressActions = 0;
+      this.recoveryAllowedTools = null;
+      this.progressState = reduceProgressState(this.progressState, {
+        type: "verification_finished", verifierId: passed.verifierId ?? passed.tool,
+        verdict: "pass", fingerprint: passed.evidenceFingerprint!,
+      });
+      return null;
     }
     const explicitEvidence = actionable.filter(
       (item) => !item.failed && item.progressKind && item.evidenceFingerprint
@@ -771,6 +818,7 @@ export class RunEfficiencyGuard {
       activeMutationWorkspaceFingerprint: this.activeMutationWorkspaceFingerprint ?? this.progressState.activeMutationWorkspaceFingerprint,
       pendingSideEffectIds: [...this.pendingSideEffectIds].sort(),
       reconciledSideEffectIds: [...this.reconciledSideEffectIds].sort(),
+      unresolvedVerificationFamilies: [...this.unresolvedVerificationFamilies].sort(),
     };
   }
 

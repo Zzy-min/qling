@@ -167,7 +167,7 @@ describe("Stage 3: Executable Structured Task Plan, DAG Validation, PlanGuard & 
     assert.match(missingCheck.error ?? "", /unknown step/i);
   });
 
-  it("tracks ready steps, preserves completed verified steps across replanning, and enforces PlanGuard", () => {
+  it("tracks ready steps, preserves reported completed steps across replanning, and enforces PlanGuard", () => {
     let plan = createStructuredTaskPlan({
       objective: "重构工具调度层并完成单元测试",
       steps: [
@@ -776,7 +776,7 @@ describe("Stage 5 & 7: Context Compaction Retention, Main-Loop Self-Check Interc
         __qling_workspace_dir: tmpDir,
       });
       assert.ok(!planVerify.is_error);
-      assert.match(planVerify.output, /已验证计划步骤 \[s1\]/);
+      assert.match(planVerify.output, /已记录计划步骤报告 \[s1\].*unverified/);
 
       const loadedPlan = await loadWorkspaceTaskPlan(tmpDir);
       assert.throws(

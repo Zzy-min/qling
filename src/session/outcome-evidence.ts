@@ -4,6 +4,7 @@ import path from "node:path";
 import type { TaskCompletionStatus } from "../execution/types.js";
 import type { StructuredTaskPlan } from "../plan/task-plan.js";
 import { summarizeTaskPlan } from "../plan/task-plan.js";
+import { resolveWorkspaceStatePath } from "../runtime-paths.js";
 import {
   detectPrematureStopDetailed,
   type PrematureStopDetailedMatch,
@@ -304,7 +305,7 @@ export function classifyTaskDomain(
     /(?:创建文件|新建文件|写入文件|修改文件|保存为|重命名|删除文件|create\s+file|write\s+to\s+file|save\s+to)/i.test(
       prompt
     ) ||
-    hasMutationTool
+    hasMutationTool || userExplicitlyRequiresFileMutation(prompt)
   ) {
     return "file_operation";
   }
@@ -352,9 +353,10 @@ function extractPromptTargetFilePaths(prompt: string): string[] {
     /(?:创建|新建|修改|更新|写入到|写入|生成|保存(?:为|到)?)\s*(?:文件\s*)?[`"']?([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,8})[`"']?/g,
     /(?:create|modify|update|edit|write(?:\s+to)?|save(?:\s+to|\s+as)?)\s+(?:a\s+)?(?:new\s+)?(?:file\s+)?[`"']?([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,8})[`"']?/gi,
   ];
+  const actionablePrompt = mutationRequestClauses(prompt).join("\n");
   for (const regex of patterns) {
     let match: RegExpExecArray | null;
-    while ((match = regex.exec(prompt)) !== null) {
+    while ((match = regex.exec(actionablePrompt)) !== null) {
       const candidate = match[1]?.trim();
       if (
         candidate &&
@@ -369,7 +371,7 @@ function extractPromptTargetFilePaths(prompt: string): string[] {
 }
 
 export function hasHonestPartialOrBlockedReport(text: string): boolean {
-  return /(?:部分完成|暂未完成|尚未完成|未完成部分|因.*(?:缺少|未配置|阻塞|无法|无权限)|待.*(?:提供|授权|确认|恢复)后(?:继续|执行)|partially\s+completed|blocked\s+by|remaining\s+steps?\s+(?:are\s+)?(?:blocked|pending|incomplete))/i.test(
+  return /(?:部分完成|暂未完成|尚未完成|未完成部分|因.*(?:缺少|未配置|阻塞|无法|无权限)|待.*(?:提供|授权|确认|恢复)后(?:继续|执行)|partially\s+completed|blocked\s+(?:by|due\s+to)|(?:cannot|can't|unable\s+to).{0,80}(?:permission|read.only)|remaining\s+steps?\s+(?:are\s+)?(?:blocked|pending|incomplete))/i.test(
     text
   );
 }
@@ -387,17 +389,22 @@ function hasProseMutationClaim(text: string): boolean {
 
 type VerificationKind = NonNullable<ToolExecutionEvidenceItem["verificationKind"]>;
 
-/** Conservative command recognition: shell wrappers/control flow cannot prove a check passed. */
-function commandVerificationKind(command: string | undefined): VerificationKind | undefined {
+/** Only a top-level check with no shell control flow proves a verification family. */
+export function commandVerificationKind(command: string | undefined): VerificationKind | undefined {
   if (!command || /[;&|<>`\r\n]|\$\(|^\s*#/.test(command)) return undefined;
   const normalized = command.trim();
-  if (/\s(?:--(?:help|version|dry-run|listTests|collect-only|showConfig|list|if-present)|-[hV])(?:\s|$)/i.test(normalized)) return undefined;
-  if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?test(?::[\w-]+)?(?:\s|$)|node(?:\.exe)?\s+--test(?:\s|$)|(?:(?:npx|pnpm\s+exec)\s+)?(?:vitest|jest|mocha|pytest)(?:\s|$)|python(?:3)?\s+-m\s+(?:pytest|unittest)(?:\s|$)|cargo\s+test(?:\s|$)|go\s+test(?:\s|$)|dotnet\s+test(?:\s|$))/.test(normalized)) return "test";
-  if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?build(?::[\w-]+)?(?:\s|$)|cargo\s+build(?:\s|$)|go\s+build(?:\s|$)|dotnet\s+build(?:\s|$))/.test(normalized)) return "build";
+  if (/\s(?:--(?:help|version|dry-run|listTests|collect-only|showConfig|list|if-present)|-[hV])(?:[=\s]|$)/i.test(normalized)) return undefined;
+  // Package/project selectors can run an unrelated check while the shell cwd stays at the host root.
+  // Without an explicit trusted scope mapping, that success is execution evidence only.
+  if (/(?:^|\s)["']?--(?:prefix|workspaces?|filter|dir|cwd|project|rootdir)(?:[=\s"']|$)/i.test(normalized)
+    || /(?:^|\s)["']?-[wCpF][^\s]*(?:\s|$)/i.test(normalized)) return undefined;
+  if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?test(?::[\w-]+)?(?:\s|$)|node(?:\.exe)?\s+--test(?:\s|$)|(?:(?:npx|pnpm\s+exec)\s+)?(?:vitest|jest|mocha|pytest|py\.test)(?:\s|$)|python(?:3)?\s+-m\s+(?:pytest|unittest)(?:\s|$)|(?:cargo|go|dotnet|mvn(?:w)?|gradle(?:w)?)\s+test(?:\s|$))/.test(normalized)) return "test";
+  if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?build(?::[\w-]+)?(?:\s|$)|(?:cargo|go|dotnet)\s+build(?:\s|$))/.test(normalized)) return "build";
   if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?lint(?::[\w-]+)?(?:\s|$)|(?:(?:npx|pnpm\s+exec)\s+)?(?:eslint|ruff)(?:\s|$))/.test(normalized)) return "lint";
-  if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?(?:typecheck|type-check)(?:\s|$)|(?:(?:npx|pnpm\s+exec)\s+)?tsc(?:\s|$))/.test(normalized)) return "typecheck";
+  if (/^(?:(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:run\s+)?(?:typecheck|type-check)(?:\s|$)|(?:(?:npx|pnpm\s+exec)\s+)?(?:tsc|mypy)(?:\s|$))/.test(normalized)) return "typecheck";
   return undefined;
 }
+
 
 function claimedVerificationKinds(text: string): VerificationKind[] {
   const kinds: VerificationKind[] = [];
@@ -442,11 +449,18 @@ function freshVerificationEvidence(items: readonly ToolExecutionEvidenceItem[]):
   return latest;
 }
 
+function mutationRequestClauses(prompt: string): string[] {
+  return prompt.split(/[,，;；。\n]|\bbut\b|但是/i).filter(clause =>
+    !/(?:不要|禁止|无需|不用|不必)\s*(?:创建|新建|写入|修改|更新|生成|保存)|\b(?:do not|don't|never|without|no need to)\s+(?:create|modify|update|edit|write|save)\b/i.test(clause)
+    && !/^\s*(?:(?:please\s+)?(?:explain|describe|how\b|why\b)|(?:请)?(?:解释|说明|如何|怎么|为什么))/i.test(clause)
+  );
+}
+
 function userExplicitlyRequiresFileMutation(prompt: string): boolean {
-  return (
+  return extractPromptTargetFilePaths(prompt).length > 0 || mutationRequestClauses(prompt).some(clause =>
     /(?:请(?:在|为|帮我)?(?:创建|新建|写入|生成|保存)(?:一个|一份)?文件|写入到\s*[`"']?[A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+|create\s+(?:a\s+)?(?:new\s+)?file\s+[`"']?[A-Za-z0-9_./\\-]+)/i.test(
-      prompt
-    ) && !/(?:不要|禁止|无需|不用)(?:创建|写入|修改)/.test(prompt)
+      clause
+    )
   );
 }
 
@@ -465,23 +479,29 @@ export function auditClaimsAgainstEvidence(
   const successfulMutations = toolExecutions.filter(
     (item) =>
       !item.failed &&
-      (MUTATION_TOOLS.has(item.tool) || item.mutation === "created" || item.mutation === "updated")
+      (item.mutation === "created" || item.mutation === "updated")
   );
   const claimedPaths = extractClaimedFilePaths(finalText);
   const hasMutationClaim = hasProseMutationClaim(finalText) || claimedPaths.length > 0;
   const requestedPaths = extractPromptTargetFilePaths(userPrompt);
-  if (hasMutationClaim || userExplicitlyRequiresFileMutation(userPrompt)) {
+  if (hasMutationClaim || (userExplicitlyRequiresFileMutation(userPrompt) && !hasHonestPartialOrBlockedReport(finalText))) {
     const canonical = (target: string) => {
-      const absolute = path.resolve(workspaceDir || ".", target.replace(/\\\\/g, "/"));
+      const absolute = workspaceDir
+        ? resolveWorkspaceStatePath(workspaceDir, target.replace(/\\/g, "/"))
+        : path.resolve(".", target.replace(/\\/g, "/"));
       return process.platform === "win32" ? absolute.toLowerCase() : absolute;
     };
     const actualPaths = new Set(successfulMutations.flatMap(item =>
       [...(item.changedPaths ?? []), ...(item.targetPath ? [item.targetPath] : [])]
-        .filter(target => !target.startsWith("<")).map(canonical)
+        .filter(target => !target.startsWith("<")).flatMap(target => {
+          try { return [canonical(target)]; } catch { return []; }
+        })
     ));
     const targets = new Set([...claimedPaths, ...requestedPaths]);
-    const missing = [...targets].find(target => !actualPaths.has(canonical(target)));
-    if (missing || (targets.size === 0 && actualPaths.size === 0 && !successfulMutations.some(item => MUTATION_TOOLS.has(item.tool)))) {
+    const missing = [...targets].find(target => {
+      try { return !actualPaths.has(canonical(target)); } catch { return true; }
+    });
+    if (missing || (targets.size === 0 && actualPaths.size === 0)) {
       findings.push({
         kind: "unbacked_file_mutation_claim",
         claim: missing ?? "file_mutation",
@@ -514,9 +534,9 @@ export function auditClaimsAgainstEvidence(
     const resolvedWorkspace = path.resolve(workspaceDir);
     for (const relOrAbs of mutatedTargets) {
       const normalizedRef = relOrAbs.replace(/\\/g, "/");
-      const absPath = path.isAbsolute(normalizedRef)
-        ? path.normalize(normalizedRef)
-        : path.resolve(resolvedWorkspace, normalizedRef);
+      let absPath: string;
+      try { absPath = resolveWorkspaceStatePath(resolvedWorkspace, normalizedRef); }
+      catch { continue; } // No local file evidence may follow a workspace link outside its root.
       const canonicalKey = process.platform === "win32" ? absPath.toLowerCase() : absPath;
       if (seenAbsPaths.has(canonicalKey)) {
         continue;
@@ -545,11 +565,11 @@ export function auditClaimsAgainstEvidence(
           } else if (stat.isFile() && stat.size > 0 && absPath.toLowerCase().endsWith(".json")) {
             try {
               JSON.parse(readFileSync(absPath, "utf-8"));
-            } catch (parseErr) {
+            } catch {
               findings.push({
                 kind: "invalid_file_format_on_disk",
                 claim: relOrAbs,
-                detail: `目标 JSON 文件格式非法 (${relToWorkspace}): ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+                detail: `目标 JSON 文件格式非法 (${relToWorkspace})。`,
               });
             }
           }
